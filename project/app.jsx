@@ -1,0 +1,336 @@
+/* eslint-disable */
+// Main app shell, sidebar, topbar, audit log overlay, router
+
+const { useState, useEffect, useCallback } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentHue": 155,
+  "density": "balanced",
+  "fontScale": 1,
+  "showBanner": true,
+  "showRawDefault": false,
+  "sidebarCollapsed": false,
+  "monoTokens": true,
+  "showRelativeDates": true
+}/*EDITMODE-END*/;
+
+function applyTweaks(t) {
+  const r = document.documentElement.style;
+  r.setProperty('--accent',        `oklch(52% 0.11 ${t.accentHue})`);
+  r.setProperty('--accent-2',      `oklch(58% 0.11 ${t.accentHue})`);
+  r.setProperty('--accent-bg',     `oklch(94% 0.03 ${t.accentHue})`);
+  r.setProperty('--accent-border', `oklch(82% 0.06 ${t.accentHue})`);
+  r.setProperty('--accent-fg',     `oklch(32% 0.08 ${t.accentHue})`);
+  r.setProperty('--selected',      `oklch(94% 0.018 ${t.accentHue})`);
+  // density tweaks row padding via CSS var; simple approach: tweak base font size
+  const base = ({ compact: 12.5, balanced: 13.5, comfy: 14.5 })[t.density] || 13.5;
+  document.body.style.fontSize = (base * (t.fontScale || 1)) + 'px';
+  document.documentElement.style.setProperty('--banner-h', t.showBanner ? '28px' : '0px');
+  const banner = document.querySelector('.banner');
+  if (banner) banner.style.display = t.showBanner ? '' : 'none';
+  document.documentElement.style.setProperty('--sidebar-w', t.sidebarCollapsed ? '64px' : '224px');
+}
+
+function App() {
+  const [route] = window.useRoute();
+  const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showRaw, setShowRaw] = useState(TWEAK_DEFAULTS.showRawDefault);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const data = window.HistoricalWowData;
+
+  // Re-render whenever the loader notifies (table-by-table progress, then ready).
+  const [, forceUpdate] = useState(0);
+  useEffect(() => data.subscribe(() => forceUpdate((n) => n + 1)), []);
+
+  useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const isK = (e.key === 'k' || e.key === 'K');
+      if (isK && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+      if (e.key === '/' && !['INPUT','TEXTAREA'].includes(e.target.tagName)) {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Default landing — track route changes for audit
+  useEffect(() => {
+    if (route.view === 'list') window.AuditLog.push('list', route.table, '');
+    if (route.view === 'home') window.AuditLog.push('view', 'home', 'Snapshot landing');
+  }, [route.view, route.table]);
+
+  if (!data.loadStatus.ready) {
+    return <LoadingScreen status={data.loadStatus} />;
+  }
+
+  return (
+    <div className="app">
+      <div className="banner">
+        <div className="left">
+          <span className="dot"></span>
+          <span><strong style={{ fontWeight: 600 }}>Read-only archive</strong> · all reads logged</span>
+        </div>
+        <div className="right">
+          <span>snapshot {data.manifest.label}</span>
+          <span>·</span>
+          <span>captured {data.manifest.snapshot_date}</span>
+          <span>·</span>
+          <span>source {data.manifest.instance}</span>
+          <span>·</span>
+          <span>sha {data.manifest.integrity.sha256_manifest.slice(0, 10)}</span>
+        </div>
+      </div>
+
+      <div className="topbar">
+        <div className="brand" onClick={() => window.navigate('/')} style={{ cursor: 'pointer' }}>
+          <div className="logo">H</div>
+          {!tweaks.sidebarCollapsed && <span>HistoricalNow</span>}
+        </div>
+        <div className="search-wrap">
+          <div className="search-trigger" onClick={() => setPaletteOpen(true)}>
+            <window.Icon name="search" size={14} />
+            <span>Search incidents, changes, users, CIs, journal…</span>
+            <span className="kbd">
+              <kbd>⌘</kbd><kbd>K</kbd>
+            </span>
+          </div>
+        </div>
+        <div className="controls">
+          <button className={'toggle' + (showRaw ? ' on' : '')} onClick={() => setShowRaw(v => !v)} title="Show raw values alongside display values">
+            <window.Icon name={showRaw ? 'eye' : 'eye_off'} size={13} />
+            <span>raw</span>
+          </button>
+          <button className="icon-btn" onClick={() => setAuditOpen(true)} title="My access audit log">
+            <window.Icon name="history" size={14} />
+          </button>
+          <div className="divider-v" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px 0 4px' }}>
+            <window.Avatar name="Julian Dicesare" size="sm" />
+            <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>julian.dicesare</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="body">
+        <Sidebar route={route} />
+        <main className="main">
+          {route.view === 'home' && <window.HomePage openPalette={() => setPaletteOpen(true)} />}
+          {route.view === 'list' && <window.ListPage table={route.table} />}
+          {route.view === 'record' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
+          {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
+          {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
+          {route.view === 'reference_ci' && <window.CIRefPage sys_id={route.sys_id} />}
+        </main>
+      </div>
+
+      <window.KPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {auditOpen && <AuditLogPanel onClose={() => setAuditOpen(false)} />}
+
+      <window.TweaksPanel title="Tweaks">
+        <window.TweakSection label="Theme" />
+        <window.TweakSlider label="Accent hue" value={tweaks.accentHue} min={0} max={360} step={5} unit="°"
+          onChange={(v) => setTweak('accentHue', v)} />
+        <div style={{ display: 'flex', gap: 4, marginTop: -4, marginBottom: 2 }}>
+          {[155, 95, 245, 295, 25, 75].map(h => (
+            <button key={h} onClick={() => setTweak('accentHue', h)}
+              style={{ width: 22, height: 22, borderRadius: 6, border: tweaks.accentHue === h ? '2px solid #29261b' : '1px solid rgba(0,0,0,.12)',
+                       background: `oklch(58% 0.11 ${h})`, cursor: 'pointer' }} />
+          ))}
+        </div>
+
+        <window.TweakSection label="Density" />
+        <window.TweakRadio label="Row density" value={tweaks.density}
+          options={['compact', 'balanced', 'comfy']}
+          onChange={(v) => setTweak('density', v)} />
+        <window.TweakSlider label="Font scale" value={tweaks.fontScale} min={0.9} max={1.2} step={0.05}
+          onChange={(v) => setTweak('fontScale', v)} />
+
+        <window.TweakSection label="Layout" />
+        <window.TweakToggle label="Snapshot banner" value={tweaks.showBanner}
+          onChange={(v) => setTweak('showBanner', v)} />
+        <window.TweakToggle label="Collapse sidebar" value={tweaks.sidebarCollapsed}
+          onChange={(v) => setTweak('sidebarCollapsed', v)} />
+
+        <window.TweakSection label="Display" />
+        <window.TweakToggle label="Raw values by default" value={tweaks.showRawDefault}
+          onChange={(v) => { setTweak('showRawDefault', v); setShowRaw(v); }} />
+        <window.TweakToggle label="Mono tokens" value={tweaks.monoTokens}
+          onChange={(v) => setTweak('monoTokens', v)} />
+        <window.TweakToggle label="Relative dates" value={tweaks.showRelativeDates}
+          onChange={(v) => setTweak('showRelativeDates', v)} />
+      </window.TweaksPanel>
+    </div>
+  );
+}
+
+function LoadingScreen({ status }) {
+  const pct = status.total ? Math.round((status.loaded / status.total) * 100) : 0;
+  const subline = status.error
+    ? `Error: ${status.error}`
+    : status.source === 'mock'
+      ? 'No exports found in data/ — falling back to mock seed.'
+      : status.table
+        ? `Loading ${status.table} (${status.loaded} of ${status.total})`
+        : 'Initializing…';
+  return (
+    <div style={{
+      height: '100vh', display: 'grid', placeItems: 'center',
+      background: 'var(--bg)', fontFamily: 'var(--font-sans)',
+    }}>
+      <div style={{ width: 'min(420px, 86vw)', textAlign: 'center' }}>
+        <div className="dot-pulse" style={{ margin: '0 auto 18px' }} />
+        <div style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600 }}>
+          ServiceNow Historical Archive
+        </div>
+        <h1 style={{ fontSize: 18, fontWeight: 600, margin: '4px 0 6px', letterSpacing: '-.01em' }}>
+          Loading archive…
+        </h1>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-3)', minHeight: 18 }}>{subline}</div>
+        <div style={{ marginTop: 16, height: 4, background: 'var(--bg-3)', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', width: pct + '%',
+            background: status.error ? 'var(--c-red)' : 'var(--accent)',
+            transition: 'width .25s ease',
+          }} />
+        </div>
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)' }}>
+          {status.source === 'export' ? 'reading data/' : status.source === 'mock' ? 'mock seed' : ' '}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ route }) {
+  const data = window.HistoricalWowData;
+  const tcount = (t) => data.manifest.tables.find(x => x.table === t)?.source_rows;
+  // Helper: only include nav entry if the table has rows on this snapshot
+  // (so we don't list empty types — e.g. sysapproval_group might be 0
+  // somewhere). null sentinel = always show.
+  const navItem = (id, icon, label, table) => {
+    const c = tcount(table);
+    if (table && c === 0) return null;  // skip empty
+    return { id, icon, label, count: c };
+  };
+  const items = [
+    { id: '/', icon: 'home', label: 'Snapshot' },
+    { sep: 'Tickets' },
+    navItem('/incidents',       'incident', 'Incidents',        'incident'),
+    navItem('/problems',        'flag',     'Problems',         'problem'),
+    { sep: 'Changes' },
+    navItem('/changes',         'change',   'Change requests',  'change_request'),
+    { sep: 'Service catalog' },
+    navItem('/requests',        'folder',   'Requests',         'sc_request'),
+    navItem('/requested-items', 'file',     'Requested items',  'sc_req_item'),
+    navItem('/catalog-tasks',   'check',    'Catalog tasks',    'sc_task'),
+    { sep: 'Approvals' },
+    navItem('/group-approvals', 'shield',   'Group approvals',  'sysapproval_group'),
+    { sep: 'Asset' },
+    navItem('/asset-tasks',     'archive',  'Asset tasks',      'asset_task'),
+    { sep: 'Reference' },
+    navItem('/users',           'user',     'Users',            'sys_user'),
+    navItem('/groups',          'users',    'Groups',           'sys_user_group'),
+    navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
+  ].filter(it => it !== null);
+  const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
+  const isActive = (id) => {
+    if (id === '/') return route.view === 'home';
+    const map = {
+      '/incidents': 'incident', '/changes': 'change_request',
+      '/problems': 'problem', '/requests': 'sc_request',
+      '/requested-items': 'sc_req_item', '/catalog-tasks': 'sc_task',
+      '/group-approvals': 'sysapproval_group', '/asset-tasks': 'asset_task',
+      '/users': 'sys_user', '/groups': 'sys_user_group', '/cis': 'cmdb_ci',
+    };
+    return map[id] && ((route.view === 'list' && route.table === map[id]) ||
+           (route.view === 'record' && map[id] === route.table) ||
+           (route.view?.startsWith('reference_') && (
+             (id === '/users' && route.view === 'reference_user') ||
+             (id === '/groups' && route.view === 'reference_group') ||
+             (id === '/cis' && route.view === 'reference_ci')
+           )));
+  };
+
+  // Adjust router for reference URL routes
+  return (
+    <nav className="sidebar">
+      {items.map((it, i) => it.sep ? (
+        <div key={i} className="section-label" style={{ marginTop: 8 }}>{it.sep}</div>
+      ) : (
+        <button key={it.id} className={'nav-item' + (isActive(it.id) ? ' active' : '')} onClick={() => window.navigate(it.id)}>
+          <span className="icon"><window.Icon name={it.icon} size={14} /></span>
+          <span>{it.label}</span>
+          {it.count != null && <span className="count">{fmt(it.count)}</span>}
+        </button>
+      ))}
+      <div style={{ marginTop: 'auto', padding: '14px 10px 4px' }}>
+        <div style={{
+          background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
+          padding: 10, fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.5,
+        }}>
+          <div style={{ fontWeight: 600, color: 'var(--fg-2)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <window.Icon name="archive" size={11} /> Archive only
+          </div>
+          No live ServiceNow connection. Records reflect the snapshot at left.
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+function AuditLogPanel({ onClose }) {
+  const entries = window.AuditLog.all();
+  return (
+    <div className="audit-log-overlay" onClick={onClose}>
+      <div className="audit-log-panel" onClick={e => e.stopPropagation()}>
+        <div className="head">
+          <window.Icon name="history" size={14} />
+          <h3>Your access log</h3>
+          <span className="sub">every archive read is logged</span>
+          <button className="icon-btn close" onClick={onClose} style={{ width: 26, height: 26, display: 'grid', placeItems: 'center', borderRadius: 6 }}>
+            <window.Icon name="close" size={14} />
+          </button>
+        </div>
+        <div className="body">
+          {entries.length === 0 && <div className="empty">No reads recorded yet this session.</div>}
+          {entries.map((e, i) => (
+            <div key={i} className="entry">
+              <div className="when">{new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19)} · julian.dicesare</div>
+              <div className="what">
+                {e.kind === 'view' ? 'opened ' : e.kind === 'list' ? 'listed ' : 'searched '}
+                <span className="target mono">{e.target}</span>
+                {e.label && <span style={{ color: 'var(--fg-3)' }}> — {e.label}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Patch route to handle reference pages (users/:id etc.) — already covered by record view names
+// Override router behavior: users/:id → reference_user etc.
+const _origParse = window.useRoute;
+// Monkey-patch the parser by overriding navigation results for reference URLs
+const _origUseRoute = window.useRoute;
+window.useRoute = function () {
+  const [r, nav] = _origUseRoute();
+  // Translate /users/:id etc. to reference views
+  if (r.view === 'record') {
+    if (r.table === 'sys_user')        return [{ ...r, view: 'reference_user' }, nav];
+    if (r.table === 'sys_user_group')  return [{ ...r, view: 'reference_group' }, nav];
+    if (r.table === 'cmdb_ci')         return [{ ...r, view: 'reference_ci' }, nav];
+  }
+  return [r, nav];
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);

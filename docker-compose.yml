@@ -1,0 +1,45 @@
+# HistoricalWow — production deployment template.
+#
+# Pulls the latest build from ghcr.io and serves on port 8080.
+# The exported archive is a read-only bind mount; data never lives in
+# the image or the registry.
+#
+# Usage on the prod VM (after `docker login ghcr.io`):
+#   docker compose pull
+#   docker compose up -d
+#
+# Update flow:
+#   docker compose pull && docker compose up -d
+# (rolls forward to the latest image; data volume is untouched.)
+
+services:
+  historicalwow:
+    # Replace <owner> with your GitHub username/org once the repo is created.
+    # Pin to a specific SHA in production rather than :latest if you want
+    # explicit version control over rollouts.
+    image: ghcr.io/OWNER/historicalwow:latest
+    container_name: historicalwow
+
+    ports:
+      - "8080:80"
+
+    volumes:
+      # The live archive on the host. Update the host path to wherever
+      # your exporter writes. ":ro" makes it read-only inside the
+      # container — the viewer never writes to it.
+      - /opt/historicalwow/data:/app/data:ro
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+    # Optional: pin resources. Uncomment if your VM is shared.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 256M
+    #       cpus: '0.5'

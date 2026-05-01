@@ -1,0 +1,389 @@
+/* eslint-disable */
+// Reference pages: user, group, ci, home dashboard
+
+window.HomePage = function HomePage({ openPalette }) {
+  const data = window.HistoricalWowData;
+  // Recently updated across every loaded task table, not just incidents.
+  const recent = (() => {
+    const all = [];
+    const tables = window.TASK_TABLES || ['incident', 'change_request'];
+    for (const t of tables) {
+      const arr = window.getTaskRecords(t);
+      for (const r of arr) {
+        if (r.sys_updated_on) all.push({ rec: r, table: t });
+      }
+    }
+    all.sort((a, b) => (b.rec.sys_updated_on || '').localeCompare(a.rec.sys_updated_on || ''));
+    return all.slice(0, 8);
+  })();
+  const openP1 = data.incidents.filter(i => ['1','2'].includes(i.priority) && !['7','8'].includes(i.state)).slice(0, 4);
+  return (
+    <div style={{ padding: '32px 32px 60px', maxWidth: 1080, margin: '0 auto' }}>
+      <div style={{ marginBottom: 30 }}>
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600 }}>
+          ServiceNow Historical Archive
+        </div>
+        <h1 style={{ margin: '6px 0 8px', fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>
+          Snapshot · 2026-04-30 T-baseline
+        </h1>
+        <div style={{ color: 'var(--fg-3)', fontSize: 13.5, maxWidth: 720, lineHeight: 1.6 }}>
+          Read-only archive of <span className="mono" style={{ fontSize: 12.5 }}>loves.service-now.com</span>.
+          Incidents, change requests, and all referenced context (users, groups, CIs, choices) — captured for the
+          archival exit. No writes. No backfill.
+        </div>
+      </div>
+
+      <div onClick={openPalette} style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '12px 16px',
+        background: 'var(--bg-elev)', border: '1px solid var(--border-2)',
+        borderRadius: 10, cursor: 'text', marginBottom: 24,
+        boxShadow: 'var(--shadow-sm)',
+      }}>
+        <window.Icon name="search" size={16} />
+        <span style={{ color: 'var(--fg-3)', flex: 1 }}>Search incident number, free text, caller, CI…</span>
+        <span className="kbd-inline">⌘ K</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+        {data.manifest.tables.slice(0, 8).map(t => (
+          <div key={t.table} style={{
+            background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
+            padding: '12px 14px', cursor: 'pointer',
+          }} onClick={() => {
+            const map = { incident: '/incidents', change_request: '/changes', sys_user: '/users', sys_user_group: '/groups', cmdb_ci: '/cis' };
+            if (map[t.table]) window.navigate(map[t.table]);
+          }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)' }}>{t.table}</div>
+            <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-.02em', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+              {t.source_rows.toLocaleString()}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>
+              {t.rows.toLocaleString()} loaded
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 22 }}>
+        <div>
+          <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
+            Recently updated
+          </h2>
+          <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            <tbody>
+              {recent.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No records loaded yet.</td></tr>
+              )}
+              {recent.map(({ rec: i, table: t }) => (
+                <tr key={i.sys_id} onClick={() => window.navigate(window.recordUrl(t, i.sys_id))}>
+                  <td className="num" style={{ width: 110 }}>{i.number}</td>
+                  <td className="short"><span className="truncate">{i.short_description}</span></td>
+                  <td style={{ width: 96 }}>
+                    <span className="chip" style={{ fontSize: 10.5 }}>{window.taskLabel(t, 'singular')}</span>
+                  </td>
+                  <td style={{ width: 110 }}>{i.state ? <span className={`chip ${window.stateChipClass('incident', i.state)}`}>{window.decodeChoice('incident', 'state', i.state).label || i.state}</span> : <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
+            Snapshot integrity
+          </h2>
+          <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, fontSize: 12.5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 4, background: 'var(--accent)' }} />
+              <span style={{ fontWeight: 500 }}>Snapshot verified</span>
+              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)' }}>{data.manifest.captured_at}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', rowGap: 6, fontSize: 12 }}>
+              <span style={{ color: 'var(--fg-3)' }}>Tables exported</span><span className="mono">{data.manifest.tables.length}</span>
+              <span style={{ color: 'var(--fg-3)' }}>Source rows</span><span className="mono">{data.manifest.tables.reduce((a,t) => a + t.source_rows, 0).toLocaleString()}</span>
+              <span style={{ color: 'var(--fg-3)' }}>ACL skips</span><span className="mono">{data.manifest.integrity.acl_skips}</span>
+              <span style={{ color: 'var(--fg-3)' }}>Missing attachments</span><span className="mono">{data.manifest.integrity.missing_attachments}</span>
+              <span style={{ color: 'var(--fg-3)' }}>SHA-256 manifest</span><span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>{data.manifest.integrity.sha256_manifest.slice(0, 16)}…</span>
+            </div>
+          </div>
+          <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '20px 0 10px' }}>
+            Open P1 / P2
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {openP1.map(i => (
+              <div key={i.sys_id} onClick={() => window.navigate(`/incidents/${i.sys_id}`)}
+                   style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <span className={`chip ${window.priorityChipClass(i.priority)}`}>P{i.priority}</span>
+                <span className="mono" style={{ fontSize: 12 }}>{i.number}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12.5 }}>{i.short_description}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+window.UserRefPage = function UserRefPage({ sys_id }) {
+  const data = window.HistoricalWowData;
+  const u = window.findUser(sys_id);
+  React.useEffect(() => { if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name); }, [sys_id]);
+  if (!u) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>User not in snapshot.</div>;
+
+  const incidentsAsCaller = data.incidents.filter(i => i.caller_id === sys_id);
+  const incidentsAsAssignee = data.incidents.filter(i => i.assigned_to === sys_id);
+  const groupMembership = data.sys_user_group.filter(g => g.member_sys_ids.includes(sys_id));
+
+  return (
+    <div className="ref-page">
+      <div className="crumbs" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-3)', marginBottom: 14 }}>
+        <a onClick={() => window.navigate('/users')}>Users</a>
+        <window.Icon name="chevron_right" size={11} />
+        <span className="mono">{u.user_name}</span>
+      </div>
+      <div className="head">
+        <window.Avatar name={u.name} size="xl" />
+        <div className="info">
+          <h1>{u.name}</h1>
+          <div className="meta">
+            <span>{u.title}</span>
+            <span style={{ color: 'var(--fg-4)' }}>·</span>
+            <span className="mono">{u.user_name}</span>
+            <span style={{ color: 'var(--fg-4)' }}>·</span>
+            <span>{u.email}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ref-grid">
+        <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(u.department)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(u.location)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(u.company)?.name || '—'}</div></div>
+        {(() => {
+          const cc = window.findCostCenter(u.cost_center) ||
+                     window.findCostCenter(window.findDepartment(u.department)?.cost_center);
+          return (
+            <div className="cell">
+              <div className="label">Cost center</div>
+              <div className="val">{cc ? `${cc.name}${cc.code ? ` · ${cc.code}` : ''}` : '—'}</div>
+            </div>
+          );
+        })()}
+        <div className="cell"><div className="label">Active</div><div className="val">{u.active ? 'true' : 'false'}</div></div>
+        <div className="cell"><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{u.sys_id}</div></div>
+        <div className="cell"><div className="label">Last updated</div><div className="val">{u.sys_updated_on}</div></div>
+      </div>
+
+      <div className="ref-section">
+        <h2>Group membership <span className="count">{groupMembership.length}</span></h2>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {groupMembership.map(g => (
+            <span key={g.sys_id} className="chip" style={{ cursor: 'pointer' }} onClick={() => window.navigate(`/groups/${g.sys_id}`)}>
+              <window.Icon name="users" size={11} />{g.name}
+            </span>
+          ))}
+          {groupMembership.length === 0 && <span style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</span>}
+        </div>
+      </div>
+
+      <div className="ref-section">
+        <h2>Incidents · as caller <span className="count">{incidentsAsCaller.length}</span></h2>
+        <SmallIncTable incidents={incidentsAsCaller} />
+      </div>
+      <div className="ref-section">
+        <h2>Incidents · as assignee <span className="count">{incidentsAsAssignee.length}</span></h2>
+        <SmallIncTable incidents={incidentsAsAssignee} />
+      </div>
+    </div>
+  );
+};
+
+// Compact tabular list of task records. Defaults to incident routing for
+// backward compatibility — pass `table={...}` to navigate to other task types.
+function SmallIncTable({ incidents, table = 'incident' }) {
+  if (!incidents.length) return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None in this snapshot.</div>;
+  return (
+    <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+      <tbody>
+        {incidents.slice(0, 12).map(i => (
+          <tr key={i.sys_id} onClick={() => window.navigate(window.recordUrl(table, i.sys_id))}>
+            <td className="num" style={{ width: 110 }}>{i.number}</td>
+            <td className="short"><span className="truncate">{i.short_description}</span></td>
+            <td style={{ width: 80 }}>{i.priority ? <span className={`chip ${window.priorityChipClass(i.priority)}`}>P{i.priority}</span> : <span className="muted">—</span>}</td>
+            <td style={{ width: 110 }}>{i.state ? <span className={`chip ${window.stateChipClass('incident', i.state)}`}>{window.decodeChoice('incident', 'state', i.state).label || i.state}</span> : <span className="muted">—</span>}</td>
+            <td className="num muted" style={{ width: 90 }}>{window.fmtRelative(i.sys_updated_on)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Helper: bucket task records by their table for a sys_id-based field
+// (e.g. `assignment_group`, `cmdb_ci`). Used by GroupRefPage / CIRefPage.
+function bucketTaskRecords(field, sys_id) {
+  const buckets = [];
+  const tables = window.TASK_TABLES || ['incident', 'change_request'];
+  for (const t of tables) {
+    const arr = window.getTaskRecords(t);
+    const matches = arr.filter(r => r[field] === sys_id);
+    if (matches.length) {
+      matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
+      buckets.push({ table: t, items: matches });
+    }
+  }
+  return buckets;
+}
+
+window.GroupRefPage = function GroupRefPage({ sys_id }) {
+  const data = window.HistoricalWowData;
+  const g = window.findGroup(sys_id);
+  React.useEffect(() => { if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name); }, [sys_id]);
+  if (!g) return <div className="empty">Group not in snapshot.</div>;
+
+  const taskBuckets = bucketTaskRecords('assignment_group', sys_id);
+
+  return (
+    <div className="ref-page">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-3)', marginBottom: 14 }}>
+        <a onClick={() => window.navigate('/groups')}>Groups</a>
+        <window.Icon name="chevron_right" size={11} /><span>{g.name}</span>
+      </div>
+      <div className="head">
+        <div style={{ width: 56, height: 56, borderRadius: 12, background: 'var(--bg-3)', display: 'grid', placeItems: 'center', color: 'var(--fg-2)' }}>
+          <window.Icon name="users" size={26} />
+        </div>
+        <div className="info">
+          <h1>{g.name}</h1>
+          <div className="meta">
+            <span>{g.description}</span>
+            <span style={{ color: 'var(--fg-4)' }}>·</span>
+            <span>{g.member_sys_ids.length} members</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ref-grid">
+        <div className="cell"><div className="label">Manager</div><div className="val">{g.manager ? <window.UserCell sys_id={g.manager} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Active</div><div className="val">{g.active ? 'true' : 'false'}</div></div>
+        <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{g.sys_id}</div></div>
+      </div>
+
+      <div className="ref-section">
+        <h2>Members <span className="count">{g.member_sys_ids.length}</span></h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+          {g.member_sys_ids.map(uid => {
+            const u = window.findUser(uid);
+            return (
+              <div key={uid} onClick={() => window.navigate(`/users/${uid}`)}
+                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer' }}>
+                <window.Avatar name={u?.name} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{u?.name}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{u?.title}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {taskBuckets.length === 0 && (
+        <div className="ref-section">
+          <h2>Records assigned <span className="count">0</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records assigned to this group in the snapshot.</div>
+        </div>
+      )}
+      {taskBuckets.map(({ table: t, items }) => (
+        <div key={t} className="ref-section">
+          <h2>{window.taskLabel(t, 'plural')} assigned <span className="count">{items.length}</span></h2>
+          <SmallIncTable incidents={items.slice(0, 12)} table={t} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+window.CIRefPage = function CIRefPage({ sys_id }) {
+  const data = window.HistoricalWowData;
+  const c = window.findCI(sys_id);
+  React.useEffect(() => { if (c) window.AuditLog.push('view', `cmdb_ci/${c.name}`, c.name); }, [sys_id]);
+  if (!c) return <div className="empty">CI not in snapshot.</div>;
+
+  const taskBuckets = bucketTaskRecords('cmdb_ci', sys_id);
+  const upstream = data.cmdb_rel_ci.filter(r => r.child === sys_id).map(r => ({ rel: r, ci: window.findCI(r.parent) })).filter(x => x.ci);
+  const downstream = data.cmdb_rel_ci.filter(r => r.parent === sys_id).map(r => ({ rel: r, ci: window.findCI(r.child) })).filter(x => x.ci);
+
+  return (
+    <div className="ref-page">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-3)', marginBottom: 14 }}>
+        <a onClick={() => window.navigate('/cis')}>Configuration items</a>
+        <window.Icon name="chevron_right" size={11} /><span className="mono">{c.name}</span>
+      </div>
+      <div className="head">
+        <div style={{ width: 56, height: 56, borderRadius: 12, background: 'var(--bg-3)', display: 'grid', placeItems: 'center', color: 'var(--fg-2)' }}>
+          <window.Icon name="ci" size={26} />
+        </div>
+        <div className="info">
+          <h1 className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 18 }}>{c.name}</h1>
+          <div className="meta">
+            <span className={`chip ${c.operational_status === 'Operational' ? 'green' : c.operational_status === 'Degraded' ? 'amber' : 'red'}`}>{c.operational_status}</span>
+            <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{c.sys_class_name}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ref-grid">
+        <div className="cell"><div className="label">Owned by</div><div className="val">{c.owned_by ? <span className="ref-link" onClick={() => window.navigate(`/groups/${c.owned_by}`)}>{window.findGroup(c.owned_by)?.name}</span> : '—'}</div></div>
+        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name}</div></div>
+        <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number}</div></div>
+        <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">Description</div><div className="val">{c.short_description}</div></div>
+      </div>
+
+      <div className="ref-section">
+        <h2>Upstream dependencies <span className="count">{upstream.length}</span></h2>
+        {upstream.length === 0 ? <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None recorded.</div> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {upstream.map(u => (
+              <div key={u.rel.sys_id} onClick={() => window.navigate(`/cis/${u.ci.sys_id}`)}
+                   style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', cursor: 'pointer' }}>
+                <window.Icon name="arrow_right" size={12} />
+                <span className="mono" style={{ fontSize: 12.5 }}>{u.ci.name}</span>
+                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{u.rel.type}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="ref-section">
+        <h2>Downstream <span className="count">{downstream.length}</span></h2>
+        {downstream.length === 0 ? <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None recorded.</div> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {downstream.map(d => (
+              <div key={d.rel.sys_id} onClick={() => window.navigate(`/cis/${d.ci.sys_id}`)}
+                   style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', cursor: 'pointer' }}>
+                <window.Icon name="arrow_right" size={12} />
+                <span className="mono" style={{ fontSize: 12.5 }}>{d.ci.name}</span>
+                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{d.rel.type}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {taskBuckets.length === 0 && (
+        <div className="ref-section">
+          <h2>Records on this CI <span className="count">0</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records reference this CI in the snapshot.</div>
+        </div>
+      )}
+      {taskBuckets.map(({ table: t, items }) => (
+        <div key={t} className="ref-section">
+          <h2>{window.taskLabel(t, 'plural')} on this CI <span className="count">{items.length}</span></h2>
+          <SmallIncTable incidents={items} table={t} />
+        </div>
+      ))}
+    </div>
+  );
+};

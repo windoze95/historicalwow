@@ -17,7 +17,7 @@ services:
     # Replace <owner> with your GitHub username/org once the repo is created.
     # Pin to a specific SHA in production rather than :latest if you want
     # explicit version control over rollouts.
-    image: ghcr.io/OWNER/historicalwow:latest
+    image: ghcr.io/windoze95/historicalwow:latest
     container_name: historicalwow
 
     ports:

@@ -206,10 +206,12 @@ def build_table(conn, table, indexed_cols, ndjson_path):
         print(f'no NDJSON file — skipping')
         return 0
 
-    # Schema: sys_id PK, indexed columns, raw blob.
-    cols = ['sys_id TEXT PRIMARY KEY']
-    cols += [f'{name} TEXT' for name, _ in indexed_cols]
-    cols.append('raw TEXT')
+    # Schema: sys_id PK, indexed columns, raw blob. Column names are quoted
+    # because some ServiceNow field names collide with SQL reserved words
+    # (e.g. sys_user_grmember has columns "group" and "user").
+    cols = ['"sys_id" TEXT PRIMARY KEY']
+    cols += [f'"{name}" TEXT' for name, _ in indexed_cols]
+    cols.append('"raw" TEXT')
 
     cur = conn.cursor()
     cur.execute(f'DROP TABLE IF EXISTS "{table}"')

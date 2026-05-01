@@ -24,10 +24,12 @@ services:
       - "8080:80"
 
     volumes:
-      # The live archive on the host. Update the host path to wherever
-      # your exporter writes. ":ro" makes it read-only inside the
-      # container — the viewer never writes to it.
-      - /opt/historicalwow/data:/app/data:ro
+      # Mount the exporter's data dir read-only into the container.
+      # `./project/data` matches where historicalwow_export.py writes
+       # (OUT_DIR = <repo>/project/data), so running `docker compose up`
+      # from the repo root just works. Override with an absolute path
+      # if your exporter writes elsewhere.
+      - ./project/data:/app/data:ro
 
     restart: unless-stopped
 

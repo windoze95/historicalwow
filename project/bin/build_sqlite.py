@@ -253,6 +253,24 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
 
     delta_field = _delta_field(table)
     last_cursor = None if force_full else _read_build_state(conn, table)
+
+    # Cursor recovery: if the table already exists with rows but we have no
+    # _build_state row for it (e.g. it was built by a pre-_build_state version
+    # of this script), seed the cursor from MAX(delta_field) so we proceed
+    # incrementally instead of dropping the existing data.
+    if not last_cursor and not force_full:
+        try:
+            existing_count = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        except sqlite3.OperationalError:
+            existing_count = 0
+        if existing_count > 0:
+            recovered = conn.execute(
+                f'SELECT MAX("{delta_field}") FROM "{table}"'
+            ).fetchone()[0]
+            last_cursor = recovered or ''
+            if last_cursor:
+                print(f'(recovered cursor)', end=' ', flush=True)
+
     incremental = bool(last_cursor)
 
     cur = conn.cursor()

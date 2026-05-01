@@ -85,11 +85,10 @@ def get_conn():
 
 # --- helpers --------------------------------------------------------------
 
-def _json_response(handler, payload, status=HTTPStatus.OK):
+def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0):
     body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
     # gzip compress when the client accepts it AND the body is big enough to
-    # be worth it. JSON of NDJSON envelope shape compresses 5-8× — turns
-    # 255 MB cmdb_ci slim into ~30 MB on the wire.
+    # be worth it. JSON of NDJSON envelope shape compresses 5-8×.
     accept = handler.headers.get('Accept-Encoding', '') or ''
     if len(body) > 4096 and 'gzip' in accept:
         body = gzip.compress(body, compresslevel=4)
@@ -101,7 +100,10 @@ def _json_response(handler, payload, status=HTTPStatus.OK):
     if encoding:
         handler.send_header('Content-Encoding', encoding)
     handler.send_header('Content-Length', str(len(body)))
-    handler.send_header('Cache-Control', 'no-cache, must-revalidate')
+    if cache_seconds > 0:
+        handler.send_header('Cache-Control', f'public, max-age={cache_seconds}')
+    else:
+        handler.send_header('Cache-Control', 'no-cache, must-revalidate')
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -228,10 +230,11 @@ def list_table(handler, table, params):
     else:
         out_rows = [_row_to_dict(r) for r in rows]
 
+    cache = 300 if (table in CACHE_5MIN and not q and limit > 200) else 0
     _json_response(handler, {
         'rows': out_rows,
         'total': total, 'limit': limit, 'offset': offset,
-    })
+    }, cache_seconds=cache)
 
 
 def get_record(handler, table, sys_id):
@@ -342,6 +345,37 @@ def get_manifest(handler):
     _send_static(handler, p, content_type='application/json; charset=utf-8')
 
 
+def get_cmdb_ci_lookup(handler):
+    """Compact CI lookup table: sys_id → {name, sys_class_name, operational_status}.
+    Used by the viewer's findCI() helper without loading all 1M full records."""
+    conn = get_conn()
+    rows = conn.execute(
+        'SELECT sys_id, name, sys_class_name, operational_status FROM cmdb_ci'
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out[r['sys_id']] = {
+            'name': r['name'],
+            'sys_class_name': r['sys_class_name'],
+            'operational_status': r['operational_status'],
+        }
+    _json_response(handler, out, cache_seconds=300)
+
+
+# Tables whose contents change rarely between exports — safe to cache for
+# a few minutes in the browser. Sys_audit/journal/attachments still hit
+# /api/<table>/<sys_id> per record, those stay no-cache.
+CACHE_5MIN = {
+    'sys_choice', 'core_company', 'cmn_department', 'cmn_location',
+    'cmn_cost_center', 'sys_user', 'sys_user_group', 'sys_user_grmember',
+    'change_request', 'problem', 'problem_task',
+    'sc_request', 'sc_req_item', 'sc_task',
+    'incident_task', 'change_task',
+    'sysapproval_group', 'asset_task',
+    'task_ci', 'task_sla', 'sysapproval_approver',
+}
+
+
 # --- routing --------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -391,6 +425,8 @@ class Handler(BaseHTTPRequestHandler):
         # API
         if path == '/api/manifest':
             return get_manifest(self)
+        if path == '/api/cmdb_ci_lookup':
+            return get_cmdb_ci_lookup(self)
         if path == '/api/search':
             return cross_table_search(self, params)
 

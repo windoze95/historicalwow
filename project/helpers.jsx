@@ -100,7 +100,19 @@ window.decodeChoice = function (table, element, value) {
 
 window.findUser = (sys_id) => window.HistoricalWowData.sys_user.find((u) => u.sys_id === sys_id);
 window.findGroup = (sys_id) => window.HistoricalWowData.sys_user_group.find((g) => g.sys_id === sys_id);
-window.findCI = (sys_id) => window.HistoricalWowData.cmdb_ci.find((c) => c.sys_id === sys_id);
+window.findCI = (sys_id) => {
+  if (!sys_id) return null;
+  const d = window.HistoricalWowData;
+  // Prefer the compact lookup map (eager-loaded, ~5 MB gzipped). For full
+  // CI records (CIRefPage), components fetch via data.fetchRecord('cmdb_ci', sys_id).
+  const m = d.cmdb_ci_lookup;
+  if (m && m.has && m.has(sys_id)) {
+    const stub = m.get(sys_id);
+    return { sys_id, ...stub };
+  }
+  // Fallback: legacy array (only populated if CIRefPage cached a full record there).
+  return d.cmdb_ci.find((c) => c.sys_id === sys_id) || null;
+};
 window.findCompany = (sys_id) => window.HistoricalWowData.companies.find((c) => c.sys_id === sys_id);
 window.findDepartment = (sys_id) => window.HistoricalWowData.departments.find((d) => d.sys_id === sys_id);
 window.findLocation = (sys_id) => window.HistoricalWowData.locations.find((l) => l.sys_id === sys_id);

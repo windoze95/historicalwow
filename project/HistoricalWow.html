@@ -1621,57 +1621,50 @@ window.HistoricalWowMockSeed = function (d) {
 /* eslint-disable */
 // HistoricalWow data layer.
 //
-// Eagerly loads small/medium tables from /api/* into memory at startup so
-// existing components can keep doing synchronous lookups (window.findUser,
-// data.changes.filter, etc.). Tables too big for memory expose async helpers
-// instead — the viewer fetches per-record / paginated batches on demand.
+// Architecture: this is a thin async API client, NOT a "load everything into
+// memory" cache. The viewer fetches what each view needs, when the view needs
+// it. Only small reference tables get eager-loaded so component code can do
+// synchronous lookups (window.findUser, decodeChoice, etc.).
 //
-// Eager (slim — indexed cols only):
-//   incident, cmdb_ci          (~85 MB and ~100 MB respectively for slim cols)
-//
-// Eager (full):
-//   sys_user, sys_user_group, sys_user_grmember,
+// What's eager (small, ~10 MB compressed combined, cached 5 min on browser):
+//   sys_choice, core_company, cmn_department, cmn_location, cmn_cost_center,
+//   sys_user (~5 MB gzipped), sys_user_group, sys_user_grmember,
 //   change_request, problem, problem_task, sc_request, sc_req_item, sc_task,
 //   incident_task, change_task, sysapproval_group, asset_task,
 //   task_ci, task_sla, sysapproval_approver,
-//   sys_choice, core_company, cmn_department, cmn_location, cmn_cost_center
+//   AND cmdb_ci_lookup (~3-5 MB compressed map of sys_id → name/class)
 //
-// Lazy (never eager-loaded):
-//   sys_audit, sys_journal_field, cmdb_rel_ci, sys_attachment, full incident,
-//   full cmdb_ci. Components fetch via data.fetch* helpers when needed.
+// What's lazy (fetched per view via API helpers):
+//   incident (424k records — list views paginate, refs filter)
+//   full cmdb_ci record (CIRefPage detail)
+//   sys_audit, sys_journal_field (per-record on tab open)
+//   sys_attachment metadata (per-record)
+//   cmdb_rel_ci (per-CI on CIRefPage)
 
 window.HistoricalWowData = (function () {
-  // [<servicenow table name>, <key on window.HistoricalWowData>, <slim?>]
+  // [<servicenow table name>, <key on window.HistoricalWowData>]
   const EAGER_TABLES = [
-    // Reference (small)
-    ['sys_choice',          'sys_choice',           false],
-    ['core_company',        'companies',            false],
-    ['cmn_department',      'departments',          false],
-    ['cmn_location',        'locations',            false],
-    ['cmn_cost_center',     'cost_centers',         false],
-    // Identity
-    ['sys_user',            'sys_user',             false],
-    ['sys_user_group',      'sys_user_group',       false],
-    ['sys_user_grmember',   'sys_user_grmember',    false],
-    // CMDB — slim (only key fields, ~100 bytes/record × 1M = ~100 MB)
-    ['cmdb_ci',             'cmdb_ci',              true],
-    // Task records — change_request and friends are small enough to fully load
-    ['change_request',      'changes',              false],
-    ['problem',             'problem',              false],
-    ['problem_task',        'problem_task',         false],
-    ['sc_request',          'sc_request',           false],
-    ['sc_req_item',         'sc_req_item',          false],
-    ['sc_task',             'sc_task',              false],
-    ['incident_task',       'incident_task',        false],
-    ['change_task',         'change_task',          false],
-    ['sysapproval_group',   'sysapproval_group',    false],
-    ['asset_task',          'asset_task',           false],
-    // incident — slim (424k records × ~200 bytes = ~85 MB). Full record fetched on-demand.
-    ['incident',            'incidents',            true],
-    // Task relationships
-    ['task_ci',             'task_ci',              false],
-    ['task_sla',             'task_sla',            false],
-    ['sysapproval_approver','sysapproval_approver', false],
+    ['sys_choice',          'sys_choice'],
+    ['core_company',        'companies'],
+    ['cmn_department',      'departments'],
+    ['cmn_location',        'locations'],
+    ['cmn_cost_center',     'cost_centers'],
+    ['sys_user',            'sys_user'],
+    ['sys_user_group',      'sys_user_group'],
+    ['sys_user_grmember',   'sys_user_grmember'],
+    ['change_request',      'changes'],
+    ['problem',             'problem'],
+    ['problem_task',        'problem_task'],
+    ['sc_request',          'sc_request'],
+    ['sc_req_item',         'sc_req_item'],
+    ['sc_task',             'sc_task'],
+    ['incident_task',       'incident_task'],
+    ['change_task',         'change_task'],
+    ['sysapproval_group',   'sysapproval_group'],
+    ['asset_task',          'asset_task'],
+    ['task_ci',             'task_ci'],
+    ['task_sla',            'task_sla'],
+    ['sysapproval_approver','sysapproval_approver'],
   ];
 
   // Mirrors the exporter — used by UI code to inspect "is this a task table?"
@@ -1683,20 +1676,23 @@ window.HistoricalWowData = (function () {
   ];
 
   const data = {
-    // Initialize empty so existing readers don't crash before load completes.
+    // Eagerly loaded (or empty until ready)
     companies: [], departments: [], locations: [], cost_centers: [],
     sys_user: [], sys_user_group: [], sys_user_grmember: [],
-    cmdb_ci: [],
     sys_choice: [],
-    incidents: [], changes: [],
+    changes: [],
     problem: [], problem_task: [],
     sc_request: [], sc_req_item: [], sc_task: [],
     incident_task: [], change_task: [],
     sysapproval_group: [], asset_task: [],
     task_ci: [], task_sla: [], sysapproval_approver: [],
-    // Lazy tables — empty arrays for backward compatibility with components
-    // that filter them; they'll never have content. Use the fetch* helpers.
+    // CMDB CI lookup map: sys_id → { name, sys_class_name, operational_status }
+    // Eagerly loaded (~5 MB gzipped). Full CI record fetched on demand.
+    cmdb_ci_lookup: new Map(),
+    // Lazy (always empty, components use fetch* helpers):
+    cmdb_ci: [],         // legacy compat — components should use cmdb_ci_lookup or fetchRecord
     cmdb_rel_ci: [],
+    incidents: [],
     journal: [],
     audit: [],
     attachments: [],
@@ -1706,20 +1702,17 @@ window.HistoricalWowData = (function () {
     },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 1,  // +1 for manifest
+      total: EAGER_TABLES.length + 2,  // +manifest +cmdb_ci_lookup
       loaded: 0,
       error: null,
     },
   };
 
-  // Subscriber pattern so the React shell can re-render as load progresses.
+  // Subscriber pattern for re-render on load progress.
   const listeners = new Set();
   data.subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
   const notify = () => { for (const fn of listeners) { try { fn(data); } catch (_) {} } };
 
-  // Flatten ServiceNow's {value, display_value} envelope to plain values, with
-  // __display_<key> for fields whose display value differs. Coerces 'true'/
-  // 'false' boolean strings.
   function flatten(row) {
     if (!row) return row;
     const out = {};
@@ -1740,8 +1733,6 @@ window.HistoricalWowData = (function () {
     return out;
   }
 
-  // Lightweight retry wrapper around fetch — single transient retry to soak
-  // up the inevitable network blip during load.
   async function apiGet(path) {
     let lastErr = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1760,13 +1751,11 @@ window.HistoricalWowData = (function () {
 
   // ---- async helpers exposed to React components --------------------------
 
-  // Single record (full envelope, all fields).
   data.fetchRecord = async function (table, sys_id) {
-    const row = await apiGet(`/api/${table}/${sys_id}`);
-    return flatten(row);
+    return flatten(await apiGet(`/api/${table}/${sys_id}`));
   };
 
-  // Paginated list. opts: { limit, offset, q, filters: {col: val}, order_by, dir, slim }.
+  // Paginated list. opts: { limit, offset, q, filters, order_by, dir, slim }.
   data.fetchTaskList = async function (table, opts = {}) {
     const params = new URLSearchParams();
     if (opts.limit) params.set('limit', opts.limit);
@@ -1810,14 +1799,12 @@ window.HistoricalWowData = (function () {
     return (res.rows || []).map(r => ({ ...flatten(r), _table: r._table }));
   };
 
-  // ---- post-load processing for eager data --------------------------------
+  // ---- post-load processing ----------------------------------------------
 
   function postProcess() {
-    // sys_choice: alias `name` → `table` for the viewer's decodeChoice() lookup.
     for (const c of data.sys_choice) {
       if (!c.table && c.name) c.table = c.name;
     }
-    // Group membership: derive g.member_sys_ids from sys_user_grmember pivot.
     const groupMembers = new Map();
     for (const m of data.sys_user_grmember) {
       const g = m.group, u = m.user;
@@ -1850,24 +1837,33 @@ window.HistoricalWowData = (function () {
     data.loadStatus.loaded += 1;
     notify();
 
-    // Eager tables — sequential to keep the progress display sensible.
-    for (const [table, alias, slim] of EAGER_TABLES) {
+    // Eager tables
+    for (const [table, alias] of EAGER_TABLES) {
       data.loadStatus.table = table;
       notify();
       try {
-        const params = new URLSearchParams({
-          limit: '2000000', offset: '0',
-        });
-        if (slim) params.set('slim', '1');
-        const res = await apiGet(`/api/${table}?${params}`);
+        const res = await apiGet(`/api/${table}?limit=2000000&offset=0`);
         data[alias] = (res.rows || []).map(flatten);
       } catch (e) {
-        console.warn(`[historicalwow] eager-load ${table} failed:`, e.message);
+        console.warn(`[historicalwow] ${table} eager-load failed:`, e.message);
         data[alias] = [];
       }
       data.loadStatus.loaded += 1;
       notify();
     }
+
+    // CMDB CI lookup map (compact: sys_id → name/class/status)
+    data.loadStatus.table = 'cmdb_ci_lookup';
+    notify();
+    try {
+      const map = await apiGet('/api/cmdb_ci_lookup');
+      data.cmdb_ci_lookup = new Map(Object.entries(map));
+    } catch (e) {
+      console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
+      data.cmdb_ci_lookup = new Map();
+    }
+    data.loadStatus.loaded += 1;
+    notify();
 
     postProcess();
     data.loadStatus.table = null;
@@ -1983,7 +1979,19 @@ window.decodeChoice = function (table, element, value) {
 
 window.findUser = (sys_id) => window.HistoricalWowData.sys_user.find((u) => u.sys_id === sys_id);
 window.findGroup = (sys_id) => window.HistoricalWowData.sys_user_group.find((g) => g.sys_id === sys_id);
-window.findCI = (sys_id) => window.HistoricalWowData.cmdb_ci.find((c) => c.sys_id === sys_id);
+window.findCI = (sys_id) => {
+  if (!sys_id) return null;
+  const d = window.HistoricalWowData;
+  // Prefer the compact lookup map (eager-loaded, ~5 MB gzipped). For full
+  // CI records (CIRefPage), components fetch via data.fetchRecord('cmdb_ci', sys_id).
+  const m = d.cmdb_ci_lookup;
+  if (m && m.has && m.has(sys_id)) {
+    const stub = m.get(sys_id);
+    return { sys_id, ...stub };
+  }
+  // Fallback: legacy array (only populated if CIRefPage cached a full record there).
+  return d.cmdb_ci.find((c) => c.sys_id === sys_id) || null;
+};
 window.findCompany = (sys_id) => window.HistoricalWowData.companies.find((c) => c.sys_id === sys_id);
 window.findDepartment = (sys_id) => window.HistoricalWowData.departments.find((d) => d.sys_id === sys_id);
 window.findLocation = (sys_id) => window.HistoricalWowData.locations.find((l) => l.sys_id === sys_id);
@@ -2174,104 +2182,97 @@ window.AuditLog = (() => {
 
 window.KPalette = function KPalette({ open, onClose }) {
   const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
   const [activeIdx, setActiveIdx] = React.useState(0);
+  const [taskMatches, setTaskMatches] = React.useState([]);
   const inputRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
-      setQ('');
-      setActiveIdx(0);
+      setQ(''); setDebouncedQ(''); setActiveIdx(0); setTaskMatches([]);
       setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open]);
 
+  // Debounce input by 200ms before firing the API search.
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Fire /api/search for task tables when query changes.
+  React.useEffect(() => {
+    if (!debouncedQ) { setTaskMatches([]); return; }
+    let cancel = false;
+    window.HistoricalWowData.fetchSearch(debouncedQ).then(rows => {
+      if (!cancel) setTaskMatches(rows || []);
+    }).catch(() => { if (!cancel) setTaskMatches([]); });
+    return () => { cancel = true; };
+  }, [debouncedQ]);
+
   const data = window.HistoricalWowData;
 
   const results = React.useMemo(() => {
-    const ql = q.trim().toLowerCase();
+    const ql = (debouncedQ || '').toLowerCase();
     if (!ql) {
-      // Default: pinned/recent
+      // Default: navigation shortcuts (no incident peek since those aren't eager-loaded)
+      const tcount = (t) => data.manifest.tables.find(x => x.table === t)?.source_rows || 0;
       return [
-        { group: 'Pinned', items: [
-          { kind: 'incident', sys_id: data.incidents[0].sys_id, label: data.incidents[0].number, sub: data.incidents[0].short_description },
-          { kind: 'incident', sys_id: data.incidents[3].sys_id, label: data.incidents[3].number, sub: data.incidents[3].short_description },
-          { kind: 'change', sys_id: data.changes[1].sys_id, label: data.changes[1].number, sub: data.changes[1].short_description },
-        ]},
         { group: 'Browse', items: [
-          { kind: 'go', target: '/incidents', label: 'All incidents', sub: data.incidents.length + ' records', icon: 'incident' },
-          { kind: 'go', target: '/changes', label: 'All change requests', sub: data.changes.length + ' records', icon: 'change' },
-          { kind: 'go', target: '/users', label: 'Users', sub: data.sys_user.length + ' records', icon: 'user' },
-          { kind: 'go', target: '/groups', label: 'Groups', sub: data.sys_user_group.length + ' records', icon: 'users' },
-          { kind: 'go', target: '/cis', label: 'Configuration items', sub: data.cmdb_ci.length + ' records', icon: 'ci' },
+          { kind: 'go', target: '/incidents',     label: 'All incidents',         sub: tcount('incident').toLocaleString() + ' records',         icon: 'incident' },
+          { kind: 'go', target: '/changes',       label: 'All change requests',   sub: tcount('change_request').toLocaleString() + ' records',  icon: 'change' },
+          { kind: 'go', target: '/problems',      label: 'Problems',              sub: tcount('problem').toLocaleString() + ' records',          icon: 'flag' },
+          { kind: 'go', target: '/requests',      label: 'Service catalog requests', sub: tcount('sc_request').toLocaleString() + ' records',     icon: 'folder' },
+          { kind: 'go', target: '/users',         label: 'Users',                 sub: tcount('sys_user').toLocaleString() + ' records',         icon: 'user' },
+          { kind: 'go', target: '/groups',        label: 'Groups',                sub: tcount('sys_user_group').toLocaleString() + ' records',   icon: 'users' },
+          { kind: 'go', target: '/cis',           label: 'Configuration items',   sub: tcount('cmdb_ci').toLocaleString() + ' records',          icon: 'ci' },
         ]},
       ];
     }
 
-    const incs = data.incidents.filter((i) =>
-      (i.number || '').toLowerCase().includes(ql) ||
-      (i.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 8).map(i => ({ kind: 'incident', sys_id: i.sys_id, label: i.number, sub: i.short_description }));
-
-    const chgs = data.changes.filter((c) =>
-      (c.number || '').toLowerCase().includes(ql) ||
-      (c.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 6).map(c => ({ kind: 'change', sys_id: c.sys_id, label: c.number, sub: c.short_description }));
-
-    // Search every other task table (problem, sc_request, sc_req_item, sc_task,
-    // sysapproval_group, asset_task, …) and group matches by table.
+    // Group task results by table.
     const tasksByTable = {};
-    if (window.TASK_TABLES) {
-      let total = 0;
-      for (const t of window.TASK_TABLES) {
-        if (t === 'incident' || t === 'change_request') continue;
-        const rows = window.getTaskRecords(t);
-        if (!rows.length) continue;
-        const matches = [];
-        for (const r of rows) {
-          if ((r.number || '').toLowerCase().includes(ql) ||
-              (r.short_description || '').toLowerCase().includes(ql)) {
-            matches.push({
-              kind: 'task', table: t, sys_id: r.sys_id,
-              label: r.number || r.sys_id?.slice(0, 8) + '…',
-              sub: r.short_description || '—',
-              meta: t,
-            });
-            total++;
-            if (matches.length >= 6 || total >= 24) break;
-          }
-        }
-        if (matches.length) tasksByTable[t] = matches;
-        if (total >= 24) break;
-      }
+    for (const r of taskMatches) {
+      const t = r._table;
+      if (!tasksByTable[t]) tasksByTable[t] = [];
+      if (tasksByTable[t].length >= 6) continue;
+      tasksByTable[t].push({
+        kind: t === 'incident' ? 'incident' : t === 'change_request' ? 'change' : 'task',
+        table: t, sys_id: r.sys_id,
+        label: r.number || (r.sys_id || '').slice(0, 8) + '…',
+        sub: r.short_description || '—',
+        meta: t,
+      });
     }
 
+    // Eager tables — local synchronous filter (sys_user, cmdb_ci_lookup).
     const users = data.sys_user.filter((u) =>
-      u.name.toLowerCase().includes(ql) ||
-      u.user_name.toLowerCase().includes(ql)
+      (u.name || '').toLowerCase().includes(ql) ||
+      (u.user_name || '').toLowerCase().includes(ql)
     ).slice(0, 6).map(u => ({ kind: 'user', sys_id: u.sys_id, label: u.name, sub: u.title }));
 
-    const cis = data.cmdb_ci.filter((c) =>
-      (c.name || '').toLowerCase().includes(ql) ||
-      (c.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 6).map(c => ({ kind: 'ci', sys_id: c.sys_id, label: c.name, sub: c.sys_class_name }));
-
-    // Journal full-text search is API-only (the journal table isn't loaded
-    // into memory). Skipped here for the synchronous match list — users
-    // looking for journal text can open a record and read its tab. A future
-    // iteration could async-fetch /api/search but it's not synchronous-friendly.
-    const journals = [];
+    const cis = [];
+    if (data.cmdb_ci_lookup && data.cmdb_ci_lookup.forEach) {
+      data.cmdb_ci_lookup.forEach((info, sys_id) => {
+        if (cis.length >= 6) return;
+        if ((info.name || '').toLowerCase().includes(ql)) {
+          cis.push({ kind: 'ci', sys_id, label: info.name, sub: info.sys_class_name });
+        }
+      });
+    }
 
     const groups = [];
-    if (incs.length) groups.push({ group: 'Incidents', items: incs });
-    if (chgs.length) groups.push({ group: 'Change requests', items: chgs });
+    // Incidents and changes get prominent placement when matched.
+    if (tasksByTable.incident)        groups.push({ group: 'Incidents', items: tasksByTable.incident });
+    if (tasksByTable.change_request)  groups.push({ group: 'Change requests', items: tasksByTable.change_request });
     for (const [t, items] of Object.entries(tasksByTable)) {
+      if (t === 'incident' || t === 'change_request') continue;
       groups.push({ group: window.taskLabel(t, 'plural'), items });
     }
-    if (cis.length)  groups.push({ group: 'Configuration items', items: cis });
+    if (cis.length)   groups.push({ group: 'Configuration items', items: cis });
     if (users.length) groups.push({ group: 'Users', items: users });
-    if (journals.length) groups.push({ group: 'In journal / comments', items: journals });
     return groups;
-  }, [q]);
+  }, [debouncedQ, taskMatches]);
 
   const flat = React.useMemo(() => results.flatMap(g => g.items), [results]);
 
@@ -2372,9 +2373,12 @@ window.KPalette = function KPalette({ open, onClose }) {
 
   <script type="text/babel">
 /* eslint-disable */
-// List views for incidents, changes, users, groups, CIs, and any task table
+// List views — paginated API queries against /api/<table>.
+//
+// No table is "eager-loaded into memory and filtered client-side" anymore;
+// each list view does its own paginated fetch with the current filter / search.
 
-// Friendly labels for sidebar / breadcrumbs / page titles, keyed by table.
+// Friendly labels for sidebar / breadcrumbs / page titles.
 window.TASK_LABELS = {
   incident:          { plural: 'Incidents',         singular: 'Incident' },
   change_request:    { plural: 'Change requests',   singular: 'Change request' },
@@ -2391,53 +2395,69 @@ window.TASK_LABELS = {
 window.taskLabel = function (table, mode = 'plural') {
   const e = window.TASK_LABELS[table];
   if (e) return e[mode];
-  // Fall back: humanize the SN table name for less-common task tables
   const text = table.replace(/_/g, ' ');
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
-const ListPage = window.ListPage = function ListPage({ table }) {
-  const [filter, setFilter] = React.useState('all');
-  const [q, setQ] = React.useState('');
-  const data = window.HistoricalWowData;
+const PAGE_SIZE = 50;
 
-  if (table === 'incident') return <IncidentList filter={filter} setFilter={setFilter} q={q} setQ={setQ} />;
-  if (table === 'change_request') return <ChangeList filter={filter} setFilter={setFilter} q={q} setQ={setQ} />;
-  if (table === 'sys_user') return <UserList q={q} setQ={setQ} />;
-  if (table === 'sys_user_group') return <GroupList />;
-  if (table === 'cmdb_ci') return <CIList q={q} setQ={setQ} />;
-  // Any task descendant we don't have a specialized list for falls through
-  // to the generic task list, which adapts to the table's available fields.
+const ListPage = window.ListPage = function ListPage({ table }) {
+  if (table === 'sys_user')        return <UserList />;
+  if (table === 'sys_user_group')  return <GroupList />;
+  if (table === 'cmdb_ci')         return <CIList />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
-    return <TaskList table={table} filter={filter} setFilter={setFilter} q={q} setQ={setQ} />;
+    return <TaskList key={table} table={table} />;
   }
   return null;
 };
 
-function TaskList({ table, filter, setFilter, q, setQ }) {
+// ---- generic paginated task list (fetches via /api/<table>) ---------------
+
+function TaskList({ table }) {
   const data = window.HistoricalWowData;
-  const rows0 = window.getTaskRecords(table);
+  const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  // Debounce q so we don't fire a query on every keystroke
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Reset to page 0 on q change
+  React.useEffect(() => { setPage(0); }, [debouncedQ, table]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList(table, {
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      q: debouncedQ,
+      slim: 1,
+      order_by: 'sys_updated_on',
+      dir: 'desc',
+    }).then(r => {
+      if (cancelled) return;
+      setResp(r);
+      setLoading(false);
+    }).catch(e => {
+      if (cancelled) return;
+      console.warn('TaskList fetch failed:', e);
+      setResp({ rows: [], total: 0 });
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [table, debouncedQ, page]);
+
   const label = window.taskLabel(table, 'plural');
-
-  const filters = [
-    { id: 'all',    label: 'All' },
-    { id: 'open',   label: 'Open' },
-    { id: 'closed', label: 'Closed' },
-  ];
-  let rows = rows0.slice();
-  if (filter === 'open')   rows = rows.filter(r => !['3','4','6','7','8'].includes(String(r.state)));
-  if (filter === 'closed') rows = rows.filter(r => ['3','4','7'].includes(String(r.state)));
-  if (q.trim()) {
-    const ql = q.toLowerCase();
-    rows = rows.filter(r =>
-      (r.number || '').toLowerCase().includes(ql) ||
-      (r.short_description || '').toLowerCase().includes(ql)
-    );
-  }
-  rows.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
-
   const manifestEntry = data.manifest.tables.find(t => t.table === table);
-  const sourceCount = manifestEntry ? manifestEntry.source_rows.toLocaleString() : rows0.length.toLocaleString();
+  const sourceCount = manifestEntry ? manifestEntry.source_rows.toLocaleString() : '?';
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
 
   return (
     <div>
@@ -2445,16 +2465,13 @@ function TaskList({ table, filter, setFilter, q, setQ }) {
         <h1>{label} <span className="count mono">{sourceCount}</span></h1>
         <div className="sub">
           <span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> ·
-          {' '}showing {rows.length} of {rows0.length} loaded rows
+          {' '}{total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}
         </div>
         <div className="toolbar">
-          {filters.map(f => (
-            <button key={f.id} className={'filter-pill' + (filter === f.id ? ' active' : '')} onClick={() => setFilter(f.id)}>{f.label}</button>
-          ))}
           <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter visible…"
-            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 220 }} />
-          <span className="results">{rows.length} rows</span>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search number or short description…"
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 280 }} />
+          <Pager page={page} setPage={setPage} lastPage={lastPage} />
         </div>
       </div>
       <table className="dt">
@@ -2470,12 +2487,18 @@ function TaskList({ table, filter, setFilter, q, setQ }) {
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && (
-            <tr><td colSpan={7} style={{ padding: '40px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
-              No rows loaded for this table.
+          {loading && (resp.rows == null) && (
+            <tr><td colSpan={7} style={{ padding: '60px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />
+              loading…
             </td></tr>
           )}
-          {rows.map(r => {
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={7} style={{ padding: '40px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
+              No matching records.
+            </td></tr>
+          )}
+          {(resp.rows || []).map(r => {
             const stDec = window.decodeChoice('incident', 'state', r.state);
             const prDec = window.decodeChoice('incident', 'priority', r.priority);
             const bars = window.priorityBars(r.priority);
@@ -2510,196 +2533,43 @@ function TaskList({ table, filter, setFilter, q, setQ }) {
   );
 }
 
-function IncidentList({ filter, setFilter, q, setQ }) {
-  const data = window.HistoricalWowData;
-  const filters = [
-    { id: 'all',     label: 'All' },
-    { id: 'open',    label: 'Open' },
-    { id: 'p1',      label: 'P1 / P2' },
-    { id: 'closed',  label: 'Closed' },
-    { id: 'hold',    label: 'Legal hold' },
-  ];
-  let rows = data.incidents.slice();
-  if (filter === 'open')   rows = rows.filter(r => !['6','7','8'].includes(r.state));
-  if (filter === 'closed') rows = rows.filter(r => ['7'].includes(r.state));
-  if (filter === 'p1')     rows = rows.filter(r => ['1','2'].includes(r.priority));
-  if (filter === 'hold')   rows = rows.filter(r => r.legal_hold);
-  if (q.trim()) {
-    const ql = q.toLowerCase();
-    rows = rows.filter(r => r.number.toLowerCase().includes(ql) || r.short_description.toLowerCase().includes(ql));
-  }
-  rows.sort((a, b) => b.sys_updated_on.localeCompare(a.sys_updated_on));
-
+function Pager({ page, setPage, lastPage }) {
   return (
-    <div>
-      <div className="page-header">
-        <h1>
-          Incidents
-          <span className="count mono">{data.manifest.tables.find(t => t.table === 'incident').source_rows.toLocaleString()}</span>
-        </h1>
-        <div className="sub">
-          <span className="mono" style={{ color: 'var(--fg-4)' }}>incident</span> ·
-          {' '}showing {rows.length.toLocaleString()} of {data.incidents.length.toLocaleString()} rows in this snapshot
-          {' '}<span style={{ color: 'var(--fg-4)' }}>(remaining {(data.manifest.tables.find(t=>t.table==='incident').source_rows - data.incidents.length).toLocaleString()} archived but not loaded)</span>
-        </div>
-        <div className="toolbar">
-          {filters.map(f => (
-            <button key={f.id}
-              className={'filter-pill' + (filter === f.id ? ' active' : '')}
-              onClick={() => setFilter(f.id)}>
-              {f.label}
-            </button>
-          ))}
-          <div className="spacer" />
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Filter visible…"
-            style={{
-              height: 26, padding: '0 10px',
-              border: '1px solid var(--border-2)', borderRadius: 14,
-              background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 220,
-            }}
-          />
-          <span className="results">{rows.length} rows</span>
-        </div>
-      </div>
-      <table className="dt">
-        <thead>
-          <tr>
-            <th style={{ width: 110 }}>Number</th>
-            <th>Short description</th>
-            <th style={{ width: 110 }}>Priority</th>
-            <th style={{ width: 130 }}>State</th>
-            <th style={{ width: 180 }}>Caller</th>
-            <th style={{ width: 180 }}>Assigned to</th>
-            <th style={{ width: 170 }}>Group</th>
-            <th style={{ width: 130 }} className="num">Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => {
-            const caller = window.findUser(r.caller_id);
-            const assignee = window.findUser(r.assigned_to);
-            const group = window.findGroup(r.assignment_group);
-            const prDec = window.decodeChoice('incident', 'priority', r.priority);
-            const stDec = window.decodeChoice('incident', 'state', r.state);
-            const bars = window.priorityBars(r.priority);
-            return (
-              <tr key={r.sys_id} onClick={() => window.navigate(`/incidents/${r.sys_id}`)}>
-                <td className="num">{r.number}</td>
-                <td className="short"><span className="truncate">{r.short_description}{r.legal_hold && <span style={{ marginLeft: 8, color: 'var(--c-amber)' }} title="Legal hold"><window.Icon name="lock" size={11} /></span>}</span></td>
-                <td>
-                  <span className={`chip ${window.priorityChipClass(r.priority)}`} title={prDec.label}>
-                    <span className={`priority-bar ${bars.cls}`}>
-                      {[0,1,2,3,4].map(i => <span key={i} className={'b' + (i < bars.filled ? ' on' : '')} style={{ height: 4 + i * 2 }} />)}
-                    </span>
-                    {prDec.label.split(' — ')[0]}
-                  </span>
-                </td>
-                <td><span className={`chip ${window.stateChipClass('incident', r.state)}`}>{stDec.label}</span></td>
-                <td>{caller ? <window.UserCell sys_id={r.caller_id} /> : <span className="muted">—</span>}</td>
-                <td>{assignee ? <window.UserCell sys_id={r.assigned_to} /> : <span className="muted">—</span>}</td>
-                <td className="muted">{group?.name || '—'}</td>
-                <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+      <button className="filter-pill" disabled={page === 0}
+        onClick={() => setPage(0)}>« first</button>
+      <button className="filter-pill" disabled={page === 0}
+        onClick={() => setPage(p => Math.max(0, p - 1))}>‹ prev</button>
+      <button className="filter-pill" disabled={page >= lastPage}
+        onClick={() => setPage(p => Math.min(lastPage, p + 1))}>next ›</button>
+      <button className="filter-pill" disabled={page >= lastPage}
+        onClick={() => setPage(lastPage)}>last »</button>
     </div>
   );
 }
 
-function ChangeList({ filter, setFilter, q, setQ }) {
-  const data = window.HistoricalWowData;
-  const filters = [
-    { id: 'all',  label: 'All' },
-    { id: 'open', label: 'In flight' },
-    { id: 'closed', label: 'Closed' },
-    { id: 'emerg', label: 'Emergency' },
-  ];
-  let rows = data.changes.slice();
-  if (filter === 'open')   rows = rows.filter(r => !['3','4'].includes(r.state));
-  if (filter === 'closed') rows = rows.filter(r => r.state === '3');
-  if (filter === 'emerg')  rows = rows.filter(r => r.type === 'emergency');
-  if (q.trim()) {
-    const ql = q.toLowerCase();
-    rows = rows.filter(r => r.number.toLowerCase().includes(ql) || r.short_description.toLowerCase().includes(ql));
-  }
-  rows.sort((a, b) => b.sys_updated_on.localeCompare(a.sys_updated_on));
+// ---- Users ---------------------------------------------------------------
 
-  return (
-    <div>
-      <div className="page-header">
-        <h1>
-          Change requests
-          <span className="count mono">{data.manifest.tables.find(t => t.table === 'change_request').source_rows.toLocaleString()}</span>
-        </h1>
-        <div className="sub">
-          <span className="mono" style={{ color: 'var(--fg-4)' }}>change_request</span> ·
-          {' '}showing {rows.length} of {data.changes.length} loaded rows
-        </div>
-        <div className="toolbar">
-          {filters.map(f => (
-            <button key={f.id} className={'filter-pill' + (filter === f.id ? ' active' : '')} onClick={() => setFilter(f.id)}>{f.label}</button>
-          ))}
-          <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter visible…"
-            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 220 }} />
-          <span className="results">{rows.length} rows</span>
-        </div>
-      </div>
-      <table className="dt">
-        <thead>
-          <tr>
-            <th style={{ width: 130 }}>Number</th>
-            <th>Short description</th>
-            <th style={{ width: 110 }}>Type</th>
-            <th style={{ width: 100 }}>Risk</th>
-            <th style={{ width: 130 }}>State</th>
-            <th style={{ width: 180 }}>Assigned to</th>
-            <th style={{ width: 170 }}>Group</th>
-            <th style={{ width: 130 }} className="num">Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => {
-            const stDec = window.decodeChoice('change_request', 'state', r.state);
-            const tCls = r.type === 'emergency' ? 'red' : r.type === 'normal' ? 'amber' : 'green';
-            const rCls = r.risk === 'high' ? 'red' : r.risk === 'medium' ? 'amber' : 'green';
-            return (
-              <tr key={r.sys_id} onClick={() => window.navigate(`/changes/${r.sys_id}`)}>
-                <td className="num">{r.number}</td>
-                <td className="short"><span className="truncate">{r.short_description}</span></td>
-                <td><span className={`chip ${tCls}`}>{r.type}</span></td>
-                <td><span className={`chip ${rCls}`}>{r.risk}</span></td>
-                <td><span className={`chip ${window.stateChipClass('change_request', r.state)}`}>{stDec.label}</span></td>
-                <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} /> : <span className="muted">—</span>}</td>
-                <td className="muted">{window.findGroup(r.assignment_group)?.name || '—'}</td>
-                <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function UserList({ q, setQ }) {
+function UserList() {
   const data = window.HistoricalWowData;
+  const [q, setQ] = React.useState('');
   let rows = data.sys_user.slice();
   if (q.trim()) {
     const ql = q.toLowerCase();
-    rows = rows.filter(r => r.name.toLowerCase().includes(ql) || r.user_name.toLowerCase().includes(ql) || (r.title || '').toLowerCase().includes(ql));
+    rows = rows.filter(r =>
+      (r.name || '').toLowerCase().includes(ql) ||
+      (r.user_name || '').toLowerCase().includes(ql) ||
+      (r.title || '').toLowerCase().includes(ql)
+    );
   }
-  rows.sort((a,b) => a.name.localeCompare(b.name));
+  rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const display = rows.slice(0, 500);  // cap render for perf
+
   return (
     <div>
       <div className="page-header">
-        <h1>Users <span className="count mono">{data.manifest.tables.find(t => t.table === 'sys_user').source_rows.toLocaleString()}</span></h1>
-        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user</span> · {rows.length} of {data.sys_user.length} loaded</div>
+        <h1>Users <span className="count mono">{data.manifest.tables.find(t => t.table === 'sys_user')?.source_rows?.toLocaleString() || '—'}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user</span> · {rows.length.toLocaleString()} of {data.sys_user.length.toLocaleString()} loaded</div>
         <div className="toolbar">
           <div className="spacer" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…"
@@ -2711,7 +2581,7 @@ function UserList({ q, setQ }) {
           <th>Name</th><th>User name</th><th>Title</th><th>Department</th><th>Location</th>
         </tr></thead>
         <tbody>
-          {rows.map(u => (
+          {display.map(u => (
             <tr key={u.sys_id} onClick={() => window.navigate(`/users/${u.sys_id}`)}>
               <td><window.UserCell sys_id={u.sys_id} asLink={false} /></td>
               <td className="num">{u.user_name}</td>
@@ -2720,19 +2590,26 @@ function UserList({ q, setQ }) {
               <td className="muted">{window.findLocation(u.location)?.name || '—'}</td>
             </tr>
           ))}
+          {rows.length > display.length && (
+            <tr><td colSpan={5} style={{ padding: 14, color: 'var(--fg-4)', textAlign: 'center', fontSize: 12 }}>
+              {(rows.length - display.length).toLocaleString()} more — refine the filter to see them.
+            </td></tr>
+          )}
         </tbody>
       </table>
     </div>
   );
 }
 
+// ---- Groups ---------------------------------------------------------------
+
 function GroupList() {
   const data = window.HistoricalWowData;
-  const rows = data.sys_user_group.slice().sort((a,b) => a.name.localeCompare(b.name));
+  const rows = data.sys_user_group.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return (
     <div>
       <div className="page-header">
-        <h1>Groups <span className="count mono">{data.manifest.tables.find(t => t.table === 'sys_user_group').source_rows.toLocaleString()}</span></h1>
+        <h1>Groups <span className="count mono">{data.manifest.tables.find(t => t.table === 'sys_user_group')?.source_rows?.toLocaleString() || '—'}</span></h1>
         <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user_group</span> · {data.sys_user_group.length} loaded</div>
       </div>
       <table className="dt">
@@ -2744,7 +2621,7 @@ function GroupList() {
             <tr key={g.sys_id} onClick={() => window.navigate(`/groups/${g.sys_id}`)}>
               <td><strong style={{ fontWeight: 500 }}>{g.name}</strong></td>
               <td>{g.manager ? <window.UserCell sys_id={g.manager} /> : <span className="muted">—</span>}</td>
-              <td className="num">{g.member_sys_ids.length}</td>
+              <td className="num">{(g.member_sys_ids || []).length}</td>
               <td className="muted">{g.description}</td>
             </tr>
           ))}
@@ -2754,39 +2631,79 @@ function GroupList() {
   );
 }
 
-function CIList({ q, setQ }) {
+// ---- CIs (paginated via API since cmdb_ci has 1M+ records) ---------------
+
+function CIList() {
   const data = window.HistoricalWowData;
-  let rows = data.cmdb_ci.slice();
-  if (q.trim()) {
-    const ql = q.toLowerCase();
-    rows = rows.filter(r => r.name.toLowerCase().includes(ql) || r.sys_class_name.toLowerCase().includes(ql));
-  }
-  rows.sort((a,b) => a.name.localeCompare(b.name));
+  const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  React.useEffect(() => { setPage(0); }, [debouncedQ]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList('cmdb_ci', {
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      q: debouncedQ,
+      slim: 1,
+      order_by: 'name', dir: 'asc',
+    }).then(r => {
+      if (cancelled) return;
+      setResp(r); setLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setResp({ rows: [], total: 0 }); setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [debouncedQ, page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+
   return (
     <div>
       <div className="page-header">
-        <h1>Configuration items <span className="count mono">{data.manifest.tables.find(t => t.table === 'cmdb_ci').source_rows.toLocaleString()}</span></h1>
-        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>cmdb_ci</span> · {rows.length} of {data.cmdb_ci.length} loaded</div>
+        <h1>Configuration items <span className="count mono">{data.manifest.tables.find(t => t.table === 'cmdb_ci')?.source_rows?.toLocaleString() || '—'}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>cmdb_ci</span> · {total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}</div>
         <div className="toolbar">
           <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…"
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter by name…"
             style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 240 }} />
+          <Pager page={page} setPage={setPage} lastPage={lastPage} />
         </div>
       </div>
       <table className="dt">
         <thead><tr>
-          <th>Name</th><th>Class</th><th style={{ width: 130 }}>Status</th><th>Owned by</th><th>Description</th>
+          <th>Name</th><th>Class</th><th style={{ width: 130 }}>Status</th><th>Owned by</th>
         </tr></thead>
         <tbody>
-          {rows.map(c => {
-            const stCls = c.operational_status === 'Operational' ? 'green' : c.operational_status === 'Degraded' ? 'amber' : c.operational_status === 'Down' ? 'red' : '';
+          {loading && (resp.rows == null) && (
+            <tr><td colSpan={4} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={4} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No matching CIs.</td></tr>
+          )}
+          {(resp.rows || []).map(c => {
+            const stCls = c.operational_status === 'Operational' ? 'green'
+                         : c.operational_status === 'Degraded' ? 'amber'
+                         : c.operational_status === 'Down' ? 'red' : '';
             return (
               <tr key={c.sys_id} onClick={() => window.navigate(`/cis/${c.sys_id}`)}>
                 <td className="num">{c.name}</td>
                 <td className="muted mono" style={{ fontSize: 12 }}>{c.sys_class_name}</td>
-                <td><span className={`chip ${stCls}`}><span className="swatch" />{c.operational_status}</span></td>
+                <td>{c.operational_status ? <span className={`chip ${stCls}`}><span className="swatch" />{c.operational_status}</span> : <span className="muted">—</span>}</td>
                 <td className="muted">{window.findGroup(c.owned_by)?.name || '—'}</td>
-                <td className="muted short"><span className="truncate">{c.short_description}</span></td>
               </tr>
             );
           })}
@@ -3330,20 +3247,26 @@ function RelatedTab(props) {
 
 window.HomePage = function HomePage({ openPalette }) {
   const data = window.HistoricalWowData;
-  // Recently updated across every loaded task table, not just incidents.
-  const recent = (() => {
-    const all = [];
-    const tables = window.TASK_TABLES || ['incident', 'change_request'];
-    for (const t of tables) {
-      const arr = window.getTaskRecords(t);
-      for (const r of arr) {
-        if (r.sys_updated_on) all.push({ rec: r, table: t });
-      }
-    }
-    all.sort((a, b) => (b.rec.sys_updated_on || '').localeCompare(a.rec.sys_updated_on || ''));
-    return all.slice(0, 8);
-  })();
-  const openP1 = data.incidents.filter(i => ['1','2'].includes(i.priority) && !['7','8'].includes(i.state)).slice(0, 4);
+  const [recent, setRecent] = React.useState(null);  // null = loading
+  const [openP1, setOpenP1] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancel = false;
+    // Recent — most recently updated incidents (the dominant table; fetching
+    // top-N across every task table would mean N parallel API calls).
+    data.fetchTaskList('incident', { limit: 8, slim: 1, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setRecent((r.rows || []).map(x => ({ rec: x, table: 'incident' }))); })
+      .catch(() => { if (!cancel) setRecent([]); });
+    // Open P1: priority=1, state in non-closed. Server doesn't have IN, so
+    // fetch a small page where priority=1 (most P1s) and filter client-side.
+    data.fetchTaskList('incident', { limit: 50, slim: 1, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) {
+        const open = (r.rows || []).filter(i => !['6','7','8'].includes(String(i.state))).slice(0, 4);
+        setOpenP1(open);
+      } })
+      .catch(() => { if (!cancel) setOpenP1([]); });
+    return () => { cancel = true; };
+  }, []);
   return (
     <div style={{ padding: '32px 32px 60px', maxWidth: 1080, margin: '0 auto' }}>
       <div style={{ marginBottom: 30 }}>
@@ -3399,10 +3322,15 @@ window.HomePage = function HomePage({ openPalette }) {
           </h2>
           <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
             <tbody>
-              {recent.length === 0 && (
-                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No records loaded yet.</td></tr>
+              {recent == null && (
+                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>
+                  <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+                </td></tr>
               )}
-              {recent.map(({ rec: i, table: t }) => (
+              {recent && recent.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No recent incidents.</td></tr>
+              )}
+              {(recent || []).map(({ rec: i, table: t }) => (
                 <tr key={i.sys_id} onClick={() => window.navigate(window.recordUrl(t, i.sys_id))}>
                   <td className="num" style={{ width: 110 }}>{i.number}</td>
                   <td className="short"><span className="truncate">{i.short_description}</span></td>
@@ -3437,7 +3365,15 @@ window.HomePage = function HomePage({ openPalette }) {
             Open P1 / P2
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {openP1.map(i => (
+            {openP1 == null && (
+              <div style={{ padding: '12px', color: 'var(--fg-4)', fontSize: 12 }}>
+                <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+              </div>
+            )}
+            {openP1 && openP1.length === 0 && (
+              <div style={{ padding: '12px', color: 'var(--fg-4)', fontSize: 12 }}>None.</div>
+            )}
+            {(openP1 || []).map(i => (
               <div key={i.sys_id} onClick={() => window.navigate(`/incidents/${i.sys_id}`)}
                    style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                 <span className={`chip ${window.priorityChipClass(i.priority)}`}>P{i.priority}</span>
@@ -3455,12 +3391,23 @@ window.HomePage = function HomePage({ openPalette }) {
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
-  React.useEffect(() => { if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name); }, [sys_id]);
+  const [asCaller, setAsCaller]     = React.useState(null);
+  const [asAssignee, setAsAssignee] = React.useState(null);
+
+  React.useEffect(() => {
+    if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
+    let cancel = false;
+    setAsCaller(null); setAsAssignee(null);
+    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
+    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
+    return () => { cancel = true; };
+  }, [sys_id]);
+
   if (!u) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>User not in snapshot.</div>;
 
-  const incidentsAsCaller = data.incidents.filter(i => i.caller_id === sys_id);
-  const incidentsAsAssignee = data.incidents.filter(i => i.assigned_to === sys_id);
-  const groupMembership = data.sys_user_group.filter(g => g.member_sys_ids.includes(sys_id));
+  const groupMembership = data.sys_user_group.filter(g => (g.member_sys_ids || []).includes(sys_id));
 
   return (
     <div className="ref-page">
@@ -3515,12 +3462,12 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       </div>
 
       <div className="ref-section">
-        <h2>Incidents · as caller <span className="count">{incidentsAsCaller.length}</span></h2>
-        <SmallIncTable incidents={incidentsAsCaller} />
+        <h2>Incidents · as caller <span className="count">{asCaller ? asCaller.total.toLocaleString() : '…'}</span></h2>
+        <SmallIncTable incidents={asCaller?.rows || (asCaller == null ? null : [])} />
       </div>
       <div className="ref-section">
-        <h2>Incidents · as assignee <span className="count">{incidentsAsAssignee.length}</span></h2>
-        <SmallIncTable incidents={incidentsAsAssignee} />
+        <h2>Incidents · as assignee <span className="count">{asAssignee ? asAssignee.total.toLocaleString() : '…'}</span></h2>
+        <SmallIncTable incidents={asAssignee?.rows || (asAssignee == null ? null : [])} />
       </div>
     </div>
   );
@@ -3529,6 +3476,11 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
 // Compact tabular list of task records. Defaults to incident routing for
 // backward compatibility — pass `table={...}` to navigate to other task types.
 function SmallIncTable({ incidents, table = 'incident' }) {
+  if (incidents == null) {
+    return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+      <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+    </div>;
+  }
   if (!incidents.length) return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None in this snapshot.</div>;
   return (
     <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
@@ -3548,16 +3500,31 @@ function SmallIncTable({ incidents, table = 'incident' }) {
 }
 
 // Helper: bucket task records by their table for a sys_id-based field
-// (e.g. `assignment_group`, `cmdb_ci`). Used by GroupRefPage / CIRefPage.
-function bucketTaskRecords(field, sys_id) {
+// (e.g. `assignment_group`, `cmdb_ci`). Eager-loaded tables filter in memory;
+// `incident` (lazy) gets a paginated API call. Returns a promise resolving
+// to an ordered list of {table, items} buckets (only non-empty buckets).
+async function bucketTaskRecordsAsync(field, sys_id) {
   const buckets = [];
   const tables = window.TASK_TABLES || ['incident', 'change_request'];
   for (const t of tables) {
-    const arr = window.getTaskRecords(t);
-    const matches = arr.filter(r => r[field] === sys_id);
-    if (matches.length) {
-      matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
-      buckets.push({ table: t, items: matches });
+    if (t === 'incident') {
+      // Lazy: fetch via API
+      try {
+        const res = await window.HistoricalWowData.fetchTaskList(t, {
+          limit: 12, slim: 1, filters: { [field]: sys_id },
+          order_by: 'sys_updated_on', dir: 'desc',
+        });
+        if (res.rows && res.rows.length) {
+          buckets.push({ table: t, items: res.rows, total: res.total });
+        }
+      } catch (_) { /* skip on error */ }
+    } else {
+      const arr = window.getTaskRecords(t);
+      const matches = arr.filter(r => r[field] === sys_id);
+      if (matches.length) {
+        matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
+        buckets.push({ table: t, items: matches, total: matches.length });
+      }
     }
   }
   return buckets;
@@ -3566,10 +3533,17 @@ function bucketTaskRecords(field, sys_id) {
 window.GroupRefPage = function GroupRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const g = window.findGroup(sys_id);
-  React.useEffect(() => { if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name); }, [sys_id]);
+  const [taskBuckets, setTaskBuckets] = React.useState(null);  // null = loading
+  React.useEffect(() => {
+    if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name);
+    let cancel = false;
+    setTaskBuckets(null);
+    bucketTaskRecordsAsync('assignment_group', sys_id)
+      .then(b => { if (!cancel) setTaskBuckets(b); })
+      .catch(() => { if (!cancel) setTaskBuckets([]); });
+    return () => { cancel = true; };
+  }, [sys_id]);
   if (!g) return <div className="empty">Group not in snapshot.</div>;
-
-  const taskBuckets = bucketTaskRecords('assignment_group', sys_id);
 
   return (
     <div className="ref-page">
@@ -3616,15 +3590,23 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
         </div>
       </div>
 
-      {taskBuckets.length === 0 && (
+      {taskBuckets == null && (
+        <div className="ref-section">
+          <h2>Records assigned <span className="count">…</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+            <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+          </div>
+        </div>
+      )}
+      {taskBuckets && taskBuckets.length === 0 && (
         <div className="ref-section">
           <h2>Records assigned <span className="count">0</span></h2>
           <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records assigned to this group in the snapshot.</div>
         </div>
       )}
-      {taskBuckets.map(({ table: t, items }) => (
+      {(taskBuckets || []).map(({ table: t, items, total }) => (
         <div key={t} className="ref-section">
-          <h2>{window.taskLabel(t, 'plural')} assigned <span className="count">{items.length}</span></h2>
+          <h2>{window.taskLabel(t, 'plural')} assigned <span className="count">{(total ?? items.length).toLocaleString()}</span></h2>
           <SmallIncTable incidents={items.slice(0, 12)} table={t} />
         </div>
       ))}
@@ -3634,24 +3616,26 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
 
 window.CIRefPage = function CIRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
-  // The slim CI from the eager cache has name + class + status; fetch the
-  // full record (location, serial, etc.) and the relations on mount.
+  // The compact CI from the eager lookup map has name + class + status;
+  // fetch the full record (location, serial, etc.) and the relations on mount.
   const slim = window.findCI(sys_id);
   const [full, setFull] = React.useState(null);
   const [relations, setRelations] = React.useState({ upstream: null, downstream: null });
+  const [taskBuckets, setTaskBuckets] = React.useState(null);
   React.useEffect(() => {
     if (slim) window.AuditLog.push('view', `cmdb_ci/${slim.name}`, slim.name);
     let cancel = false;
-    setFull(null); setRelations({ upstream: null, downstream: null });
+    setFull(null); setRelations({ upstream: null, downstream: null }); setTaskBuckets(null);
     data.fetchRecord('cmdb_ci', sys_id).then(r => { if (!cancel) setFull(r); }).catch(() => {});
     data.fetchCIRelations(sys_id).then(r => { if (!cancel) setRelations(r); }).catch(() => setRelations({ upstream: [], downstream: [] }));
+    bucketTaskRecordsAsync('cmdb_ci', sys_id)
+      .then(b => { if (!cancel) setTaskBuckets(b); })
+      .catch(() => { if (!cancel) setTaskBuckets([]); });
     return () => { cancel = true; };
   }, [sys_id]);
 
   const c = full || slim;
   if (!c) return <div className="empty">CI not in snapshot.</div>;
-
-  const taskBuckets = bucketTaskRecords('cmdb_ci', sys_id);
   const upstream   = relations.upstream   || [];
   const downstream = relations.downstream || [];
 
@@ -3712,15 +3696,23 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
           </div>
         )}
       </div>
-      {taskBuckets.length === 0 && (
+      {taskBuckets == null && (
+        <div className="ref-section">
+          <h2>Records on this CI <span className="count">…</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+            <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+          </div>
+        </div>
+      )}
+      {taskBuckets && taskBuckets.length === 0 && (
         <div className="ref-section">
           <h2>Records on this CI <span className="count">0</span></h2>
           <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records reference this CI in the snapshot.</div>
         </div>
       )}
-      {taskBuckets.map(({ table: t, items }) => (
+      {(taskBuckets || []).map(({ table: t, items, total }) => (
         <div key={t} className="ref-section">
-          <h2>{window.taskLabel(t, 'plural')} on this CI <span className="count">{items.length}</span></h2>
+          <h2>{window.taskLabel(t, 'plural')} on this CI <span className="count">{(total ?? items.length).toLocaleString()}</span></h2>
           <SmallIncTable incidents={items} table={t} />
         </div>
       ))}

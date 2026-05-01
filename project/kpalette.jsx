@@ -3,104 +3,97 @@
 
 window.KPalette = function KPalette({ open, onClose }) {
   const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
   const [activeIdx, setActiveIdx] = React.useState(0);
+  const [taskMatches, setTaskMatches] = React.useState([]);
   const inputRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
-      setQ('');
-      setActiveIdx(0);
+      setQ(''); setDebouncedQ(''); setActiveIdx(0); setTaskMatches([]);
       setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open]);
 
+  // Debounce input by 200ms before firing the API search.
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Fire /api/search for task tables when query changes.
+  React.useEffect(() => {
+    if (!debouncedQ) { setTaskMatches([]); return; }
+    let cancel = false;
+    window.HistoricalWowData.fetchSearch(debouncedQ).then(rows => {
+      if (!cancel) setTaskMatches(rows || []);
+    }).catch(() => { if (!cancel) setTaskMatches([]); });
+    return () => { cancel = true; };
+  }, [debouncedQ]);
+
   const data = window.HistoricalWowData;
 
   const results = React.useMemo(() => {
-    const ql = q.trim().toLowerCase();
+    const ql = (debouncedQ || '').toLowerCase();
     if (!ql) {
-      // Default: pinned/recent
+      // Default: navigation shortcuts (no incident peek since those aren't eager-loaded)
+      const tcount = (t) => data.manifest.tables.find(x => x.table === t)?.source_rows || 0;
       return [
-        { group: 'Pinned', items: [
-          { kind: 'incident', sys_id: data.incidents[0].sys_id, label: data.incidents[0].number, sub: data.incidents[0].short_description },
-          { kind: 'incident', sys_id: data.incidents[3].sys_id, label: data.incidents[3].number, sub: data.incidents[3].short_description },
-          { kind: 'change', sys_id: data.changes[1].sys_id, label: data.changes[1].number, sub: data.changes[1].short_description },
-        ]},
         { group: 'Browse', items: [
-          { kind: 'go', target: '/incidents', label: 'All incidents', sub: data.incidents.length + ' records', icon: 'incident' },
-          { kind: 'go', target: '/changes', label: 'All change requests', sub: data.changes.length + ' records', icon: 'change' },
-          { kind: 'go', target: '/users', label: 'Users', sub: data.sys_user.length + ' records', icon: 'user' },
-          { kind: 'go', target: '/groups', label: 'Groups', sub: data.sys_user_group.length + ' records', icon: 'users' },
-          { kind: 'go', target: '/cis', label: 'Configuration items', sub: data.cmdb_ci.length + ' records', icon: 'ci' },
+          { kind: 'go', target: '/incidents',     label: 'All incidents',         sub: tcount('incident').toLocaleString() + ' records',         icon: 'incident' },
+          { kind: 'go', target: '/changes',       label: 'All change requests',   sub: tcount('change_request').toLocaleString() + ' records',  icon: 'change' },
+          { kind: 'go', target: '/problems',      label: 'Problems',              sub: tcount('problem').toLocaleString() + ' records',          icon: 'flag' },
+          { kind: 'go', target: '/requests',      label: 'Service catalog requests', sub: tcount('sc_request').toLocaleString() + ' records',     icon: 'folder' },
+          { kind: 'go', target: '/users',         label: 'Users',                 sub: tcount('sys_user').toLocaleString() + ' records',         icon: 'user' },
+          { kind: 'go', target: '/groups',        label: 'Groups',                sub: tcount('sys_user_group').toLocaleString() + ' records',   icon: 'users' },
+          { kind: 'go', target: '/cis',           label: 'Configuration items',   sub: tcount('cmdb_ci').toLocaleString() + ' records',          icon: 'ci' },
         ]},
       ];
     }
 
-    const incs = data.incidents.filter((i) =>
-      (i.number || '').toLowerCase().includes(ql) ||
-      (i.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 8).map(i => ({ kind: 'incident', sys_id: i.sys_id, label: i.number, sub: i.short_description }));
-
-    const chgs = data.changes.filter((c) =>
-      (c.number || '').toLowerCase().includes(ql) ||
-      (c.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 6).map(c => ({ kind: 'change', sys_id: c.sys_id, label: c.number, sub: c.short_description }));
-
-    // Search every other task table (problem, sc_request, sc_req_item, sc_task,
-    // sysapproval_group, asset_task, …) and group matches by table.
+    // Group task results by table.
     const tasksByTable = {};
-    if (window.TASK_TABLES) {
-      let total = 0;
-      for (const t of window.TASK_TABLES) {
-        if (t === 'incident' || t === 'change_request') continue;
-        const rows = window.getTaskRecords(t);
-        if (!rows.length) continue;
-        const matches = [];
-        for (const r of rows) {
-          if ((r.number || '').toLowerCase().includes(ql) ||
-              (r.short_description || '').toLowerCase().includes(ql)) {
-            matches.push({
-              kind: 'task', table: t, sys_id: r.sys_id,
-              label: r.number || r.sys_id?.slice(0, 8) + '…',
-              sub: r.short_description || '—',
-              meta: t,
-            });
-            total++;
-            if (matches.length >= 6 || total >= 24) break;
-          }
-        }
-        if (matches.length) tasksByTable[t] = matches;
-        if (total >= 24) break;
-      }
+    for (const r of taskMatches) {
+      const t = r._table;
+      if (!tasksByTable[t]) tasksByTable[t] = [];
+      if (tasksByTable[t].length >= 6) continue;
+      tasksByTable[t].push({
+        kind: t === 'incident' ? 'incident' : t === 'change_request' ? 'change' : 'task',
+        table: t, sys_id: r.sys_id,
+        label: r.number || (r.sys_id || '').slice(0, 8) + '…',
+        sub: r.short_description || '—',
+        meta: t,
+      });
     }
 
+    // Eager tables — local synchronous filter (sys_user, cmdb_ci_lookup).
     const users = data.sys_user.filter((u) =>
-      u.name.toLowerCase().includes(ql) ||
-      u.user_name.toLowerCase().includes(ql)
+      (u.name || '').toLowerCase().includes(ql) ||
+      (u.user_name || '').toLowerCase().includes(ql)
     ).slice(0, 6).map(u => ({ kind: 'user', sys_id: u.sys_id, label: u.name, sub: u.title }));
 
-    const cis = data.cmdb_ci.filter((c) =>
-      (c.name || '').toLowerCase().includes(ql) ||
-      (c.short_description || '').toLowerCase().includes(ql)
-    ).slice(0, 6).map(c => ({ kind: 'ci', sys_id: c.sys_id, label: c.name, sub: c.sys_class_name }));
-
-    // Journal full-text search is API-only (the journal table isn't loaded
-    // into memory). Skipped here for the synchronous match list — users
-    // looking for journal text can open a record and read its tab. A future
-    // iteration could async-fetch /api/search but it's not synchronous-friendly.
-    const journals = [];
+    const cis = [];
+    if (data.cmdb_ci_lookup && data.cmdb_ci_lookup.forEach) {
+      data.cmdb_ci_lookup.forEach((info, sys_id) => {
+        if (cis.length >= 6) return;
+        if ((info.name || '').toLowerCase().includes(ql)) {
+          cis.push({ kind: 'ci', sys_id, label: info.name, sub: info.sys_class_name });
+        }
+      });
+    }
 
     const groups = [];
-    if (incs.length) groups.push({ group: 'Incidents', items: incs });
-    if (chgs.length) groups.push({ group: 'Change requests', items: chgs });
+    // Incidents and changes get prominent placement when matched.
+    if (tasksByTable.incident)        groups.push({ group: 'Incidents', items: tasksByTable.incident });
+    if (tasksByTable.change_request)  groups.push({ group: 'Change requests', items: tasksByTable.change_request });
     for (const [t, items] of Object.entries(tasksByTable)) {
+      if (t === 'incident' || t === 'change_request') continue;
       groups.push({ group: window.taskLabel(t, 'plural'), items });
     }
-    if (cis.length)  groups.push({ group: 'Configuration items', items: cis });
+    if (cis.length)   groups.push({ group: 'Configuration items', items: cis });
     if (users.length) groups.push({ group: 'Users', items: users });
-    if (journals.length) groups.push({ group: 'In journal / comments', items: journals });
     return groups;
-  }, [q]);
+  }, [debouncedQ, taskMatches]);
 
   const flat = React.useMemo(() => results.flatMap(g => g.items), [results]);
 

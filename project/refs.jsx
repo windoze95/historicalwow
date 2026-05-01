@@ -3,20 +3,26 @@
 
 window.HomePage = function HomePage({ openPalette }) {
   const data = window.HistoricalWowData;
-  // Recently updated across every loaded task table, not just incidents.
-  const recent = (() => {
-    const all = [];
-    const tables = window.TASK_TABLES || ['incident', 'change_request'];
-    for (const t of tables) {
-      const arr = window.getTaskRecords(t);
-      for (const r of arr) {
-        if (r.sys_updated_on) all.push({ rec: r, table: t });
-      }
-    }
-    all.sort((a, b) => (b.rec.sys_updated_on || '').localeCompare(a.rec.sys_updated_on || ''));
-    return all.slice(0, 8);
-  })();
-  const openP1 = data.incidents.filter(i => ['1','2'].includes(i.priority) && !['7','8'].includes(i.state)).slice(0, 4);
+  const [recent, setRecent] = React.useState(null);  // null = loading
+  const [openP1, setOpenP1] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancel = false;
+    // Recent — most recently updated incidents (the dominant table; fetching
+    // top-N across every task table would mean N parallel API calls).
+    data.fetchTaskList('incident', { limit: 8, slim: 1, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setRecent((r.rows || []).map(x => ({ rec: x, table: 'incident' }))); })
+      .catch(() => { if (!cancel) setRecent([]); });
+    // Open P1: priority=1, state in non-closed. Server doesn't have IN, so
+    // fetch a small page where priority=1 (most P1s) and filter client-side.
+    data.fetchTaskList('incident', { limit: 50, slim: 1, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) {
+        const open = (r.rows || []).filter(i => !['6','7','8'].includes(String(i.state))).slice(0, 4);
+        setOpenP1(open);
+      } })
+      .catch(() => { if (!cancel) setOpenP1([]); });
+    return () => { cancel = true; };
+  }, []);
   return (
     <div style={{ padding: '32px 32px 60px', maxWidth: 1080, margin: '0 auto' }}>
       <div style={{ marginBottom: 30 }}>
@@ -72,10 +78,15 @@ window.HomePage = function HomePage({ openPalette }) {
           </h2>
           <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
             <tbody>
-              {recent.length === 0 && (
-                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No records loaded yet.</td></tr>
+              {recent == null && (
+                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>
+                  <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+                </td></tr>
               )}
-              {recent.map(({ rec: i, table: t }) => (
+              {recent && recent.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No recent incidents.</td></tr>
+              )}
+              {(recent || []).map(({ rec: i, table: t }) => (
                 <tr key={i.sys_id} onClick={() => window.navigate(window.recordUrl(t, i.sys_id))}>
                   <td className="num" style={{ width: 110 }}>{i.number}</td>
                   <td className="short"><span className="truncate">{i.short_description}</span></td>
@@ -110,7 +121,15 @@ window.HomePage = function HomePage({ openPalette }) {
             Open P1 / P2
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {openP1.map(i => (
+            {openP1 == null && (
+              <div style={{ padding: '12px', color: 'var(--fg-4)', fontSize: 12 }}>
+                <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+              </div>
+            )}
+            {openP1 && openP1.length === 0 && (
+              <div style={{ padding: '12px', color: 'var(--fg-4)', fontSize: 12 }}>None.</div>
+            )}
+            {(openP1 || []).map(i => (
               <div key={i.sys_id} onClick={() => window.navigate(`/incidents/${i.sys_id}`)}
                    style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                 <span className={`chip ${window.priorityChipClass(i.priority)}`}>P{i.priority}</span>
@@ -128,12 +147,23 @@ window.HomePage = function HomePage({ openPalette }) {
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
-  React.useEffect(() => { if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name); }, [sys_id]);
+  const [asCaller, setAsCaller]     = React.useState(null);
+  const [asAssignee, setAsAssignee] = React.useState(null);
+
+  React.useEffect(() => {
+    if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
+    let cancel = false;
+    setAsCaller(null); setAsAssignee(null);
+    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
+    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
+    return () => { cancel = true; };
+  }, [sys_id]);
+
   if (!u) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>User not in snapshot.</div>;
 
-  const incidentsAsCaller = data.incidents.filter(i => i.caller_id === sys_id);
-  const incidentsAsAssignee = data.incidents.filter(i => i.assigned_to === sys_id);
-  const groupMembership = data.sys_user_group.filter(g => g.member_sys_ids.includes(sys_id));
+  const groupMembership = data.sys_user_group.filter(g => (g.member_sys_ids || []).includes(sys_id));
 
   return (
     <div className="ref-page">
@@ -188,12 +218,12 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       </div>
 
       <div className="ref-section">
-        <h2>Incidents · as caller <span className="count">{incidentsAsCaller.length}</span></h2>
-        <SmallIncTable incidents={incidentsAsCaller} />
+        <h2>Incidents · as caller <span className="count">{asCaller ? asCaller.total.toLocaleString() : '…'}</span></h2>
+        <SmallIncTable incidents={asCaller?.rows || (asCaller == null ? null : [])} />
       </div>
       <div className="ref-section">
-        <h2>Incidents · as assignee <span className="count">{incidentsAsAssignee.length}</span></h2>
-        <SmallIncTable incidents={incidentsAsAssignee} />
+        <h2>Incidents · as assignee <span className="count">{asAssignee ? asAssignee.total.toLocaleString() : '…'}</span></h2>
+        <SmallIncTable incidents={asAssignee?.rows || (asAssignee == null ? null : [])} />
       </div>
     </div>
   );
@@ -202,6 +232,11 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
 // Compact tabular list of task records. Defaults to incident routing for
 // backward compatibility — pass `table={...}` to navigate to other task types.
 function SmallIncTable({ incidents, table = 'incident' }) {
+  if (incidents == null) {
+    return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+      <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+    </div>;
+  }
   if (!incidents.length) return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None in this snapshot.</div>;
   return (
     <table className="dt" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
@@ -221,16 +256,31 @@ function SmallIncTable({ incidents, table = 'incident' }) {
 }
 
 // Helper: bucket task records by their table for a sys_id-based field
-// (e.g. `assignment_group`, `cmdb_ci`). Used by GroupRefPage / CIRefPage.
-function bucketTaskRecords(field, sys_id) {
+// (e.g. `assignment_group`, `cmdb_ci`). Eager-loaded tables filter in memory;
+// `incident` (lazy) gets a paginated API call. Returns a promise resolving
+// to an ordered list of {table, items} buckets (only non-empty buckets).
+async function bucketTaskRecordsAsync(field, sys_id) {
   const buckets = [];
   const tables = window.TASK_TABLES || ['incident', 'change_request'];
   for (const t of tables) {
-    const arr = window.getTaskRecords(t);
-    const matches = arr.filter(r => r[field] === sys_id);
-    if (matches.length) {
-      matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
-      buckets.push({ table: t, items: matches });
+    if (t === 'incident') {
+      // Lazy: fetch via API
+      try {
+        const res = await window.HistoricalWowData.fetchTaskList(t, {
+          limit: 12, slim: 1, filters: { [field]: sys_id },
+          order_by: 'sys_updated_on', dir: 'desc',
+        });
+        if (res.rows && res.rows.length) {
+          buckets.push({ table: t, items: res.rows, total: res.total });
+        }
+      } catch (_) { /* skip on error */ }
+    } else {
+      const arr = window.getTaskRecords(t);
+      const matches = arr.filter(r => r[field] === sys_id);
+      if (matches.length) {
+        matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
+        buckets.push({ table: t, items: matches, total: matches.length });
+      }
     }
   }
   return buckets;
@@ -239,10 +289,17 @@ function bucketTaskRecords(field, sys_id) {
 window.GroupRefPage = function GroupRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const g = window.findGroup(sys_id);
-  React.useEffect(() => { if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name); }, [sys_id]);
+  const [taskBuckets, setTaskBuckets] = React.useState(null);  // null = loading
+  React.useEffect(() => {
+    if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name);
+    let cancel = false;
+    setTaskBuckets(null);
+    bucketTaskRecordsAsync('assignment_group', sys_id)
+      .then(b => { if (!cancel) setTaskBuckets(b); })
+      .catch(() => { if (!cancel) setTaskBuckets([]); });
+    return () => { cancel = true; };
+  }, [sys_id]);
   if (!g) return <div className="empty">Group not in snapshot.</div>;
-
-  const taskBuckets = bucketTaskRecords('assignment_group', sys_id);
 
   return (
     <div className="ref-page">
@@ -289,15 +346,23 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
         </div>
       </div>
 
-      {taskBuckets.length === 0 && (
+      {taskBuckets == null && (
+        <div className="ref-section">
+          <h2>Records assigned <span className="count">…</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+            <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+          </div>
+        </div>
+      )}
+      {taskBuckets && taskBuckets.length === 0 && (
         <div className="ref-section">
           <h2>Records assigned <span className="count">0</span></h2>
           <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records assigned to this group in the snapshot.</div>
         </div>
       )}
-      {taskBuckets.map(({ table: t, items }) => (
+      {(taskBuckets || []).map(({ table: t, items, total }) => (
         <div key={t} className="ref-section">
-          <h2>{window.taskLabel(t, 'plural')} assigned <span className="count">{items.length}</span></h2>
+          <h2>{window.taskLabel(t, 'plural')} assigned <span className="count">{(total ?? items.length).toLocaleString()}</span></h2>
           <SmallIncTable incidents={items.slice(0, 12)} table={t} />
         </div>
       ))}
@@ -307,24 +372,26 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
 
 window.CIRefPage = function CIRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
-  // The slim CI from the eager cache has name + class + status; fetch the
-  // full record (location, serial, etc.) and the relations on mount.
+  // The compact CI from the eager lookup map has name + class + status;
+  // fetch the full record (location, serial, etc.) and the relations on mount.
   const slim = window.findCI(sys_id);
   const [full, setFull] = React.useState(null);
   const [relations, setRelations] = React.useState({ upstream: null, downstream: null });
+  const [taskBuckets, setTaskBuckets] = React.useState(null);
   React.useEffect(() => {
     if (slim) window.AuditLog.push('view', `cmdb_ci/${slim.name}`, slim.name);
     let cancel = false;
-    setFull(null); setRelations({ upstream: null, downstream: null });
+    setFull(null); setRelations({ upstream: null, downstream: null }); setTaskBuckets(null);
     data.fetchRecord('cmdb_ci', sys_id).then(r => { if (!cancel) setFull(r); }).catch(() => {});
     data.fetchCIRelations(sys_id).then(r => { if (!cancel) setRelations(r); }).catch(() => setRelations({ upstream: [], downstream: [] }));
+    bucketTaskRecordsAsync('cmdb_ci', sys_id)
+      .then(b => { if (!cancel) setTaskBuckets(b); })
+      .catch(() => { if (!cancel) setTaskBuckets([]); });
     return () => { cancel = true; };
   }, [sys_id]);
 
   const c = full || slim;
   if (!c) return <div className="empty">CI not in snapshot.</div>;
-
-  const taskBuckets = bucketTaskRecords('cmdb_ci', sys_id);
   const upstream   = relations.upstream   || [];
   const downstream = relations.downstream || [];
 
@@ -385,15 +452,23 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
           </div>
         )}
       </div>
-      {taskBuckets.length === 0 && (
+      {taskBuckets == null && (
+        <div className="ref-section">
+          <h2>Records on this CI <span className="count">…</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+            <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+          </div>
+        </div>
+      )}
+      {taskBuckets && taskBuckets.length === 0 && (
         <div className="ref-section">
           <h2>Records on this CI <span className="count">0</span></h2>
           <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No records reference this CI in the snapshot.</div>
         </div>
       )}
-      {taskBuckets.map(({ table: t, items }) => (
+      {(taskBuckets || []).map(({ table: t, items, total }) => (
         <div key={t} className="ref-section">
-          <h2>{window.taskLabel(t, 'plural')} on this CI <span className="count">{items.length}</span></h2>
+          <h2>{window.taskLabel(t, 'plural')} on this CI <span className="count">{(total ?? items.length).toLocaleString()}</span></h2>
           <SmallIncTable incidents={items} table={t} />
         </div>
       ))}

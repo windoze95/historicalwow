@@ -202,7 +202,7 @@ function LoadingScreen({ status }) {
           }} />
         </div>
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)' }}>
-          {status.source === 'export' ? 'reading data/' : status.source === 'mock' ? 'mock seed' : ' '}
+          {status.source === 'export' ? 'fetching reference lookups' : status.source === 'mock' ? 'mock seed' : ' '}
         </div>
       </div>
     </div>

@@ -98,7 +98,18 @@ window.decodeChoice = function (table, element, value) {
   return { label: c ? c.label : String(value), value: String(value) };
 };
 
-window.findUser = (sys_id) => window.HistoricalWowData.sys_user.find((u) => u.sys_id === sys_id);
+window.findUser = (sys_id) => {
+  if (!sys_id) return null;
+  const d = window.HistoricalWowData;
+  // Prefer the compact lookup map (eager-loaded, ~3 MB gzipped). Components
+  // that need the full user envelope (UserRefPage) call data.fetchRecord.
+  const m = d.sys_user_lookup;
+  if (m && m.has && m.has(sys_id)) {
+    return { sys_id, ...m.get(sys_id) };
+  }
+  // Fallback: legacy array (only populated when something explicitly fetched a full user).
+  return d.sys_user.find((u) => u.sys_id === sys_id) || null;
+};
 window.findGroup = (sys_id) => window.HistoricalWowData.sys_user_group.find((g) => g.sys_id === sys_id);
 window.findCI = (sys_id) => {
   if (!sys_id) return null;

@@ -4,47 +4,59 @@
 
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const data = window.HistoricalWowData;
-  // Slim record from eager-loaded list (incident is slim-loaded; others fully).
-  const slim = window.getTaskRecords(table).find(r => r.sys_id === sys_id);
   const [tab, setTab] = React.useState('journal');
-  // Full record (description, close_notes, etc.) is fetched on mount.
-  const [fullRec, setFullRec] = React.useState(null);
-  const [journals, setJournals] = React.useState(null);   // null = loading, [] = empty
+  // All record data fetched via API on mount. No eager-loaded incident list,
+  // so we don't have a "slim" until the API responds.
+  const [fullRec, setFullRec]   = React.useState(null);
+  const [journals, setJournals] = React.useState(null);
   const [audits, setAudits]     = React.useState(null);
   const [atts, setAtts]         = React.useState(null);
+  const [tasks, setTasks]       = React.useState([]);
+  const [ciLinks, setCILinks]   = React.useState([]);
+  const [slas, setSLAs]         = React.useState([]);
+  const [approvals, setApprovals] = React.useState([]);
 
   React.useEffect(() => {
-    if (slim) window.AuditLog.push('view', `${table}/${slim.number}`, slim.short_description);
     let cancel = false;
     setFullRec(null); setJournals(null); setAudits(null); setAtts(null);
+    setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
 
-    data.fetchRecord(table, sys_id).then(r => { if (!cancel) setFullRec(r); }).catch(() => {});
+    data.fetchRecord(table, sys_id).then(r => {
+      if (cancel) return;
+      setFullRec(r);
+      if (r) window.AuditLog.push('view', `${table}/${r.number}`, r.short_description);
+    }).catch(() => {});
     data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
     data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
+
+    // Per-record relationships (each is a small filtered query — was eager-
+    // loaded as 422k+90k+75k rows, now 0–N rows per record).
+    const childTablesByParent = {
+      incident: 'incident_task', change_request: 'change_task', problem: 'problem_task',
+    };
+    const childTable = childTablesByParent[table];
+    if (childTable) {
+      data.fetchTaskList(childTable, { filters: { parent: sys_id }, limit: 200, slim: 1 })
+        .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
+    }
+    data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
+      .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
+    data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
+      .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
+    data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
+      .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+
     return () => { cancel = true; };
   }, [table, sys_id]);
 
-  // Use the full record when available, slim while it's loading.
-  const rec = fullRec || slim;
+  const rec = fullRec;
+  if (rec === null) {
+    return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading…</div>;
+  }
   if (!rec) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;
   }
-
-  // Child tasks: any task table that has `parent` pointing at this record.
-  const childTablesByParent = {
-    incident: 'incident_task',
-    change_request: 'change_task',
-    problem: 'problem_task',
-  };
-  const childTable = childTablesByParent[table];
-  let tasks = [];
-  if (childTable) {
-    tasks = (window.getTaskRecords(childTable) || []).filter(t => t.parent === sys_id);
-  }
-  const ciLink = data.task_ci.filter(tc => tc.task === sys_id);
-  const slas = data.task_sla.filter(s => s.task === sys_id);
-  const approvals = data.sysapproval_approver.filter(a => a.sysapproval === sys_id);
 
   const journalCount = journals == null ? '…' : journals.length;
   const auditCount   = audits   == null ? '…' : audits.length;
@@ -57,7 +69,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         <FieldsSection rec={rec} table={table} showRaw={showRaw} />
         {tasks.length > 0 && <TasksSection tasks={tasks} table={table} />}
         {slas.length > 0 && <SLAsSection slas={slas} />}
-        {ciLink.length > 0 && <AffectedCIsSection ciLinks={ciLink} />}
+        {ciLinks.length > 0 && <AffectedCIsSection ciLinks={ciLinks} />}
         {approvals.length > 0 && <ApprovalsSection approvals={approvals} />}
         <ManifestFooter rec={rec} />
       </div>

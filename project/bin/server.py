@@ -362,6 +362,25 @@ def get_cmdb_ci_lookup(handler):
     _json_response(handler, out, cache_seconds=300)
 
 
+def get_sys_user_lookup(handler):
+    """Compact user lookup table: sys_id → {name, user_name, title, department, location}.
+    Used by the viewer's findUser() helper without loading all 142k full envelopes."""
+    conn = get_conn()
+    rows = conn.execute(
+        'SELECT sys_id, name, user_name, title, department, location FROM sys_user'
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out[r['sys_id']] = {
+            'name': r['name'],
+            'user_name': r['user_name'],
+            'title': r['title'],
+            'department': r['department'],
+            'location': r['location'],
+        }
+    _json_response(handler, out, cache_seconds=300)
+
+
 # Tables whose contents change rarely between exports — safe to cache for
 # a few minutes in the browser. Sys_audit/journal/attachments still hit
 # /api/<table>/<sys_id> per record, those stay no-cache.
@@ -427,6 +446,8 @@ class Handler(BaseHTTPRequestHandler):
             return get_manifest(self)
         if path == '/api/cmdb_ci_lookup':
             return get_cmdb_ci_lookup(self)
+        if path == '/api/sys_user_lookup':
+            return get_sys_user_lookup(self)
         if path == '/api/search':
             return cross_table_search(self, params)
 

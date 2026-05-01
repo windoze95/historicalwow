@@ -1642,29 +1642,17 @@ window.HistoricalWowMockSeed = function (d) {
 //   cmdb_rel_ci (per-CI on CIRefPage)
 
 window.HistoricalWowData = (function () {
-  // [<servicenow table name>, <key on window.HistoricalWowData>]
+  // Tables eager-loaded ONLY because the JSX uses them in synchronous lookups
+  // (findCI, findGroup, decodeChoice, etc.) and they're small enough to keep
+  // in memory. Anything bigger is fetched per-view via API.
   const EAGER_TABLES = [
-    ['sys_choice',          'sys_choice'],
-    ['core_company',        'companies'],
-    ['cmn_department',      'departments'],
-    ['cmn_location',        'locations'],
-    ['cmn_cost_center',     'cost_centers'],
-    ['sys_user',            'sys_user'],
-    ['sys_user_group',      'sys_user_group'],
-    ['sys_user_grmember',   'sys_user_grmember'],
-    ['change_request',      'changes'],
-    ['problem',             'problem'],
-    ['problem_task',        'problem_task'],
-    ['sc_request',          'sc_request'],
-    ['sc_req_item',         'sc_req_item'],
-    ['sc_task',             'sc_task'],
-    ['incident_task',       'incident_task'],
-    ['change_task',         'change_task'],
-    ['sysapproval_group',   'sysapproval_group'],
-    ['asset_task',          'asset_task'],
-    ['task_ci',             'task_ci'],
-    ['task_sla',            'task_sla'],
-    ['sysapproval_approver','sysapproval_approver'],
+    ['sys_choice',          'sys_choice'],     // decodeChoice
+    ['core_company',        'companies'],      // findCompany
+    ['cmn_department',      'departments'],    // findDepartment
+    ['cmn_location',        'locations'],      // findLocation
+    ['cmn_cost_center',     'cost_centers'],   // findCostCenter
+    ['sys_user_group',      'sys_user_group'], // findGroup (~200 records)
+    ['sys_user_grmember',   'sys_user_grmember'], // group membership pivot (small)
   ];
 
   // Mirrors the exporter — used by UI code to inspect "is this a task table?"
@@ -1678,21 +1666,21 @@ window.HistoricalWowData = (function () {
   const data = {
     // Eagerly loaded (or empty until ready)
     companies: [], departments: [], locations: [], cost_centers: [],
-    sys_user: [], sys_user_group: [], sys_user_grmember: [],
+    sys_user_group: [], sys_user_grmember: [],
     sys_choice: [],
-    changes: [],
+    // Lookup maps — compact projections used by sync find* helpers.
+    cmdb_ci_lookup: new Map(),  // sys_id → { name, sys_class_name, operational_status }
+    sys_user_lookup: new Map(), // sys_id → { name, user_name, title, department, location }
+    // Lazy: components fetch what they need via the API helpers below.
+    sys_user: [],         // populated only by callers that need full envelope (rare)
+    cmdb_ci: [],          // legacy compat — empty
+    cmdb_rel_ci: [],
+    incidents: [], changes: [],
     problem: [], problem_task: [],
     sc_request: [], sc_req_item: [], sc_task: [],
     incident_task: [], change_task: [],
     sysapproval_group: [], asset_task: [],
     task_ci: [], task_sla: [], sysapproval_approver: [],
-    // CMDB CI lookup map: sys_id → { name, sys_class_name, operational_status }
-    // Eagerly loaded (~5 MB gzipped). Full CI record fetched on demand.
-    cmdb_ci_lookup: new Map(),
-    // Lazy (always empty, components use fetch* helpers):
-    cmdb_ci: [],         // legacy compat — components should use cmdb_ci_lookup or fetchRecord
-    cmdb_rel_ci: [],
-    incidents: [],
     journal: [],
     audit: [],
     attachments: [],
@@ -1702,7 +1690,7 @@ window.HistoricalWowData = (function () {
     },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 2,  // +manifest +cmdb_ci_lookup
+      total: EAGER_TABLES.length + 3,  // +manifest +cmdb_ci_lookup +sys_user_lookup
       loaded: 0,
       error: null,
     },
@@ -1852,7 +1840,20 @@ window.HistoricalWowData = (function () {
       notify();
     }
 
-    // CMDB CI lookup map (compact: sys_id → name/class/status)
+    // Lookup maps — sys_user (~3 MB) and cmdb_ci (~5 MB). These are the
+    // largest eager loads but the price for synchronous findUser / findCI.
+    data.loadStatus.table = 'sys_user_lookup';
+    notify();
+    try {
+      const map = await apiGet('/api/sys_user_lookup');
+      data.sys_user_lookup = new Map(Object.entries(map));
+    } catch (e) {
+      console.warn('[historicalwow] sys_user_lookup failed:', e.message);
+      data.sys_user_lookup = new Map();
+    }
+    data.loadStatus.loaded += 1;
+    notify();
+
     data.loadStatus.table = 'cmdb_ci_lookup';
     notify();
     try {
@@ -1977,7 +1978,18 @@ window.decodeChoice = function (table, element, value) {
   return { label: c ? c.label : String(value), value: String(value) };
 };
 
-window.findUser = (sys_id) => window.HistoricalWowData.sys_user.find((u) => u.sys_id === sys_id);
+window.findUser = (sys_id) => {
+  if (!sys_id) return null;
+  const d = window.HistoricalWowData;
+  // Prefer the compact lookup map (eager-loaded, ~3 MB gzipped). Components
+  // that need the full user envelope (UserRefPage) call data.fetchRecord.
+  const m = d.sys_user_lookup;
+  if (m && m.has && m.has(sys_id)) {
+    return { sys_id, ...m.get(sys_id) };
+  }
+  // Fallback: legacy array (only populated when something explicitly fetched a full user).
+  return d.sys_user.find((u) => u.sys_id === sys_id) || null;
+};
 window.findGroup = (sys_id) => window.HistoricalWowData.sys_user_group.find((g) => g.sys_id === sys_id);
 window.findCI = (sys_id) => {
   if (!sys_id) return null;
@@ -2723,47 +2735,59 @@ Object.assign(window, { ListPage });
 
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const data = window.HistoricalWowData;
-  // Slim record from eager-loaded list (incident is slim-loaded; others fully).
-  const slim = window.getTaskRecords(table).find(r => r.sys_id === sys_id);
   const [tab, setTab] = React.useState('journal');
-  // Full record (description, close_notes, etc.) is fetched on mount.
-  const [fullRec, setFullRec] = React.useState(null);
-  const [journals, setJournals] = React.useState(null);   // null = loading, [] = empty
+  // All record data fetched via API on mount. No eager-loaded incident list,
+  // so we don't have a "slim" until the API responds.
+  const [fullRec, setFullRec]   = React.useState(null);
+  const [journals, setJournals] = React.useState(null);
   const [audits, setAudits]     = React.useState(null);
   const [atts, setAtts]         = React.useState(null);
+  const [tasks, setTasks]       = React.useState([]);
+  const [ciLinks, setCILinks]   = React.useState([]);
+  const [slas, setSLAs]         = React.useState([]);
+  const [approvals, setApprovals] = React.useState([]);
 
   React.useEffect(() => {
-    if (slim) window.AuditLog.push('view', `${table}/${slim.number}`, slim.short_description);
     let cancel = false;
     setFullRec(null); setJournals(null); setAudits(null); setAtts(null);
+    setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
 
-    data.fetchRecord(table, sys_id).then(r => { if (!cancel) setFullRec(r); }).catch(() => {});
+    data.fetchRecord(table, sys_id).then(r => {
+      if (cancel) return;
+      setFullRec(r);
+      if (r) window.AuditLog.push('view', `${table}/${r.number}`, r.short_description);
+    }).catch(() => {});
     data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
     data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
+
+    // Per-record relationships (each is a small filtered query — was eager-
+    // loaded as 422k+90k+75k rows, now 0–N rows per record).
+    const childTablesByParent = {
+      incident: 'incident_task', change_request: 'change_task', problem: 'problem_task',
+    };
+    const childTable = childTablesByParent[table];
+    if (childTable) {
+      data.fetchTaskList(childTable, { filters: { parent: sys_id }, limit: 200, slim: 1 })
+        .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
+    }
+    data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
+      .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
+    data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
+      .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
+    data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
+      .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+
     return () => { cancel = true; };
   }, [table, sys_id]);
 
-  // Use the full record when available, slim while it's loading.
-  const rec = fullRec || slim;
+  const rec = fullRec;
+  if (rec === null) {
+    return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading…</div>;
+  }
   if (!rec) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;
   }
-
-  // Child tasks: any task table that has `parent` pointing at this record.
-  const childTablesByParent = {
-    incident: 'incident_task',
-    change_request: 'change_task',
-    problem: 'problem_task',
-  };
-  const childTable = childTablesByParent[table];
-  let tasks = [];
-  if (childTable) {
-    tasks = (window.getTaskRecords(childTable) || []).filter(t => t.parent === sys_id);
-  }
-  const ciLink = data.task_ci.filter(tc => tc.task === sys_id);
-  const slas = data.task_sla.filter(s => s.task === sys_id);
-  const approvals = data.sysapproval_approver.filter(a => a.sysapproval === sys_id);
 
   const journalCount = journals == null ? '…' : journals.length;
   const auditCount   = audits   == null ? '…' : audits.length;
@@ -2776,7 +2800,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         <FieldsSection rec={rec} table={table} showRaw={showRaw} />
         {tasks.length > 0 && <TasksSection tasks={tasks} table={table} />}
         {slas.length > 0 && <SLAsSection slas={slas} />}
-        {ciLink.length > 0 && <AffectedCIsSection ciLinks={ciLink} />}
+        {ciLinks.length > 0 && <AffectedCIsSection ciLinks={ciLinks} />}
         {approvals.length > 0 && <ApprovalsSection approvals={approvals} />}
         <ManifestFooter rec={rec} />
       </div>
@@ -4354,7 +4378,7 @@ function LoadingScreen({ status }) {
           }} />
         </div>
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)' }}>
-          {status.source === 'export' ? 'reading data/' : status.source === 'mock' ? 'mock seed' : ' '}
+          {status.source === 'export' ? 'fetching reference lookups' : status.source === 'mock' ? 'mock seed' : ' '}
         </div>
       </div>
     </div>

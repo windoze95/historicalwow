@@ -22,29 +22,17 @@
 //   cmdb_rel_ci (per-CI on CIRefPage)
 
 window.HistoricalWowData = (function () {
-  // [<servicenow table name>, <key on window.HistoricalWowData>]
+  // Tables eager-loaded ONLY because the JSX uses them in synchronous lookups
+  // (findCI, findGroup, decodeChoice, etc.) and they're small enough to keep
+  // in memory. Anything bigger is fetched per-view via API.
   const EAGER_TABLES = [
-    ['sys_choice',          'sys_choice'],
-    ['core_company',        'companies'],
-    ['cmn_department',      'departments'],
-    ['cmn_location',        'locations'],
-    ['cmn_cost_center',     'cost_centers'],
-    ['sys_user',            'sys_user'],
-    ['sys_user_group',      'sys_user_group'],
-    ['sys_user_grmember',   'sys_user_grmember'],
-    ['change_request',      'changes'],
-    ['problem',             'problem'],
-    ['problem_task',        'problem_task'],
-    ['sc_request',          'sc_request'],
-    ['sc_req_item',         'sc_req_item'],
-    ['sc_task',             'sc_task'],
-    ['incident_task',       'incident_task'],
-    ['change_task',         'change_task'],
-    ['sysapproval_group',   'sysapproval_group'],
-    ['asset_task',          'asset_task'],
-    ['task_ci',             'task_ci'],
-    ['task_sla',            'task_sla'],
-    ['sysapproval_approver','sysapproval_approver'],
+    ['sys_choice',          'sys_choice'],     // decodeChoice
+    ['core_company',        'companies'],      // findCompany
+    ['cmn_department',      'departments'],    // findDepartment
+    ['cmn_location',        'locations'],      // findLocation
+    ['cmn_cost_center',     'cost_centers'],   // findCostCenter
+    ['sys_user_group',      'sys_user_group'], // findGroup (~200 records)
+    ['sys_user_grmember',   'sys_user_grmember'], // group membership pivot (small)
   ];
 
   // Mirrors the exporter — used by UI code to inspect "is this a task table?"
@@ -58,21 +46,21 @@ window.HistoricalWowData = (function () {
   const data = {
     // Eagerly loaded (or empty until ready)
     companies: [], departments: [], locations: [], cost_centers: [],
-    sys_user: [], sys_user_group: [], sys_user_grmember: [],
+    sys_user_group: [], sys_user_grmember: [],
     sys_choice: [],
-    changes: [],
+    // Lookup maps — compact projections used by sync find* helpers.
+    cmdb_ci_lookup: new Map(),  // sys_id → { name, sys_class_name, operational_status }
+    sys_user_lookup: new Map(), // sys_id → { name, user_name, title, department, location }
+    // Lazy: components fetch what they need via the API helpers below.
+    sys_user: [],         // populated only by callers that need full envelope (rare)
+    cmdb_ci: [],          // legacy compat — empty
+    cmdb_rel_ci: [],
+    incidents: [], changes: [],
     problem: [], problem_task: [],
     sc_request: [], sc_req_item: [], sc_task: [],
     incident_task: [], change_task: [],
     sysapproval_group: [], asset_task: [],
     task_ci: [], task_sla: [], sysapproval_approver: [],
-    // CMDB CI lookup map: sys_id → { name, sys_class_name, operational_status }
-    // Eagerly loaded (~5 MB gzipped). Full CI record fetched on demand.
-    cmdb_ci_lookup: new Map(),
-    // Lazy (always empty, components use fetch* helpers):
-    cmdb_ci: [],         // legacy compat — components should use cmdb_ci_lookup or fetchRecord
-    cmdb_rel_ci: [],
-    incidents: [],
     journal: [],
     audit: [],
     attachments: [],
@@ -82,7 +70,7 @@ window.HistoricalWowData = (function () {
     },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 2,  // +manifest +cmdb_ci_lookup
+      total: EAGER_TABLES.length + 3,  // +manifest +cmdb_ci_lookup +sys_user_lookup
       loaded: 0,
       error: null,
     },
@@ -232,7 +220,20 @@ window.HistoricalWowData = (function () {
       notify();
     }
 
-    // CMDB CI lookup map (compact: sys_id → name/class/status)
+    // Lookup maps — sys_user (~3 MB) and cmdb_ci (~5 MB). These are the
+    // largest eager loads but the price for synchronous findUser / findCI.
+    data.loadStatus.table = 'sys_user_lookup';
+    notify();
+    try {
+      const map = await apiGet('/api/sys_user_lookup');
+      data.sys_user_lookup = new Map(Object.entries(map));
+    } catch (e) {
+      console.warn('[historicalwow] sys_user_lookup failed:', e.message);
+      data.sys_user_lookup = new Map();
+    }
+    data.loadStatus.loaded += 1;
+    notify();
+
     data.loadStatus.table = 'cmdb_ci_lookup';
     notify();
     try {

@@ -1,6 +1,14 @@
 # READ ME FIRST — Operational runbook
 
-You should only need two commands across the lifetime of this archive.
+The viewer reads from a SQLite database built from the NDJSON archive,
+not from the NDJSON files directly. Whenever you run the exporter, you
+need to **rebuild the DB** before the viewer can see the new rows. Two
+or three commands across the lifetime of this archive — ordered below.
+
+> **The DB rebuild step is mandatory after any export run.** The viewer
+> queries `/api/*` which reads from `data/historicalwow.db`; if you
+> don't rebuild, you'll see stale data even though the NDJSON files have
+> the new rows.
 
 ---
 
@@ -22,7 +30,17 @@ set -a; source .env; set +a
 SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 ```
 
-**What happens:**
+**Then immediately rebuild the DB so the viewer sees the new metadata:**
+
+```sh
+cd ~/historicalwow
+python3 project/bin/build_sqlite.py
+```
+
+This takes 5-15 minutes for the full archive. Safe to run while the
+container is up — the viewer will pick up the new DB on its next request.
+
+**What the export does:**
 
 1. Every table runs a quick incremental delta (minutes total — most
    return zero changes). State watermarks advance as new records land.
@@ -35,6 +53,11 @@ SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 3. It will run for days. **Ctrl+C is always safe** — already-downloaded
    files are skipped on the next run; partial files are detected by zero
    size and re-fetched.
+
+> Attachment file bodies are served directly from disk by the container,
+> so they show up in the viewer's Attachments tab as soon as they're
+> downloaded — no DB rebuild needed for new file bodies. Only the table
+> metadata (the rows in NDJSON) requires a `build_sqlite.py` rerun.
 
 **Monitor progress** in another terminal:
 ```sh
@@ -65,6 +88,14 @@ SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 
 (Same command as above — there's no special D-Day flag. The watermarks
 already on disk make it incremental.)
+
+**Then rebuild the DB one final time so the viewer reflects the
+final-day deltas:**
+
+```sh
+cd ~/historicalwow
+python3 project/bin/build_sqlite.py
+```
 
 **What to expect:**
 

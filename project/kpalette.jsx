@@ -80,25 +80,15 @@ window.KPalette = function KPalette({ open, onClose }) {
     ).slice(0, 6).map(u => ({ kind: 'user', sys_id: u.sys_id, label: u.name, sub: u.title }));
 
     const cis = data.cmdb_ci.filter((c) =>
-      c.name.toLowerCase().includes(ql) ||
-      c.short_description.toLowerCase().includes(ql)
+      (c.name || '').toLowerCase().includes(ql) ||
+      (c.short_description || '').toLowerCase().includes(ql)
     ).slice(0, 6).map(c => ({ kind: 'ci', sys_id: c.sys_id, label: c.name, sub: c.sys_class_name }));
 
-    // Journal/comments full-text
-    const journals = data.journal.filter((j) => j.value.toLowerCase().includes(ql)).slice(0, 4)
-      .map(j => {
-        const inc = data.incidents.find(i => i.sys_id === j.element_id) ||
-                    data.changes.find(c => c.sys_id === j.element_id);
-        if (!inc) return null;
-        const idx = j.value.toLowerCase().indexOf(ql);
-        const snippet = '…' + j.value.slice(Math.max(0, idx - 24), idx + ql.length + 60) + '…';
-        return {
-          kind: inc.number?.startsWith('INC') ? 'incident' : 'change',
-          sys_id: inc.sys_id,
-          label: inc.number + ' · ' + j.element,
-          sub: snippet,
-        };
-      }).filter(Boolean);
+    // Journal full-text search is API-only (the journal table isn't loaded
+    // into memory). Skipped here for the synchronous match list — users
+    // looking for journal text can open a record and read its tab. A future
+    // iteration could async-fetch /api/search but it's not synchronous-friendly.
+    const journals = [];
 
     const groups = [];
     if (incs.length) groups.push({ group: 'Incidents', items: incs });

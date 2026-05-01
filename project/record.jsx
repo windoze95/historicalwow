@@ -4,24 +4,34 @@
 
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const data = window.HistoricalWowData;
-  const rec = window.getTaskRecords(table).find(r => r.sys_id === sys_id);
+  // Slim record from eager-loaded list (incident is slim-loaded; others fully).
+  const slim = window.getTaskRecords(table).find(r => r.sys_id === sys_id);
   const [tab, setTab] = React.useState('journal');
+  // Full record (description, close_notes, etc.) is fetched on mount.
+  const [fullRec, setFullRec] = React.useState(null);
+  const [journals, setJournals] = React.useState(null);   // null = loading, [] = empty
+  const [audits, setAudits]     = React.useState(null);
+  const [atts, setAtts]         = React.useState(null);
 
   React.useEffect(() => {
-    if (rec) window.AuditLog.push('view', `${table}/${rec.number}`, rec.short_description);
-  }, [sys_id]);
+    if (slim) window.AuditLog.push('view', `${table}/${slim.number}`, slim.short_description);
+    let cancel = false;
+    setFullRec(null); setJournals(null); setAudits(null); setAtts(null);
 
+    data.fetchRecord(table, sys_id).then(r => { if (!cancel) setFullRec(r); }).catch(() => {});
+    data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
+    data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
+    data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
+    return () => { cancel = true; };
+  }, [table, sys_id]);
+
+  // Use the full record when available, slim while it's loading.
+  const rec = fullRec || slim;
   if (!rec) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;
   }
 
-  const journals = data.journal.filter(j => j.element_id === sys_id);
-  const audits = data.audit.filter(a => a.documentkey === sys_id);
-  const atts = data.attachments.filter(a => a.table_sys_id === sys_id);
   // Child tasks: any task table that has `parent` pointing at this record.
-  // For incident/change_request that's incident_task/change_task; for other
-  // task types we don't have a specific child-table mapping, so search
-  // across all loaded task tables for parent === sys_id.
   const childTablesByParent = {
     incident: 'incident_task',
     change_request: 'change_task',
@@ -35,6 +45,10 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const ciLink = data.task_ci.filter(tc => tc.task === sys_id);
   const slas = data.task_sla.filter(s => s.task === sys_id);
   const approvals = data.sysapproval_approver.filter(a => a.sysapproval === sys_id);
+
+  const journalCount = journals == null ? '…' : journals.length;
+  const auditCount   = audits   == null ? '…' : audits.length;
+  const attCount     = atts     == null ? '…' : atts.length;
 
   return (
     <div className="record">
@@ -50,26 +64,35 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       <div className="right">
         <div className="tabs">
           <button className={'tab' + (tab === 'journal' ? ' active' : '')} onClick={() => setTab('journal')}>
-            Journal <span className="badge">{journals.length}</span>
+            Journal <span className="badge">{journalCount}</span>
           </button>
           <button className={'tab' + (tab === 'audit' ? ' active' : '')} onClick={() => setTab('audit')}>
-            History <span className="badge">{audits.length}</span>
+            History <span className="badge">{auditCount}</span>
           </button>
           <button className={'tab' + (tab === 'attachments' ? ' active' : '')} onClick={() => setTab('attachments')}>
-            Attachments <span className="badge">{atts.length}</span>
+            Attachments <span className="badge">{attCount}</span>
           </button>
           <button className={'tab' + (tab === 'related' ? ' active' : '')} onClick={() => setTab('related')}>
             Related
           </button>
         </div>
-        {tab === 'journal' && <JournalTab entries={journals} />}
-        {tab === 'audit' && <AuditTab entries={audits} table={table} />}
+        {tab === 'journal'     && <JournalTab     entries={journals} />}
+        {tab === 'audit'       && <AuditTab       entries={audits} table={table} />}
         {tab === 'attachments' && <AttachmentsTab entries={atts} />}
-        {tab === 'related' && <RelatedTab rec={rec} table={table} />}
+        {tab === 'related'     && <RelatedTab     rec={rec} table={table} journals={journals} />}
       </div>
     </div>
   );
 };
+
+function _LoadingTab({ label }) {
+  return (
+    <div className="empty">
+      <div className="dot-pulse" style={{ marginBottom: 12 }} />
+      <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{label}</span>
+    </div>
+  );
+}
 
 function RecordHeader({ rec, table }) {
   const stDec = window.decodeChoice(table === 'change_request' ? 'change_request' : 'incident', 'state', rec.state);
@@ -322,13 +345,21 @@ function ManifestFooter({ rec }) {
 
 // ----- Tabs -----
 function JournalTab({ entries }) {
+  if (entries == null) return <_LoadingTab label="loading journal…" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="book" /></div>No journal entries.</div>;
+  }
+  // Lookup user by username (sys_created_by) since the journal record may not
+  // have a sys_id-resolved field server-side.
+  const userByUsername = new Map();
+  for (const u of window.HistoricalWowData.sys_user) {
+    if (u.user_name) userByUsername.set(u.user_name, u);
   }
   return (
     <div className="journal">
       {entries.map(e => {
-        const u = window.findUser(e.sys_created_by_sys_id);
+        const u = window.findUser(e.sys_created_by_sys_id) ||
+                  userByUsername.get(e.sys_created_by);
         return (
           <div key={e.sys_id} className="entry">
             <div><window.Avatar name={u?.name || e.sys_created_by} /></div>
@@ -348,6 +379,7 @@ function JournalTab({ entries }) {
 }
 
 function AuditTab({ entries, table }) {
+  if (entries == null) return <_LoadingTab label="loading history…" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="history" /></div>No audit entries.</div>;
   }
@@ -381,6 +413,7 @@ function AuditTab({ entries, table }) {
 }
 
 function AttachmentsTab({ entries }) {
+  if (entries == null) return <_LoadingTab label="loading attachments…" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="paperclip" /></div>No attachments.</div>;
   }
@@ -416,7 +449,8 @@ function AttachmentsTab({ entries }) {
   );
 }
 
-function RelatedTab({ rec, table }) {
+function RelatedTab(props) {
+  const { rec, table } = props;
   const data = window.HistoricalWowData;
   // Other records on the same CI — search across every loaded task table,
   // not just incidents, since a CI is referenced from any task type.
@@ -435,10 +469,12 @@ function RelatedTab({ rec, table }) {
     }
   }
   // Journal mentions: any of ServiceNow's standard prefixes for a task or KB.
-  const allJournals = data.journal.filter(j => j.element_id === rec.sys_id);
+  // `journals` is passed in by RecordPage (already fetched via API). Null
+  // while loading; treat as empty until then.
+  const allJournals = props.journals || [];
   const refs = new Set();
   for (const j of allJournals) {
-    const m = j.value.match(/(INC\d+|CHG\d+|PRB\d+|RITM\d+|REQ\d+|SCTASK\d+|TASK\d+|KB\d+)/g);
+    const m = (j.value || '').match(/(INC\d+|CHG\d+|PRB\d+|RITM\d+|REQ\d+|SCTASK\d+|TASK\d+|KB\d+)/g);
     if (m) m.forEach(x => refs.add(x));
   }
   // Resolve each reference against any loaded task table.

@@ -307,13 +307,26 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
 
 window.CIRefPage = function CIRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
-  const c = window.findCI(sys_id);
-  React.useEffect(() => { if (c) window.AuditLog.push('view', `cmdb_ci/${c.name}`, c.name); }, [sys_id]);
+  // The slim CI from the eager cache has name + class + status; fetch the
+  // full record (location, serial, etc.) and the relations on mount.
+  const slim = window.findCI(sys_id);
+  const [full, setFull] = React.useState(null);
+  const [relations, setRelations] = React.useState({ upstream: null, downstream: null });
+  React.useEffect(() => {
+    if (slim) window.AuditLog.push('view', `cmdb_ci/${slim.name}`, slim.name);
+    let cancel = false;
+    setFull(null); setRelations({ upstream: null, downstream: null });
+    data.fetchRecord('cmdb_ci', sys_id).then(r => { if (!cancel) setFull(r); }).catch(() => {});
+    data.fetchCIRelations(sys_id).then(r => { if (!cancel) setRelations(r); }).catch(() => setRelations({ upstream: [], downstream: [] }));
+    return () => { cancel = true; };
+  }, [sys_id]);
+
+  const c = full || slim;
   if (!c) return <div className="empty">CI not in snapshot.</div>;
 
   const taskBuckets = bucketTaskRecords('cmdb_ci', sys_id);
-  const upstream = data.cmdb_rel_ci.filter(r => r.child === sys_id).map(r => ({ rel: r, ci: window.findCI(r.parent) })).filter(x => x.ci);
-  const downstream = data.cmdb_rel_ci.filter(r => r.parent === sys_id).map(r => ({ rel: r, ci: window.findCI(r.child) })).filter(x => x.ci);
+  const upstream   = relations.upstream   || [];
+  const downstream = relations.downstream || [];
 
   return (
     <div className="ref-page">

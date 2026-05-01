@@ -1,36 +1,37 @@
-# HistoricalWow viewer — static site + nginx.
+# HistoricalWow viewer — single-process Python server (stdlib only) that
+# serves the static HTML viewer plus a thin /api/* JSON layer over a SQLite
+# DB built from the NDJSON archive.
 #
-# The container bundles ONLY the viewer (HistoricalWow.html). The exported
-# archive (data/) is provided at runtime as a read-only volume mount —
-# never baked into the image, never pushed to the registry.
+# The container bundles ONLY the viewer + server code. The exported archive
+# (data/) — including the SQLite DB — is provided at runtime as a read-only
+# volume mount. Build the DB on the host:
 #
-# Run on the prod VM:
-#   docker run -d --name historicalwow \
-#     -p 8080:80 \
-#     -v /opt/historicalwow/data:/app/data:ro \
-#     ghcr.io/<owner>/historicalwow:latest
+#   cd <repo>
+#   python3 project/bin/build_sqlite.py
 #
-# Or use docker-compose.yml in this repo as a starting point.
+# Then run:
+#
+#   docker compose up -d   # mounts ./project/data → /app/data:ro
 
-FROM nginx:1.27-alpine
+FROM python:3.12-alpine
 
-# nginx serves /app as the document root. HistoricalWow.html lives in
-# the image; data/ is expected as a bind/volume mount at /app/data.
-RUN mkdir -p /app/data \
-    && rm /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# wget is needed for HEALTHCHECK (alpine python image doesn't include curl/wget)
+RUN apk add --no-cache wget && \
+    mkdir -p /app/data /app/bin
+
 COPY project/HistoricalWow.html /app/HistoricalWow.html
+COPY project/bin/server.py      /app/bin/server.py
 
-# Optional symlink so the viewer is reachable as the directory root too.
-RUN ln -sf /app/HistoricalWow.html /app/index.html
+# Symlink so the viewer is reachable as the directory root.
+RUN ln -sf /app/HistoricalWow.html /app/index.html && \
+    test -s /app/HistoricalWow.html && \
+    test -s /app/bin/server.py
 
 EXPOSE 80
-
-# Sanity check during build — fails fast if the html didn't copy.
-RUN test -s /app/HistoricalWow.html
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
   CMD wget -q --spider http://127.0.0.1/ || exit 1
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["python3", "/app/bin/server.py"]

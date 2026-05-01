@@ -10,12 +10,12 @@ window.HomePage = function HomePage({ openPalette }) {
     let cancel = false;
     // Recent — most recently updated incidents (the dominant table; fetching
     // top-N across every task table would mean N parallel API calls).
-    data.fetchTaskList('incident', { limit: 8, slim: 1, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 8, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setRecent((r.rows || []).map(x => ({ rec: x, table: 'incident' }))); })
       .catch(() => { if (!cancel) setRecent([]); });
     // Open P1: priority=1, state in non-closed. Server doesn't have IN, so
     // fetch a small page where priority=1 (most P1s) and filter client-side.
-    data.fetchTaskList('incident', { limit: 50, slim: 1, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 50, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) {
         const open = (r.rows || []).filter(i => !['6','7','8'].includes(String(i.state))).slice(0, 4);
         setOpenP1(open);
@@ -154,9 +154,9 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
     setAsCaller(null); setAsAssignee(null);
-    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 12, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
-    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 12, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
@@ -267,7 +267,7 @@ async function bucketTaskRecordsAsync(field, sys_id) {
       // Lazy: fetch via API
       try {
         const res = await window.HistoricalWowData.fetchTaskList(t, {
-          limit: 12, slim: 1, filters: { [field]: sys_id },
+          limit: 12, filters: { [field]: sys_id },
           order_by: 'sys_updated_on', dir: 'desc',
         });
         if (res.rows && res.rows.length) {
@@ -322,7 +322,7 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
       </div>
 
       <div className="ref-grid">
-        <div className="cell"><div className="label">Manager</div><div className="val">{g.manager ? <window.UserCell sys_id={g.manager} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Manager</div><div className="val">{g.manager ? <window.UserCell sys_id={g.manager} displayName={g.__display_manager} /> : '—'}</div></div>
         <div className="cell"><div className="label">Active</div><div className="val">{g.active ? 'true' : 'false'}</div></div>
         <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{g.sys_id}</div></div>
       </div>

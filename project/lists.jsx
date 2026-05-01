@@ -63,7 +63,8 @@ function TaskList({ table }) {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      slim: 1,
+      // Full envelope (not slim) so reference fields carry __display_<field>
+      // for cases where findUser/findGroup miss in the lookup map.
       order_by: 'sys_updated_on',
       dir: 'desc',
     }).then(r => {
@@ -147,8 +148,8 @@ function TaskList({ table }) {
                     ? <span className={`chip ${window.stateChipClass('incident', r.state)}`}>{stDec.label || r.state}</span>
                     : <span className="muted">—</span>}
                 </td>
-                <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} /> : <span className="muted">—</span>}</td>
-                <td className="muted">{window.findGroup(r.assignment_group)?.name || '—'}</td>
+                <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} displayName={r.__display_assigned_to} /> : <span className="muted">—</span>}</td>
+                <td className="muted">{window.findGroup(r.assignment_group)?.name || r.__display_assignment_group || '—'}</td>
                 <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
               </tr>
             );
@@ -246,7 +247,7 @@ function GroupList() {
           {rows.map(g => (
             <tr key={g.sys_id} onClick={() => window.navigate(`/groups/${g.sys_id}`)}>
               <td><strong style={{ fontWeight: 500 }}>{g.name}</strong></td>
-              <td>{g.manager ? <window.UserCell sys_id={g.manager} /> : <span className="muted">—</span>}</td>
+              <td>{g.manager ? <window.UserCell sys_id={g.manager} displayName={g.__display_manager} /> : <span className="muted">—</span>}</td>
               <td className="num">{(g.member_sys_ids || []).length}</td>
               <td className="muted">{g.description}</td>
             </tr>
@@ -280,7 +281,6 @@ function CIList() {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      slim: 1,
       order_by: 'name', dir: 'asc',
     }).then(r => {
       if (cancelled) return;

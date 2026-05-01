@@ -1626,17 +1626,15 @@ window.HistoricalWowMockSeed = function (d) {
 // it. Only small reference tables get eager-loaded so component code can do
 // synchronous lookups (window.findUser, decodeChoice, etc.).
 //
-// What's eager (small, ~10 MB compressed combined, cached 5 min on browser):
+// What's eager (all fired in parallel on boot, gzipped, cached 5 min):
 //   sys_choice, core_company, cmn_department, cmn_location, cmn_cost_center,
-//   sys_user (~5 MB gzipped), sys_user_group, sys_user_grmember,
-//   change_request, problem, problem_task, sc_request, sc_req_item, sc_task,
-//   incident_task, change_task, sysapproval_group, asset_task,
-//   task_ci, task_sla, sysapproval_approver,
-//   AND cmdb_ci_lookup (~3-5 MB compressed map of sys_id → name/class)
+//   sys_user_group, sys_user_grmember,
+//   sys_user_lookup (sys_id → {name, user_name, title, …} compact map),
+//   cmdb_ci_lookup  (sys_id → {name, sys_class_name, …}    compact map).
 //
 // What's lazy (fetched per view via API helpers):
-//   incident (424k records — list views paginate, refs filter)
-//   full cmdb_ci record (CIRefPage detail)
+//   every task table (incident, change_request, problem, sc_request, …)
+//   full sys_user / cmdb_ci records (UserRefPage / CIRefPage detail)
 //   sys_audit, sys_journal_field (per-record on tab open)
 //   sys_attachment metadata (per-record)
 //   cmdb_rel_ci (per-CI on CIRefPage)
@@ -1808,63 +1806,68 @@ window.HistoricalWowData = (function () {
 
   // ---- load orchestration ------------------------------------------------
 
+  // One job = (label, work-fn). All jobs after manifest run in parallel via
+  // Promise.allSettled — boot is bounded by the slowest single fetch
+  // (typically cmdb_ci_lookup), not the sum of all of them.
+  function makeJobs() {
+    const jobs = [];
+    for (const [table, alias] of EAGER_TABLES) {
+      jobs.push([table, async () => {
+        try {
+          const res = await apiGet(`/api/${table}?limit=2000000&offset=0`);
+          data[alias] = (res.rows || []).map(flatten);
+        } catch (e) {
+          console.warn(`[historicalwow] ${table} eager-load failed:`, e.message);
+          data[alias] = [];
+        }
+      }]);
+    }
+    jobs.push(['sys_user_lookup', async () => {
+      try {
+        const map = await apiGet('/api/sys_user_lookup');
+        data.sys_user_lookup = new Map(Object.entries(map));
+      } catch (e) {
+        console.warn('[historicalwow] sys_user_lookup failed:', e.message);
+        data.sys_user_lookup = new Map();
+      }
+    }]);
+    jobs.push(['cmdb_ci_lookup', async () => {
+      try {
+        const map = await apiGet('/api/cmdb_ci_lookup');
+        data.cmdb_ci_lookup = new Map(Object.entries(map));
+      } catch (e) {
+        console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
+        data.cmdb_ci_lookup = new Map();
+      }
+    }]);
+    return jobs;
+  }
+
   async function loadAll() {
-    // Manifest first
+    // Manifest fires in parallel with everything else — nothing in the load
+    // path depends on manifest data, only the loading-screen label does.
     data.loadStatus.table = 'manifest';
     notify();
-    try {
-      data.manifest = await apiGet('/api/manifest');
+    const manifestP = apiGet('/api/manifest').then(m => {
+      data.manifest = m;
       data.loadStatus.source = 'export';
-    } catch (e) {
+    }).catch(e => {
       console.warn('[historicalwow] /api/manifest failed:', e.message);
       data.loadStatus.error = e.message;
-      data.loadStatus.ready = true;
-      notify();
-      return;
-    }
-    data.loadStatus.loaded += 1;
-    notify();
-
-    // Eager tables
-    for (const [table, alias] of EAGER_TABLES) {
-      data.loadStatus.table = table;
-      notify();
-      try {
-        const res = await apiGet(`/api/${table}?limit=2000000&offset=0`);
-        data[alias] = (res.rows || []).map(flatten);
-      } catch (e) {
-        console.warn(`[historicalwow] ${table} eager-load failed:`, e.message);
-        data[alias] = [];
-      }
+    }).finally(() => {
       data.loadStatus.loaded += 1;
       notify();
-    }
+    });
 
-    // Lookup maps — sys_user (~3 MB) and cmdb_ci (~5 MB). These are the
-    // largest eager loads but the price for synchronous findUser / findCI.
-    data.loadStatus.table = 'sys_user_lookup';
-    notify();
-    try {
-      const map = await apiGet('/api/sys_user_lookup');
-      data.sys_user_lookup = new Map(Object.entries(map));
-    } catch (e) {
-      console.warn('[historicalwow] sys_user_lookup failed:', e.message);
-      data.sys_user_lookup = new Map();
-    }
-    data.loadStatus.loaded += 1;
-    notify();
-
-    data.loadStatus.table = 'cmdb_ci_lookup';
-    notify();
-    try {
-      const map = await apiGet('/api/cmdb_ci_lookup');
-      data.cmdb_ci_lookup = new Map(Object.entries(map));
-    } catch (e) {
-      console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
-      data.cmdb_ci_lookup = new Map();
-    }
-    data.loadStatus.loaded += 1;
-    notify();
+    const jobs = makeJobs();
+    await Promise.allSettled([
+      manifestP,
+      ...jobs.map(([label, fn]) => fn().finally(() => {
+        data.loadStatus.loaded += 1;
+        data.loadStatus.table = label;
+        notify();
+      })),
+    ]);
 
     postProcess();
     data.loadStatus.table = null;
@@ -2155,16 +2158,23 @@ window.Avatar = function Avatar({ name, size }) {
 };
 
 // ---------- UserCell ----------
-window.UserCell = function UserCell({ sys_id, asLink = true, sm = true }) {
+// `displayName` is the fallback when findUser fails (sys_id wasn't in our
+// snapshot — e.g. deactivated user). Pass `r.__display_assigned_to` etc.
+window.UserCell = function UserCell({ sys_id, displayName, asLink = true, sm = true }) {
+  if (!sys_id) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
   const u = window.findUser(sys_id);
-  if (!u) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  const name = u?.name || displayName || sys_id.slice(0, 8) + '…';
+  const isResolved = !!u;
   const inner = (
     <span className="user-cell">
-      <window.Avatar name={u.name} size={sm ? 'sm' : null} />
-      <span className="name">{u.name}</span>
+      <window.Avatar name={name} size={sm ? 'sm' : null} />
+      <span className="name">{name}</span>
     </span>
   );
-  if (!asLink) return inner;
+  if (!asLink || !isResolved) {
+    // No user record → nowhere to navigate; render plain.
+    return <span title={isResolved ? '' : 'User not in snapshot'}>{inner}</span>;
+  }
   return (
     <span onClick={(e) => { e.stopPropagation(); window.navigate(`/users/${u.sys_id}`); }}>
       {inner}
@@ -2449,7 +2459,8 @@ function TaskList({ table }) {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      slim: 1,
+      // Full envelope (not slim) so reference fields carry __display_<field>
+      // for cases where findUser/findGroup miss in the lookup map.
       order_by: 'sys_updated_on',
       dir: 'desc',
     }).then(r => {
@@ -2533,8 +2544,8 @@ function TaskList({ table }) {
                     ? <span className={`chip ${window.stateChipClass('incident', r.state)}`}>{stDec.label || r.state}</span>
                     : <span className="muted">—</span>}
                 </td>
-                <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} /> : <span className="muted">—</span>}</td>
-                <td className="muted">{window.findGroup(r.assignment_group)?.name || '—'}</td>
+                <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} displayName={r.__display_assigned_to} /> : <span className="muted">—</span>}</td>
+                <td className="muted">{window.findGroup(r.assignment_group)?.name || r.__display_assignment_group || '—'}</td>
                 <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
               </tr>
             );
@@ -2632,7 +2643,7 @@ function GroupList() {
           {rows.map(g => (
             <tr key={g.sys_id} onClick={() => window.navigate(`/groups/${g.sys_id}`)}>
               <td><strong style={{ fontWeight: 500 }}>{g.name}</strong></td>
-              <td>{g.manager ? <window.UserCell sys_id={g.manager} /> : <span className="muted">—</span>}</td>
+              <td>{g.manager ? <window.UserCell sys_id={g.manager} displayName={g.__display_manager} /> : <span className="muted">—</span>}</td>
               <td className="num">{(g.member_sys_ids || []).length}</td>
               <td className="muted">{g.description}</td>
             </tr>
@@ -2666,7 +2677,6 @@ function CIList() {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      slim: 1,
       order_by: 'name', dir: 'asc',
     }).then(r => {
       if (cancelled) return;
@@ -2894,18 +2904,28 @@ function Field({ label, children, raw, showRaw }) {
 
 function RefLink({ kind, sys_id, fallback }) {
   if (!sys_id) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  // `fallback` is typically the __display_<field> from the record envelope:
+  // ServiceNow's display_value at export time. We use it whenever the local
+  // lookup map doesn't have the sys_id (e.g. user deactivated and not exported).
+  const renderUnresolved = () => (
+    <span className="ref-link" title={`Reference (sys_id ${sys_id.slice(0, 8)}…) not in lookup`}>
+      {fallback || sys_id.slice(0, 8) + '…'}
+    </span>
+  );
   if (kind === 'user') {
     const u = window.findUser(sys_id);
-    if (!u) return <span className="ref-link" title="Reference not in snapshot">{fallback || sys_id.slice(0, 8) + '…'}</span>;
-    return <span className="ref-link" onClick={() => window.navigate(`/users/${sys_id}`)}>{u.name}</span>;
+    if (!u) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/users/${sys_id}`)}>{u.name || fallback || sys_id.slice(0, 8) + '…'}</span>;
   }
   if (kind === 'group') {
     const g = window.findGroup(sys_id);
-    return <span className="ref-link" onClick={() => window.navigate(`/groups/${sys_id}`)}>{g?.name || fallback}</span>;
+    if (!g) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/groups/${sys_id}`)}>{g.name || fallback}</span>;
   }
   if (kind === 'ci') {
     const c = window.findCI(sys_id);
-    return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c?.name || fallback}</span>;
+    if (!c) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c.name || fallback}</span>;
   }
   return <span>{fallback || ''}</span>;
 }
@@ -2924,12 +2944,12 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Number" showRaw={showRaw} raw={rec.number}><span className="mono">{rec.number}</span></Field>
           <Field label="sys_id" showRaw={false}><span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{rec.sys_id}</span></Field>
           <Field label="Company" showRaw={showRaw} raw={rec.company}>{window.findCompany(rec.company)?.name || '—'}</Field>
-          {!isChange && rec.caller_id !== undefined && <Field label="Caller" showRaw={showRaw} raw={rec.caller_id}><RefLink kind="user" sys_id={rec.caller_id} /></Field>}
-          {!isChange && rec.opened_by !== undefined && <Field label="Opened by" showRaw={showRaw} raw={rec.opened_by}><RefLink kind="user" sys_id={rec.opened_by} /></Field>}
-          {isChange && <Field label="Requested by" showRaw={showRaw} raw={rec.requested_by}><RefLink kind="user" sys_id={rec.requested_by} /></Field>}
-          <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} /></Field>
-          <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} /></Field>
-          <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} /></Field>
+          {!isChange && rec.caller_id !== undefined && <Field label="Caller" showRaw={showRaw} raw={rec.caller_id}><RefLink kind="user" sys_id={rec.caller_id} fallback={rec.__display_caller_id} /></Field>}
+          {!isChange && rec.opened_by !== undefined && <Field label="Opened by" showRaw={showRaw} raw={rec.opened_by}><RefLink kind="user" sys_id={rec.opened_by} fallback={rec.__display_opened_by} /></Field>}
+          {isChange && <Field label="Requested by" showRaw={showRaw} raw={rec.requested_by}><RefLink kind="user" sys_id={rec.requested_by} fallback={rec.__display_requested_by} /></Field>}
+          <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} fallback={rec.__display_assigned_to} /></Field>
+          <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} fallback={rec.__display_assignment_group} /></Field>
+          <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
         </div>
       </div>
       {!isChange && (
@@ -3063,7 +3083,7 @@ function ApprovalsSection({ approvals }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 14 }}>
         {approvals.map(a => (
           <div key={a.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)' }}>
-            <window.UserCell sys_id={a.approver} />
+            <window.UserCell sys_id={a.approver} displayName={a.__display_approver} />
             <span style={{ marginLeft: 'auto' }}>
               <span className={`chip ${a.state === 'approved' ? 'green' : 'amber'}`}>{a.state}</span>
             </span>
@@ -3278,12 +3298,12 @@ window.HomePage = function HomePage({ openPalette }) {
     let cancel = false;
     // Recent — most recently updated incidents (the dominant table; fetching
     // top-N across every task table would mean N parallel API calls).
-    data.fetchTaskList('incident', { limit: 8, slim: 1, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 8, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setRecent((r.rows || []).map(x => ({ rec: x, table: 'incident' }))); })
       .catch(() => { if (!cancel) setRecent([]); });
     // Open P1: priority=1, state in non-closed. Server doesn't have IN, so
     // fetch a small page where priority=1 (most P1s) and filter client-side.
-    data.fetchTaskList('incident', { limit: 50, slim: 1, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 50, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) {
         const open = (r.rows || []).filter(i => !['6','7','8'].includes(String(i.state))).slice(0, 4);
         setOpenP1(open);
@@ -3422,9 +3442,9 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
     setAsCaller(null); setAsAssignee(null);
-    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 12, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
-    data.fetchTaskList('incident', { limit: 12, slim: 1, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+    data.fetchTaskList('incident', { limit: 12, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
@@ -3535,7 +3555,7 @@ async function bucketTaskRecordsAsync(field, sys_id) {
       // Lazy: fetch via API
       try {
         const res = await window.HistoricalWowData.fetchTaskList(t, {
-          limit: 12, slim: 1, filters: { [field]: sys_id },
+          limit: 12, filters: { [field]: sys_id },
           order_by: 'sys_updated_on', dir: 'desc',
         });
         if (res.rows && res.rows.length) {
@@ -3590,7 +3610,7 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
       </div>
 
       <div className="ref-grid">
-        <div className="cell"><div className="label">Manager</div><div className="val">{g.manager ? <window.UserCell sys_id={g.manager} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Manager</div><div className="val">{g.manager ? <window.UserCell sys_id={g.manager} displayName={g.__display_manager} /> : '—'}</div></div>
         <div className="cell"><div className="label">Active</div><div className="val">{g.active ? 'true' : 'false'}</div></div>
         <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{g.sys_id}</div></div>
       </div>

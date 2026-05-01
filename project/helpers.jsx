@@ -275,16 +275,23 @@ window.Avatar = function Avatar({ name, size }) {
 };
 
 // ---------- UserCell ----------
-window.UserCell = function UserCell({ sys_id, asLink = true, sm = true }) {
+// `displayName` is the fallback when findUser fails (sys_id wasn't in our
+// snapshot — e.g. deactivated user). Pass `r.__display_assigned_to` etc.
+window.UserCell = function UserCell({ sys_id, displayName, asLink = true, sm = true }) {
+  if (!sys_id) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
   const u = window.findUser(sys_id);
-  if (!u) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  const name = u?.name || displayName || sys_id.slice(0, 8) + '…';
+  const isResolved = !!u;
   const inner = (
     <span className="user-cell">
-      <window.Avatar name={u.name} size={sm ? 'sm' : null} />
-      <span className="name">{u.name}</span>
+      <window.Avatar name={name} size={sm ? 'sm' : null} />
+      <span className="name">{name}</span>
     </span>
   );
-  if (!asLink) return inner;
+  if (!asLink || !isResolved) {
+    // No user record → nowhere to navigate; render plain.
+    return <span title={isResolved ? '' : 'User not in snapshot'}>{inner}</span>;
+  }
   return (
     <span onClick={(e) => { e.stopPropagation(); window.navigate(`/users/${u.sys_id}`); }}>
       {inner}

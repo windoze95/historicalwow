@@ -163,18 +163,28 @@ function Field({ label, children, raw, showRaw }) {
 
 function RefLink({ kind, sys_id, fallback }) {
   if (!sys_id) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  // `fallback` is typically the __display_<field> from the record envelope:
+  // ServiceNow's display_value at export time. We use it whenever the local
+  // lookup map doesn't have the sys_id (e.g. user deactivated and not exported).
+  const renderUnresolved = () => (
+    <span className="ref-link" title={`Reference (sys_id ${sys_id.slice(0, 8)}…) not in lookup`}>
+      {fallback || sys_id.slice(0, 8) + '…'}
+    </span>
+  );
   if (kind === 'user') {
     const u = window.findUser(sys_id);
-    if (!u) return <span className="ref-link" title="Reference not in snapshot">{fallback || sys_id.slice(0, 8) + '…'}</span>;
-    return <span className="ref-link" onClick={() => window.navigate(`/users/${sys_id}`)}>{u.name}</span>;
+    if (!u) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/users/${sys_id}`)}>{u.name || fallback || sys_id.slice(0, 8) + '…'}</span>;
   }
   if (kind === 'group') {
     const g = window.findGroup(sys_id);
-    return <span className="ref-link" onClick={() => window.navigate(`/groups/${sys_id}`)}>{g?.name || fallback}</span>;
+    if (!g) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/groups/${sys_id}`)}>{g.name || fallback}</span>;
   }
   if (kind === 'ci') {
     const c = window.findCI(sys_id);
-    return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c?.name || fallback}</span>;
+    if (!c) return renderUnresolved();
+    return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c.name || fallback}</span>;
   }
   return <span>{fallback || ''}</span>;
 }
@@ -193,12 +203,12 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Number" showRaw={showRaw} raw={rec.number}><span className="mono">{rec.number}</span></Field>
           <Field label="sys_id" showRaw={false}><span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{rec.sys_id}</span></Field>
           <Field label="Company" showRaw={showRaw} raw={rec.company}>{window.findCompany(rec.company)?.name || '—'}</Field>
-          {!isChange && rec.caller_id !== undefined && <Field label="Caller" showRaw={showRaw} raw={rec.caller_id}><RefLink kind="user" sys_id={rec.caller_id} /></Field>}
-          {!isChange && rec.opened_by !== undefined && <Field label="Opened by" showRaw={showRaw} raw={rec.opened_by}><RefLink kind="user" sys_id={rec.opened_by} /></Field>}
-          {isChange && <Field label="Requested by" showRaw={showRaw} raw={rec.requested_by}><RefLink kind="user" sys_id={rec.requested_by} /></Field>}
-          <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} /></Field>
-          <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} /></Field>
-          <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} /></Field>
+          {!isChange && rec.caller_id !== undefined && <Field label="Caller" showRaw={showRaw} raw={rec.caller_id}><RefLink kind="user" sys_id={rec.caller_id} fallback={rec.__display_caller_id} /></Field>}
+          {!isChange && rec.opened_by !== undefined && <Field label="Opened by" showRaw={showRaw} raw={rec.opened_by}><RefLink kind="user" sys_id={rec.opened_by} fallback={rec.__display_opened_by} /></Field>}
+          {isChange && <Field label="Requested by" showRaw={showRaw} raw={rec.requested_by}><RefLink kind="user" sys_id={rec.requested_by} fallback={rec.__display_requested_by} /></Field>}
+          <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} fallback={rec.__display_assigned_to} /></Field>
+          <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} fallback={rec.__display_assignment_group} /></Field>
+          <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
         </div>
       </div>
       {!isChange && (
@@ -332,7 +342,7 @@ function ApprovalsSection({ approvals }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 14 }}>
         {approvals.map(a => (
           <div key={a.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)' }}>
-            <window.UserCell sys_id={a.approver} />
+            <window.UserCell sys_id={a.approver} displayName={a.__display_approver} />
             <span style={{ marginLeft: 'auto' }}>
               <span className={`chip ${a.state === 'approved' ? 'green' : 'amber'}`}>{a.state}</span>
             </span>

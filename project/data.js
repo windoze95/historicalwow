@@ -6,17 +6,15 @@
 // it. Only small reference tables get eager-loaded so component code can do
 // synchronous lookups (window.findUser, decodeChoice, etc.).
 //
-// What's eager (small, ~10 MB compressed combined, cached 5 min on browser):
+// What's eager (all fired in parallel on boot, gzipped, cached 5 min):
 //   sys_choice, core_company, cmn_department, cmn_location, cmn_cost_center,
-//   sys_user (~5 MB gzipped), sys_user_group, sys_user_grmember,
-//   change_request, problem, problem_task, sc_request, sc_req_item, sc_task,
-//   incident_task, change_task, sysapproval_group, asset_task,
-//   task_ci, task_sla, sysapproval_approver,
-//   AND cmdb_ci_lookup (~3-5 MB compressed map of sys_id → name/class)
+//   sys_user_group, sys_user_grmember,
+//   sys_user_lookup (sys_id → {name, user_name, title, …} compact map),
+//   cmdb_ci_lookup  (sys_id → {name, sys_class_name, …}    compact map).
 //
 // What's lazy (fetched per view via API helpers):
-//   incident (424k records — list views paginate, refs filter)
-//   full cmdb_ci record (CIRefPage detail)
+//   every task table (incident, change_request, problem, sc_request, …)
+//   full sys_user / cmdb_ci records (UserRefPage / CIRefPage detail)
 //   sys_audit, sys_journal_field (per-record on tab open)
 //   sys_attachment metadata (per-record)
 //   cmdb_rel_ci (per-CI on CIRefPage)
@@ -188,63 +186,68 @@ window.HistoricalWowData = (function () {
 
   // ---- load orchestration ------------------------------------------------
 
+  // One job = (label, work-fn). All jobs after manifest run in parallel via
+  // Promise.allSettled — boot is bounded by the slowest single fetch
+  // (typically cmdb_ci_lookup), not the sum of all of them.
+  function makeJobs() {
+    const jobs = [];
+    for (const [table, alias] of EAGER_TABLES) {
+      jobs.push([table, async () => {
+        try {
+          const res = await apiGet(`/api/${table}?limit=2000000&offset=0`);
+          data[alias] = (res.rows || []).map(flatten);
+        } catch (e) {
+          console.warn(`[historicalwow] ${table} eager-load failed:`, e.message);
+          data[alias] = [];
+        }
+      }]);
+    }
+    jobs.push(['sys_user_lookup', async () => {
+      try {
+        const map = await apiGet('/api/sys_user_lookup');
+        data.sys_user_lookup = new Map(Object.entries(map));
+      } catch (e) {
+        console.warn('[historicalwow] sys_user_lookup failed:', e.message);
+        data.sys_user_lookup = new Map();
+      }
+    }]);
+    jobs.push(['cmdb_ci_lookup', async () => {
+      try {
+        const map = await apiGet('/api/cmdb_ci_lookup');
+        data.cmdb_ci_lookup = new Map(Object.entries(map));
+      } catch (e) {
+        console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
+        data.cmdb_ci_lookup = new Map();
+      }
+    }]);
+    return jobs;
+  }
+
   async function loadAll() {
-    // Manifest first
+    // Manifest fires in parallel with everything else — nothing in the load
+    // path depends on manifest data, only the loading-screen label does.
     data.loadStatus.table = 'manifest';
     notify();
-    try {
-      data.manifest = await apiGet('/api/manifest');
+    const manifestP = apiGet('/api/manifest').then(m => {
+      data.manifest = m;
       data.loadStatus.source = 'export';
-    } catch (e) {
+    }).catch(e => {
       console.warn('[historicalwow] /api/manifest failed:', e.message);
       data.loadStatus.error = e.message;
-      data.loadStatus.ready = true;
-      notify();
-      return;
-    }
-    data.loadStatus.loaded += 1;
-    notify();
-
-    // Eager tables
-    for (const [table, alias] of EAGER_TABLES) {
-      data.loadStatus.table = table;
-      notify();
-      try {
-        const res = await apiGet(`/api/${table}?limit=2000000&offset=0`);
-        data[alias] = (res.rows || []).map(flatten);
-      } catch (e) {
-        console.warn(`[historicalwow] ${table} eager-load failed:`, e.message);
-        data[alias] = [];
-      }
+    }).finally(() => {
       data.loadStatus.loaded += 1;
       notify();
-    }
+    });
 
-    // Lookup maps — sys_user (~3 MB) and cmdb_ci (~5 MB). These are the
-    // largest eager loads but the price for synchronous findUser / findCI.
-    data.loadStatus.table = 'sys_user_lookup';
-    notify();
-    try {
-      const map = await apiGet('/api/sys_user_lookup');
-      data.sys_user_lookup = new Map(Object.entries(map));
-    } catch (e) {
-      console.warn('[historicalwow] sys_user_lookup failed:', e.message);
-      data.sys_user_lookup = new Map();
-    }
-    data.loadStatus.loaded += 1;
-    notify();
-
-    data.loadStatus.table = 'cmdb_ci_lookup';
-    notify();
-    try {
-      const map = await apiGet('/api/cmdb_ci_lookup');
-      data.cmdb_ci_lookup = new Map(Object.entries(map));
-    } catch (e) {
-      console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
-      data.cmdb_ci_lookup = new Map();
-    }
-    data.loadStatus.loaded += 1;
-    notify();
+    const jobs = makeJobs();
+    await Promise.allSettled([
+      manifestP,
+      ...jobs.map(([label, fn]) => fn().finally(() => {
+        data.loadStatus.loaded += 1;
+        data.loadStatus.table = label;
+        notify();
+      })),
+    ]);
 
     postProcess();
     data.loadStatus.table = null;

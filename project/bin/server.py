@@ -22,6 +22,7 @@ DB: /app/data/historicalwow.db (built by bin/build_sqlite.py).
 Static root: /app (HistoricalWow.html lives here).
 Attachments root: /app/data/attachments (mirror of host disk via volume mount).
 """
+import gzip
 import json
 import logging
 import os
@@ -86,8 +87,19 @@ def get_conn():
 
 def _json_response(handler, payload, status=HTTPStatus.OK):
     body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+    # gzip compress when the client accepts it AND the body is big enough to
+    # be worth it. JSON of NDJSON envelope shape compresses 5-8× — turns
+    # 255 MB cmdb_ci slim into ~30 MB on the wire.
+    accept = handler.headers.get('Accept-Encoding', '') or ''
+    if len(body) > 4096 and 'gzip' in accept:
+        body = gzip.compress(body, compresslevel=4)
+        encoding = 'gzip'
+    else:
+        encoding = None
     handler.send_response(status)
     handler.send_header('Content-Type', 'application/json; charset=utf-8')
+    if encoding:
+        handler.send_header('Content-Encoding', encoding)
     handler.send_header('Content-Length', str(len(body)))
     handler.send_header('Cache-Control', 'no-cache, must-revalidate')
     handler.end_headers()
@@ -170,7 +182,10 @@ def list_table(handler, table, params):
     limit = min(int(params.get('limit', ['200'])[0] or '200'), 2_000_000)
     offset = int(params.get('offset', ['0'])[0] or '0')
     q = (params.get('q', [''])[0] or '').strip()
-    order_by = params.get('order_by', ['sys_updated_on'])[0]
+    # Default ordering is by sys_id (PK index = fast). The viewer should pass
+    # ?order_by=sys_updated_on for views that need recent-first; not every
+    # table has sys_updated_on indexed (cmdb_ci doesn't, e.g.).
+    order_by_param = params.get('order_by', [None])[0]
     direction = (params.get('dir', ['desc'])[0] or 'desc').lower()
     if direction not in ('asc', 'desc'):
         direction = 'desc'
@@ -179,8 +194,7 @@ def list_table(handler, table, params):
     # Whitelist order_by to actual columns to prevent SQL injection.
     conn = get_conn()
     cols = [r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')]
-    if order_by not in cols:
-        order_by = 'sys_id'
+    order_by = order_by_param if (order_by_param in cols) else 'sys_id'
 
     select_cols = '*' if not slim else ', '.join(f'"{c}"' for c in cols if c != 'raw')
 

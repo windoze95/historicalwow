@@ -30,15 +30,28 @@ set -a; source .env; set +a
 SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 ```
 
-**Then immediately rebuild the DB so the viewer sees the new metadata:**
+**Then update the DB so the viewer sees the new metadata:**
 
 ```sh
 cd ~/historicalwow
 python3 project/bin/build_sqlite.py
 ```
 
-This takes 5-15 minutes for the full archive. Safe to run while the
-container is up — the viewer will pick up the new DB on its next request.
+The first build (the one that produced the current DB) takes 2-3 hours
+because it loads ~17 million rows from scratch. **Every subsequent run
+is incremental** — the script tracks per-table cursors in a `_build_state`
+table and only re-processes rows whose `sys_updated_on` (or `sys_created_on`
+for sys_audit / sys_journal_field) is newer than the last build.
+
+So a "few months later" rebuild after a small delta export is **typically
+1-3 minutes**, not hours. Safe to run while the container is up — the
+viewer picks up the new DB on its next request.
+
+If you ever need to force a full rebuild from scratch (e.g. after fixing
+a bug in the indexed-column extractors), pass `--rebuild`:
+```sh
+python3 project/bin/build_sqlite.py --rebuild
+```
 
 **What the export does:**
 

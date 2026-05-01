@@ -199,34 +199,84 @@ SCHEMAS = {
 }
 
 
-def build_table(conn, table, indexed_cols, ndjson_path):
-    """Drop + recreate `table`, stream rows from ndjson_path, INSERT them."""
+# Append-only tables don't populate sys_updated_on, so use sys_created_on
+# as the delta field (matches the exporter's DELTA_FIELD).
+DELTA_FIELD = {
+    'sys_audit':         'sys_created_on',
+    'sys_journal_field': 'sys_created_on',
+}
+
+def _delta_field(table):
+    return DELTA_FIELD.get(table, 'sys_updated_on')
+
+
+def _ensure_build_state_table(conn):
+    """Track per-table 'last cursor' so the next run can do an incremental
+    rebuild instead of dropping+recreating from scratch."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS _build_state (
+            table_name      TEXT PRIMARY KEY,
+            last_cursor     TEXT,
+            delta_field     TEXT,
+            rows_total      INTEGER,
+            last_built_at   TEXT
+        )
+    ''')
+    conn.commit()
+
+
+def _read_build_state(conn, table):
+    row = conn.execute(
+        'SELECT last_cursor FROM _build_state WHERE table_name = ?', (table,)
+    ).fetchone()
+    return row['last_cursor'] if row else None
+
+
+def _write_build_state(conn, table, last_cursor, delta_field, rows_total):
+    conn.execute('''
+        INSERT OR REPLACE INTO _build_state
+            (table_name, last_cursor, delta_field, rows_total, last_built_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+    ''', (table, last_cursor or '', delta_field, rows_total))
+    conn.commit()
+
+
+def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
+    """Stream NDJSON → SQLite. Incremental by default: rows whose delta-field
+    value (sys_updated_on or sys_created_on) is <= the last recorded cursor
+    are skipped. Force a full rebuild with `force_full=True` (or pass
+    --rebuild on the CLI, which deletes the DB before this is called)."""
     print(f'[{table}]', end=' ', flush=True)
     if not ndjson_path.exists():
         print(f'no NDJSON file — skipping')
         return 0
 
-    # Schema: sys_id PK, indexed columns, raw blob. Column names are quoted
-    # because some ServiceNow field names collide with SQL reserved words
-    # (e.g. sys_user_grmember has columns "group" and "user").
-    cols = ['"sys_id" TEXT PRIMARY KEY']
-    cols += [f'"{name}" TEXT' for name, _ in indexed_cols]
-    cols.append('"raw" TEXT')
+    delta_field = _delta_field(table)
+    last_cursor = None if force_full else _read_build_state(conn, table)
+    incremental = bool(last_cursor)
 
     cur = conn.cursor()
-    cur.execute(f'DROP TABLE IF EXISTS "{table}"')
-    cur.execute(f'CREATE TABLE "{table}" ({", ".join(cols)})')
+    if incremental:
+        # Schema is unchanged across versions; just ensure table exists. Don't
+        # drop — keeping the existing rows lets us patch only what's new.
+        print(f'(Δ since {last_cursor[:10]})', end=' ', flush=True)
+    else:
+        # Full build: drop + recreate.
+        cols = ['"sys_id" TEXT PRIMARY KEY']
+        cols += [f'"{name}" TEXT' for name, _ in indexed_cols]
+        cols.append('"raw" TEXT')
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        cur.execute(f'CREATE TABLE "{table}" ({", ".join(cols)})')
 
-    # Insert in batches of 5000 for speed.
     placeholders = ', '.join(['?'] * (1 + len(indexed_cols) + 1))
     insert_sql = f'INSERT OR REPLACE INTO "{table}" VALUES ({placeholders})'
 
     started = time.time()
-    written = 0
+    written = skipped = 0
+    new_max = last_cursor or ''
     batch = []
     BATCH_SIZE = 5000
-    seen_sys_ids = set()  # de-dup within a single run; the NDJSON merge already
-                          # handles cross-run dedupe but defensively ignore dupes
+    seen_sys_ids = set()
 
     with ndjson_path.open('r', encoding='utf-8') as f:
         for line in f:
@@ -241,13 +291,24 @@ def build_table(conn, table, indexed_cols, ndjson_path):
             if not sid or sid in seen_sys_ids:
                 continue
             seen_sys_ids.add(sid)
+
+            row_cursor = _v(row.get(delta_field)) or ''
+            # Incremental skip: row hasn't changed since the last build.
+            # Use >= so the boundary row gets re-processed (idempotent).
+            if incremental and row_cursor and row_cursor < last_cursor:
+                skipped += 1
+                continue
+
+            if row_cursor and row_cursor > new_max:
+                new_max = row_cursor
+
             values = [sid]
             for _, extractor in indexed_cols:
                 try:
                     values.append(extractor(row))
                 except Exception:
                     values.append(None)
-            values.append(line)  # raw is the original NDJSON line (envelope intact)
+            values.append(line)
             batch.append(values)
             if len(batch) >= BATCH_SIZE:
                 cur.executemany(insert_sql, batch)
@@ -258,7 +319,7 @@ def build_table(conn, table, indexed_cols, ndjson_path):
         written += len(batch)
     conn.commit()
 
-    # Indexes for the indexed columns we just wrote.
+    # Indexes are idempotent (IF NOT EXISTS) — safe on every run.
     for col_name, _ in indexed_cols:
         try:
             cur.execute(f'CREATE INDEX IF NOT EXISTS "idx_{table}_{col_name}" ON "{table}"("{col_name}")')
@@ -266,42 +327,68 @@ def build_table(conn, table, indexed_cols, ndjson_path):
             print(f'  (index {col_name} skipped: {e})', end='')
     conn.commit()
 
+    # Track the cursor for next time.
+    rows_total = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+    _write_build_state(conn, table, new_max, delta_field, rows_total)
+
     elapsed = time.time() - started
-    print(f'{written:,} rows in {elapsed:.0f}s')
+    if incremental:
+        print(f'{written:,} updated/new, {skipped:,} unchanged ({rows_total:,} total) in {elapsed:.0f}s')
+    else:
+        print(f'{written:,} rows in {elapsed:.0f}s')
     return written
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--rebuild', action='store_true',
-                   help='Delete and recreate the DB file (default: append/replace per table).')
+                   help='Force a full rebuild — delete the DB and re-load every '
+                        'row from NDJSON. Without this flag, the build is '
+                        'incremental: only rows newer than each table\'s last '
+                        'recorded cursor are re-processed.')
+    p.add_argument('--vacuum', action='store_true',
+                   help='Run VACUUM at the end (reclaims space; takes 15-25 '
+                        'min on a large DB). Skipped by default; the DB '
+                        'auto-vacuums incrementally and full VACUUM only '
+                        'matters when the DB has shrunk substantially.')
     args = p.parse_args()
 
-    if args.rebuild and DB_PATH.exists():
+    is_full = args.rebuild
+    if is_full and DB_PATH.exists():
         print(f'Removing existing {DB_PATH}')
         DB_PATH.unlink()
 
-    print(f'Building {DB_PATH}')
+    mode = 'FULL (forced)' if is_full else (
+        'INCREMENTAL' if DB_PATH.exists() else 'FULL (first build)'
+    )
+    print(f'Building {DB_PATH}  [{mode}]')
     print(f'  source NDJSON dir: {DATA}')
 
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode = WAL')
     conn.execute('PRAGMA synchronous = NORMAL')
     conn.execute('PRAGMA cache_size = -65536')  # 64 MB cache
 
-    total_rows = 0
+    _ensure_build_state_table(conn)
+
+    started = time.time()
+    total_written = 0
     for table, indexed_cols in SCHEMAS.items():
         ndjson_path = DATA / f'{table}.ndjson'
-        n = build_table(conn, table, indexed_cols, ndjson_path)
-        total_rows += n
+        n = build_table(conn, table, indexed_cols, ndjson_path, force_full=is_full)
+        total_written += n
 
-    # Vacuum to compact (large dataset, reclaims a lot)
-    print('Vacuuming…')
-    conn.execute('VACUUM')
+    if args.vacuum:
+        print('Vacuuming (this can take 15-25 minutes on a large DB)…')
+        conn.execute('VACUUM')
     conn.close()
 
     size_mb = DB_PATH.stat().st_size / 1024 / 1024
-    print(f'Done. {total_rows:,} rows total. DB size: {size_mb:.0f} MB at {DB_PATH}')
+    elapsed = time.time() - started
+    print(f'Done in {int(elapsed)}s. {total_written:,} rows '
+          f'{"loaded" if is_full else "updated/new"}. '
+          f'DB size: {size_mb:.0f} MB at {DB_PATH}')
 
 
 if __name__ == '__main__':

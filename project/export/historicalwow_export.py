@@ -65,13 +65,20 @@ FORCE_FULL    = os.environ.get('SN_FULL', '').strip() in ('1', 'true', 'yes')
 PARALLEL_WORKERS = int(os.environ.get('SN_PARALLEL_WORKERS', '8'))
 
 # Tables to pull in parallel (hex-prefix sharding) instead of single-cursor.
-# sys_audit is the obvious win — 11M+ rows, narrow rows (so per-page latency
-# is the bottleneck, not payload size), and a single sequential cursor wastes
-# most of the wall clock. Override via env: SN_PARALLEL_TABLES=foo,bar
+# Applies to both full pulls AND deltas. The delta path benefits whenever a
+# table churns frequently in ServiceNow (cmdb_ci sees ~hundreds of thousands
+# of auto-discovery rewrites in 3 days, sys_audit grows by millions per
+# month, etc.). Override via env: SN_PARALLEL_TABLES=foo,bar
 _env_par = os.environ.get('SN_PARALLEL_TABLES', '').strip()
 PARALLEL_TABLES = (
     set(t.strip() for t in _env_par.split(',') if t.strip())
-    if _env_par else {'sys_audit'}
+    if _env_par else {
+        'sys_audit',
+        'sys_journal_field',
+        'cmdb_ci',
+        'cmdb_rel_ci',
+        'sys_attachment',
+    }
 )
 
 if INSTANCE.startswith('https://'): INSTANCE = INSTANCE[8:]
@@ -678,6 +685,91 @@ def export_table_delta(table, watermark):
     return total, new_max
 
 
+def export_table_delta_parallel(table, watermark):
+    """Same shape as export_table_delta — fetch new/updated rows since the
+    last watermark, then merge into the existing NDJSON by sys_id. The
+    fetch is sharded across 16 sys_id hex prefixes and pulled by
+    PARALLEL_WORKERS threads; everything else is identical."""
+    out_path = OUT_DIR / f'{table}.ndjson'
+    log.info('Delta export %s (since %s) — parallel %d workers',
+             table, watermark, PARALLEL_WORKERS)
+    started = time.time()
+
+    df = delta_field_for(table)
+    parts_filter = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
+    filter_prefix = '^'.join(parts_filter) + '^' if parts_filter else ''
+
+    def fetch_shard(prefix):
+        # Each shard runs its own paginated cursor over a 1/16th slice of
+        # sys_id space. Order by sys_id so duplicate timestamps cursor
+        # cleanly within the shard.
+        query = (f'{filter_prefix}sys_idSTARTSWITH{prefix}^'
+                 f'{df}>={watermark}^ORDERBYsys_id')
+        rows = []
+        for page in fetch_pages_offset(table, query):
+            rows.extend(page)
+        return prefix, rows
+
+    fetched = []
+    shards = list('0123456789abcdef')
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+        futures = {ex.submit(fetch_shard, p): p for p in shards}
+        for fut in as_completed(futures):
+            prefix, rows = fut.result()
+            fetched.extend(rows)
+            log.info('  %s: shard %s done — %d rows (running total: %d)',
+                     table, prefix, len(rows), len(fetched))
+
+    if not fetched:
+        rows_total = _count_lines(out_path)
+        log.info('  ✓ %s — no changes since %s (%d rows on disk)',
+                 table, watermark, rows_total)
+        return rows_total, watermark
+
+    new_by_sid = {}
+    new_max = watermark
+    for row in fetched:
+        sid = _extract_sid(row)
+        if not sid:
+            continue
+        new_by_sid[sid] = row
+        upd = _extract_delta(table, row)
+        if upd and upd > new_max:
+            new_max = upd
+
+    tmp = out_path.with_suffix('.ndjson.tmp')
+    seen = set()
+    updated = unchanged = 0
+    with out_path.open('r', encoding='utf-8') as fin, tmp.open('w', encoding='utf-8') as fout:
+        for line in fin:
+            line = line.rstrip('\n')
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            sid = _extract_sid(row)
+            if sid and sid in new_by_sid:
+                _write_row(fout, new_by_sid[sid])
+                seen.add(sid)
+                updated += 1
+            else:
+                fout.write(line + '\n')
+                unchanged += 1
+        added = 0
+        for sid, row in new_by_sid.items():
+            if sid not in seen:
+                _write_row(fout, row)
+                added += 1
+
+    tmp.replace(out_path)
+    total = updated + added + unchanged
+    log.info('  ✓ %s — %d updated, %d new, %d unchanged in %ds (watermark=%s)',
+             table, updated, added, unchanged, int(time.time() - started), new_max)
+    return total, new_max
+
+
 # ---- Dispatcher ------------------------------------------------------------
 
 def export_table(table, state):
@@ -686,7 +778,10 @@ def export_table(table, state):
     watermark   = None if FORCE_FULL else watermarks.get(table)
 
     if watermark and out_path.exists():
-        count, new_watermark = export_table_delta(table, watermark)
+        if table in PARALLEL_TABLES:
+            count, new_watermark = export_table_delta_parallel(table, watermark)
+        else:
+            count, new_watermark = export_table_delta(table, watermark)
     elif table in PARALLEL_TABLES:
         count, new_watermark = export_table_parallel(table)
     else:

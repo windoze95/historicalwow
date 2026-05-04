@@ -530,6 +530,15 @@ def fetch_pages_offset(table, query):
                 return
             raise
         rows = payload.get('result', [])
+        # Defensive: ServiceNow occasionally returns `result` as a string
+        # (an error message, an HTML body that snuck through, etc) and
+        # `list.extend(string)` would silently add each character as a
+        # "row," producing dict-of-character rows that crash the merge.
+        if not isinstance(rows, list):
+            log.warning('  %s: unexpected result shape %s — stopping page',
+                        table, type(rows).__name__)
+            return
+        rows = [r for r in rows if isinstance(r, dict)]
         if not rows:
             return
         yield rows

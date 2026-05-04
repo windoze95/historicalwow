@@ -906,30 +906,62 @@ def export_attachment_bodies():
 # ---- Manifest --------------------------------------------------------------
 
 def write_manifest(counts, state):
+    """Merge a fresh entry per just-exported table with the prior manifest's
+    entries for tables we didn't run this time. Without the merge, a
+    selective run with SN_TABLES=foo,bar would shrink manifest.json to
+    just those two tables — wiping the home-page tiles, sidebar counts,
+    and snapshot integrity panel for everything else."""
+    prev_path = OUT_DIR / 'manifest.json'
+    prev_tables_by_name = {}
+    try:
+        prev = json.loads(prev_path.read_text(encoding='utf-8'))
+        for t in prev.get('tables', []):
+            if isinstance(t, dict) and t.get('table'):
+                prev_tables_by_name[t['table']] = t
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    fresh = {
+        t: {
+            'table': t,
+            'rows': counts.get(t, 0),
+            'source_rows': counts.get(t, 0),
+            'watermark': state.get('watermarks', {}).get(t, ''),
+        }
+        for t in TABLES
+    }
+    # Merge: every previously-known table stays; ones we just ran get
+    # overwritten with fresh counts/watermarks. Order is "previously
+    # known" first (preserves the prior layout), then any net-new tables
+    # this run discovered.
+    merged_order = list(prev_tables_by_name.keys())
+    for t in TABLES:
+        if t not in prev_tables_by_name:
+            merged_order.append(t)
+    tables = [
+        fresh.get(t) or prev_tables_by_name[t]
+        for t in merged_order
+    ]
+
+    integrity = {'sha256_manifest': '', 'acl_skips': 0, 'missing_attachments': 0}
+    # Carry forward integrity counts on partial runs so the panel doesn't
+    # zero out when SN_TABLES is set.
+    prev_int = (json.loads(prev_path.read_text(encoding='utf-8')).get('integrity', {})
+                if prev_path.exists() else {})
+    if prev_int and len(TABLES) < len(prev_tables_by_name):
+        integrity = {**integrity, **prev_int}
+
     manifest = {
         'label': os.environ.get('SN_MANIFEST_LABEL', 'export'),
         'snapshot_date': time.strftime('%Y-%m-%d'),
         'instance': INSTANCE,
         'captured_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        'tables': [
-            {
-                'table': t,
-                'rows': counts.get(t, 0),
-                'source_rows': counts.get(t, 0),
-                'watermark': state.get('watermarks', {}).get(t, ''),
-            }
-            for t in TABLES
-        ],
-        'integrity': {
-            'sha256_manifest': '',
-            'acl_skips': 0,
-            'missing_attachments': 0,
-        },
+        'tables': tables,
+        'integrity': integrity,
     }
-    (OUT_DIR / 'manifest.json').write_text(
-        json.dumps(manifest, indent=2), encoding='utf-8'
-    )
-    log.info('Wrote manifest.json (%d tables)', len(manifest['tables']))
+    prev_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    log.info('Wrote manifest.json (%d tables; %d this run)',
+             len(manifest['tables']), len(TABLES))
 
 
 # ---- Main ------------------------------------------------------------------

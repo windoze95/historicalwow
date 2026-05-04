@@ -90,6 +90,19 @@ CMDB_INDEXED_COLS = [
 ]
 
 
+# sc_req_item links upward to sc_request via `request`; sc_task links upward
+# to sc_req_item via `request_item`. Without these columns indexed, the
+# viewer's child-task filter (parent record → child rows) silently returned
+# every row in the table.
+SC_REQ_ITEM_COLS = TASK_INDEXED_COLS + [
+    ('request',     lambda r: _v(r.get('request'))),
+    ('cat_item',    lambda r: _v(r.get('cat_item'))),
+]
+SC_TASK_COLS = TASK_INDEXED_COLS + [
+    ('request_item', lambda r: _v(r.get('request_item'))),
+    ('request',      lambda r: _v(r.get('request'))),
+]
+
 SCHEMAS = {
     # Task descendants — the viewer's biggest lookup target. All share the same
     # base task fields, so use the same indexed-column set.
@@ -98,8 +111,8 @@ SCHEMAS = {
     'problem':             TASK_INDEXED_COLS,
     'problem_task':        TASK_INDEXED_COLS,
     'sc_request':          TASK_INDEXED_COLS,
-    'sc_req_item':         TASK_INDEXED_COLS,
-    'sc_task':             TASK_INDEXED_COLS,
+    'sc_req_item':         SC_REQ_ITEM_COLS,
+    'sc_task':             SC_TASK_COLS,
     'incident_task':       TASK_INDEXED_COLS,
     'change_task':         TASK_INDEXED_COLS,
     'sysapproval_group':   TASK_INDEXED_COLS,
@@ -310,6 +323,22 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
             last_cursor = recovered or ''
             if last_cursor:
                 print(f'(recovered cursor)', end=' ', flush=True)
+
+    # Column-drift detection. If indexed_cols added a new column that the
+    # existing table doesn't have, force a full rebuild so the new column
+    # gets populated for existing rows. Without this, a code change that
+    # adds a filter column (e.g. sc_task.request_item) would index nothing
+    # for old rows and silently break per-record filters.
+    if last_cursor:
+        try:
+            existing_cols = {r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+            expected_cols = {'sys_id', 'raw'} | {n for n, _ in indexed_cols}
+            missing = expected_cols - existing_cols
+            if missing:
+                print(f'(schema drift: +{",".join(sorted(missing))} → full rebuild)', end=' ', flush=True)
+                last_cursor = None
+        except sqlite3.OperationalError:
+            pass  # table doesn't exist; will be created below
 
     incremental = bool(last_cursor)
 

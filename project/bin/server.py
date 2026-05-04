@@ -94,7 +94,13 @@ _local = threading.local()
 def get_conn():
     conn = getattr(_local, 'conn', None)
     if conn is None:
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30.0)
+        # Read-only URI open. The mount is rw (SQLite needs to coordinate
+        # -shm/-wal files even when the app only SELECTs), but `mode=ro`
+        # ensures the application can never actually mutate data. URI
+        # paths must be absolute and forward-slash; sqlite3 handles that
+        # since DB_PATH is already a Path on a POSIX volume.
+        uri = f'file:{DB_PATH}?mode=ro'
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row
         _local.conn = conn
     return conn

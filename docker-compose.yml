@@ -24,12 +24,14 @@ services:
       - "8080:80"
 
     volumes:
-      # Mount the exporter's data dir read-only into the container.
-      # `./project/data` matches where historicalwow_export.py writes
-       # (OUT_DIR = <repo>/project/data), so running `docker compose up`
-      # from the repo root just works. Override with an absolute path
-      # if your exporter writes elsewhere.
-      - ./project/data:/app/data:ro
+      # Mount the exporter's data dir into the container. We do NOT mark
+      # it :ro — SQLite in WAL journal mode needs to create -shm/-wal
+      # coordination files on the same filesystem as the DB, even for
+      # purely-SELECT readers, and a read-only mount returns "unable to
+      # open database file". server.py compensates by opening the DB
+      # with `?mode=ro` URI flags, so the application layer can't write
+      # even though the mount allows it.
+      - ./project/data:/app/data
 
     environment:
       # HR gate. When HR_UNLOCK_PASSWORD is set, every API response hides

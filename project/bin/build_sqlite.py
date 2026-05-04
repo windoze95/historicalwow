@@ -440,6 +440,12 @@ def main():
     if args.vacuum:
         print('Vacuuming (this can take 15-25 minutes on a large DB)…')
         conn.execute('VACUUM')
+    # Checkpoint the WAL into the main DB and switch back to delete mode so
+    # the resulting file is fully self-contained. Otherwise read-only mounts
+    # in the container can't open it (SQLite needs to create -shm/-wal
+    # coordination files for WAL-mode DBs even on pure SELECT workloads).
+    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    conn.execute('PRAGMA journal_mode=DELETE')
     conn.close()
 
     size_mb = DB_PATH.stat().st_size / 1024 / 1024

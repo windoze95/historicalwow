@@ -370,8 +370,8 @@ function HrGateButton({ status, onUnlockClick, onLockClick }) {
       className={'toggle' + (unlocked ? ' on' : '')}
       onClick={unlocked ? onLockClick : onUnlockClick}
       title={unlocked
-        ? `${label} access enabled — click to lock again`
-        : `${label} incidents are hidden — click to unlock`}
+        ? `${label} data is unlocked for this browser — click to lock again`
+        : `${label} data is hidden — click to unlock`}
       style={{
         gap: 6,
         background: unlocked ? 'oklch(94% 0.05 145)' : undefined,
@@ -380,7 +380,7 @@ function HrGateButton({ status, onUnlockClick, onLockClick }) {
       }}
     >
       <window.Icon name={unlocked ? 'unlock' : 'lock'} size={13} />
-      <span>{unlocked ? `${label} unlocked` : `Unlock ${label}`}</span>
+      <span>{unlocked ? 'HR data unlocked' : 'Unlock HR data'}</span>
     </button>
   );
 }
@@ -419,7 +419,7 @@ function HrUnlockModal({ status, onClose, onSuccess }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <window.Icon name="lock" size={16} />
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Unlock {status.group_label}</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Unlock HR data</h3>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.55, marginBottom: 16 }}>
           Incidents assigned to <strong>{status.group_label}</strong> are hidden from this archive

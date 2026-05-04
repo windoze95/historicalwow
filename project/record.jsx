@@ -70,7 +70,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         <div className="glyph"><window.Icon name="lock" /></div>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>This record is restricted</div>
         <div style={{ maxWidth: 360, color: 'var(--fg-3)', fontSize: 13 }}>
-          It belongs to <strong>{label}</strong>. Click <strong>Unlock {label}</strong> in the
+          It belongs to <strong>{label}</strong>. Click <strong>Unlock HR data</strong> in the
           top bar to enter the access password and view it.
         </div>
       </div>

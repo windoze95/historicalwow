@@ -66,9 +66,13 @@ window.HistoricalWowData = (function () {
       label: 'loading…', snapshot_date: '', instance: '', captured_at: '',
       tables: [], integrity: { sha256_manifest: '', acl_skips: 0, missing_attachments: 0 },
     },
+    // HR gate — populated by /api/hr-status on boot. enabled=true means the
+    // server is filtering HR-assigned incidents on locked sessions; the
+    // viewer surfaces an unlock button when so.
+    hrStatus: { enabled: false, unlocked: false, group_sys_id: '', group_label: '' },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 3,  // +manifest +cmdb_ci_lookup +sys_user_lookup
+      total: EAGER_TABLES.length + 4,  // +manifest +cmdb_ci_lookup +sys_user_lookup +hr_status
       loaded: 0,
       error: null,
     },
@@ -165,6 +169,34 @@ window.HistoricalWowData = (function () {
     return (res.rows || []).map(r => ({ ...flatten(r), _table: r._table }));
   };
 
+  // HR gate
+  data.fetchHrStatus = async function () {
+    const s = await apiGet('/api/hr-status');
+    data.hrStatus = s;
+    notify();
+    return s;
+  };
+  data.unlockHr = async function (password) {
+    const res = await fetch('/api/hr-unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    data.hrStatus = { ...data.hrStatus, unlocked: true };
+    notify();
+    return true;
+  };
+  data.lockHr = async function () {
+    await fetch('/api/hr-lock', { method: 'POST', credentials: 'same-origin' });
+    data.hrStatus = { ...data.hrStatus, unlocked: false };
+    notify();
+  };
+
   // ---- post-load processing ----------------------------------------------
 
   function postProcess() {
@@ -218,6 +250,13 @@ window.HistoricalWowData = (function () {
       } catch (e) {
         console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
         data.cmdb_ci_lookup = new Map();
+      }
+    }]);
+    jobs.push(['hr_status', async () => {
+      try {
+        data.hrStatus = await apiGet('/api/hr-status');
+      } catch (e) {
+        console.warn('[historicalwow] hr-status failed:', e.message);
       }
     }]);
     return jobs;

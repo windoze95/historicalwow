@@ -247,6 +247,7 @@ window.Icon = function Icon({ name, size = 14, strokeWidth = 1.6 }) {
     arrow_right: <><path d="M5 12h14" /><path d="m13 5 7 7-7 7" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><circle cx="12" cy="8" r="0.6" fill="currentColor" /></>,
     lock: <><rect x="4" y="11" width="16" height="10" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+    unlock: <><rect x="4" y="11" width="16" height="10" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 7-1" /></>,
     db: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" /><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>,
     star: <><path d="M12 3l2.7 5.7 6.3.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.3-.9z" /></>,
     file: <><path d="M14 3H6v18h12V7z" /><path d="M14 3v4h4" /></>,

@@ -31,6 +31,17 @@ services:
       # if your exporter writes elsewhere.
       - ./project/data:/app/data:ro
 
+    environment:
+      # HR gate. When HR_UNLOCK_PASSWORD is set, every API response hides
+      # incidents whose assignment_group equals HR_GROUP_SYS_ID. The viewer
+      # surfaces an "Unlock IT - HR Support" button; entering this password
+      # sets a per-browser cookie that whitelists the session.
+      # Source the password from the .env file alongside this compose file
+      # (gitignored). Leave HR_UNLOCK_PASSWORD unset to disable the gate.
+      HR_GROUP_SYS_ID: "356fce0a4fcd255057a8847221ad48de"
+      HR_GROUP_LABEL:  "IT - HR Support"
+      HR_UNLOCK_PASSWORD: "${HR_UNLOCK_PASSWORD:-}"
+
     restart: unless-stopped
 
     healthcheck:

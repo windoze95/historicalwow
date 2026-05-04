@@ -23,10 +23,12 @@ Static root: /app (HistoricalWow.html lives here).
 Attachments root: /app/data/attachments (mirror of host disk via volume mount).
 """
 import gzip
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import socket
 import sqlite3
 import sys
@@ -43,6 +45,18 @@ DB_PATH    = DATA_DIR / 'historicalwow.db'
 STATIC_HTML = APP_DIR / 'HistoricalWow.html'
 
 PORT = int(os.environ.get('HISTORICALWOW_PORT', '80'))
+
+# --- HR gate --------------------------------------------------------------
+# Incidents assigned to this group (sys_user_group.sys_id) are hidden from
+# every API response unless the requesting browser holds a valid hr_unlock
+# cookie. Token is set when the user POSTs the correct password to
+# /api/hr-unlock; tokens live in process memory and are wiped on restart.
+HR_GROUP_SYS_ID    = os.environ.get('HR_GROUP_SYS_ID', '356fce0a4fcd255057a8847221ad48de')
+HR_UNLOCK_PASSWORD = os.environ.get('HR_UNLOCK_PASSWORD', '')
+HR_GROUP_LABEL     = os.environ.get('HR_GROUP_LABEL', 'IT - HR Support')
+
+_hr_tokens: set[str] = set()
+_hr_tokens_lock = threading.Lock()
 
 # Log to stdout so docker logs picks it up.
 logging.basicConfig(
@@ -152,6 +166,52 @@ def _send_error(handler, status, msg):
     handler.wfile.write(body)
 
 
+def _parse_cookies(handler):
+    raw = handler.headers.get('Cookie', '') or ''
+    out = {}
+    for part in raw.split(';'):
+        part = part.strip()
+        if '=' in part:
+            k, _, v = part.partition('=')
+            out[k.strip()] = v.strip()
+    return out
+
+
+def hr_gate_enabled() -> bool:
+    return bool(HR_UNLOCK_PASSWORD)
+
+
+def is_hr_unlocked(handler) -> bool:
+    """True if the request bears a valid hr_unlock cookie. Always True when
+    the gate is disabled (HR_UNLOCK_PASSWORD unset)."""
+    if not hr_gate_enabled():
+        return True
+    token = _parse_cookies(handler).get('hr_unlock', '')
+    if not token:
+        return False
+    with _hr_tokens_lock:
+        return token in _hr_tokens
+
+
+def is_hr_record(sys_id: str) -> bool:
+    """Whether a sys_id refers to an incident assigned to the HR group.
+    Only checks `incident` — that's the table the gate covers."""
+    if not hr_gate_enabled():
+        return False
+    conn = get_conn()
+    row = conn.execute(
+        'SELECT 1 FROM incident WHERE sys_id = ? AND assignment_group = ? LIMIT 1',
+        (sys_id, HR_GROUP_SYS_ID),
+    ).fetchone()
+    return row is not None
+
+
+def hr_subquery() -> str:
+    """SQL fragment that selects sys_ids of HR-restricted incidents — for use
+    in `WHERE element_id NOT IN (...)` style filters."""
+    return '(SELECT sys_id FROM incident WHERE assignment_group = ?)'
+
+
 def _row_to_dict(row):
     """Convert a sqlite3.Row to a dict, parsing the `raw` JSON envelope into the
     main payload so the viewer sees a single flat object."""
@@ -217,6 +277,13 @@ def list_table(handler, table, params):
         where.append(f'"{k}" = ?')
         args.append(vs[0] if vs else '')
 
+    # HR gate: hide incidents assigned to the HR group when the request
+    # isn't unlocked. Only `incident` is gated — same table the user asked
+    # about — but the same predicate would extend to other task tables.
+    if table == 'incident' and not is_hr_unlocked(handler):
+        where.append('"assignment_group" IS NOT ?')
+        args.append(HR_GROUP_SYS_ID)
+
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     total = conn.execute(f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args).fetchone()['n']
     rows = conn.execute(
@@ -240,6 +307,8 @@ def list_table(handler, table, params):
 def get_record(handler, table, sys_id):
     if table not in ALL_TABLES:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown table: {table}')
+    if table == 'incident' and not is_hr_unlocked(handler) and is_hr_record(sys_id):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
     row = conn.execute(f'SELECT * FROM "{table}" WHERE sys_id = ?', (sys_id,)).fetchone()
     if not row:
@@ -248,6 +317,8 @@ def get_record(handler, table, sys_id):
 
 
 def get_journal_for(handler, element_id):
+    if not is_hr_unlocked(handler) and is_hr_record(element_id):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_journal_field WHERE element_id = ? ORDER BY sys_created_on ASC',
@@ -257,6 +328,8 @@ def get_journal_for(handler, element_id):
 
 
 def get_audit_for(handler, documentkey):
+    if not is_hr_unlocked(handler) and is_hr_record(documentkey):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_audit WHERE documentkey = ? ORDER BY sys_created_on ASC',
@@ -266,6 +339,8 @@ def get_audit_for(handler, documentkey):
 
 
 def get_attachments_for(handler, table_sys_id):
+    if not is_hr_unlocked(handler) and is_hr_record(table_sys_id):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_attachment WHERE table_sys_id = ? ORDER BY sys_created_on ASC',
@@ -318,17 +393,21 @@ def cross_table_search(handler, params):
     limit_per_table = max(1, min(int(params.get('limit', ['8'])[0] or '8'), 50))
 
     like = f'%{q}%'
+    hr_unlocked = is_hr_unlocked(handler)
     out = []
     conn = get_conn()
     for t in types:
+        sql = (f'SELECT sys_id, number, short_description, state, priority, '
+               f'sys_updated_on, raw FROM "{t}" '
+               f'WHERE (number LIKE ? OR short_description LIKE ?)')
+        args = [like, like]
+        if t == 'incident' and not hr_unlocked:
+            sql += ' AND assignment_group IS NOT ?'
+            args.append(HR_GROUP_SYS_ID)
+        sql += ' ORDER BY sys_updated_on DESC LIMIT ?'
+        args.append(limit_per_table)
         try:
-            rows = conn.execute(
-                f'SELECT sys_id, number, short_description, state, priority, '
-                f'sys_updated_on, raw FROM "{t}" '
-                f'WHERE number LIKE ? OR short_description LIKE ? '
-                f'ORDER BY sys_updated_on DESC LIMIT ?',
-                (like, like, limit_per_table)
-            ).fetchall()
+            rows = conn.execute(sql, args).fetchall()
         except sqlite3.Error:
             continue
         for r in rows:
@@ -360,6 +439,58 @@ def get_cmdb_ci_lookup(handler):
             'operational_status': r['operational_status'],
         }
     _json_response(handler, out, cache_seconds=300)
+
+
+def get_hr_status(handler):
+    _json_response(handler, {
+        'enabled': hr_gate_enabled(),
+        'unlocked': is_hr_unlocked(handler),
+        'group_sys_id': HR_GROUP_SYS_ID,
+        'group_label': HR_GROUP_LABEL,
+    })
+
+
+def post_hr_unlock(handler, body):
+    if not hr_gate_enabled():
+        return _send_error(handler, HTTPStatus.SERVICE_UNAVAILABLE,
+                           'gate disabled (HR_UNLOCK_PASSWORD unset)')
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError:
+        return _send_error(handler, HTTPStatus.BAD_REQUEST, 'invalid JSON')
+    pw = (payload.get('password') or '').encode('utf-8')
+    expected = HR_UNLOCK_PASSWORD.encode('utf-8')
+    # Constant-time compare; supplied password might be empty.
+    if not pw or not hmac.compare_digest(pw, expected):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'wrong password')
+    token = secrets.token_hex(16)
+    with _hr_tokens_lock:
+        _hr_tokens.add(token)
+    body_bytes = json.dumps({'ok': True}).encode('utf-8')
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header('Content-Type', 'application/json; charset=utf-8')
+    handler.send_header('Content-Length', str(len(body_bytes)))
+    handler.send_header('Cache-Control', 'no-store')
+    handler.send_header('Set-Cookie',
+                        f'hr_unlock={token}; Path=/; HttpOnly; SameSite=Strict')
+    handler.end_headers()
+    handler.wfile.write(body_bytes)
+
+
+def post_hr_lock(handler):
+    token = _parse_cookies(handler).get('hr_unlock', '')
+    if token:
+        with _hr_tokens_lock:
+            _hr_tokens.discard(token)
+    body_bytes = json.dumps({'ok': True}).encode('utf-8')
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header('Content-Type', 'application/json; charset=utf-8')
+    handler.send_header('Content-Length', str(len(body_bytes)))
+    handler.send_header('Cache-Control', 'no-store')
+    handler.send_header('Set-Cookie',
+                        'hr_unlock=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0')
+    handler.end_headers()
+    handler.wfile.write(body_bytes)
 
 
 def get_sys_user_lookup(handler):
@@ -417,6 +548,26 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def do_POST(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            body = self.rfile.read(length) if length > 0 else b''
+            if path == '/api/hr-unlock':
+                return post_hr_unlock(self, body)
+            if path == '/api/hr-lock':
+                return post_hr_lock(self)
+            return _send_error(self, HTTPStatus.NOT_FOUND, f'no route: {path}')
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            log.exception('handler crashed: %s', e)
+            try:
+                _send_error(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+            except Exception:
+                pass
+
     def _route(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -448,6 +599,8 @@ class Handler(BaseHTTPRequestHandler):
             return get_cmdb_ci_lookup(self)
         if path == '/api/sys_user_lookup':
             return get_sys_user_lookup(self)
+        if path == '/api/hr-status':
+            return get_hr_status(self)
         if path == '/api/search':
             return cross_table_search(self, params)
 
@@ -490,6 +643,10 @@ def main():
 
     log.info('starting on :%d  app=%s  data=%s  db=%s',
              PORT, APP_DIR, DATA_DIR, 'present' if DB_PATH.is_file() else 'MISSING')
+    if hr_gate_enabled():
+        log.info('hr gate ENABLED — group=%s (%s)', HR_GROUP_LABEL, HR_GROUP_SYS_ID)
+    else:
+        log.warning('hr gate DISABLED — set HR_UNLOCK_PASSWORD to protect HR incidents')
     server = ReusableServer(('0.0.0.0', PORT), Handler)
     try:
         server.serve_forever()

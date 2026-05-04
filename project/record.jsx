@@ -25,7 +25,16 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       if (cancel) return;
       setFullRec(r);
       if (r) window.AuditLog.push('view', `${table}/${r.number}`, r.short_description);
-    }).catch(() => {});
+    }).catch(e => {
+      if (cancel) return;
+      // 403 → HR gate. Render a friendly message rather than the loading
+      // spinner forever.
+      if (e && /403/.test(e.message || '')) {
+        setFullRec({ __hr_locked: true, sys_id });
+      } else {
+        setFullRec(false);
+      }
+    });
     data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
     data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
@@ -53,6 +62,19 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const rec = fullRec;
   if (rec === null) {
     return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading…</div>;
+  }
+  if (rec && rec.__hr_locked) {
+    const label = data.hrStatus.group_label || 'this group';
+    return (
+      <div className="empty">
+        <div className="glyph"><window.Icon name="lock" /></div>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>This record is restricted</div>
+        <div style={{ maxWidth: 360, color: 'var(--fg-3)', fontSize: 13 }}>
+          It belongs to <strong>{label}</strong>. Click <strong>Unlock {label}</strong> in the
+          top bar to enter the access password and view it.
+        </div>
+      </div>
+    );
   }
   if (!rec) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;

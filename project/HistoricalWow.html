@@ -1686,9 +1686,13 @@ window.HistoricalWowData = (function () {
       label: 'loading…', snapshot_date: '', instance: '', captured_at: '',
       tables: [], integrity: { sha256_manifest: '', acl_skips: 0, missing_attachments: 0 },
     },
+    // HR gate — populated by /api/hr-status on boot. enabled=true means the
+    // server is filtering HR-assigned incidents on locked sessions; the
+    // viewer surfaces an unlock button when so.
+    hrStatus: { enabled: false, unlocked: false, group_sys_id: '', group_label: '' },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 3,  // +manifest +cmdb_ci_lookup +sys_user_lookup
+      total: EAGER_TABLES.length + 4,  // +manifest +cmdb_ci_lookup +sys_user_lookup +hr_status
       loaded: 0,
       error: null,
     },
@@ -1785,6 +1789,34 @@ window.HistoricalWowData = (function () {
     return (res.rows || []).map(r => ({ ...flatten(r), _table: r._table }));
   };
 
+  // HR gate
+  data.fetchHrStatus = async function () {
+    const s = await apiGet('/api/hr-status');
+    data.hrStatus = s;
+    notify();
+    return s;
+  };
+  data.unlockHr = async function (password) {
+    const res = await fetch('/api/hr-unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    data.hrStatus = { ...data.hrStatus, unlocked: true };
+    notify();
+    return true;
+  };
+  data.lockHr = async function () {
+    await fetch('/api/hr-lock', { method: 'POST', credentials: 'same-origin' });
+    data.hrStatus = { ...data.hrStatus, unlocked: false };
+    notify();
+  };
+
   // ---- post-load processing ----------------------------------------------
 
   function postProcess() {
@@ -1838,6 +1870,13 @@ window.HistoricalWowData = (function () {
       } catch (e) {
         console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
         data.cmdb_ci_lookup = new Map();
+      }
+    }]);
+    jobs.push(['hr_status', async () => {
+      try {
+        data.hrStatus = await apiGet('/api/hr-status');
+      } catch (e) {
+        console.warn('[historicalwow] hr-status failed:', e.message);
       }
     }]);
     return jobs;
@@ -2130,6 +2169,7 @@ window.Icon = function Icon({ name, size = 14, strokeWidth = 1.6 }) {
     arrow_right: <><path d="M5 12h14" /><path d="m13 5 7 7-7 7" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><circle cx="12" cy="8" r="0.6" fill="currentColor" /></>,
     lock: <><rect x="4" y="11" width="16" height="10" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+    unlock: <><rect x="4" y="11" width="16" height="10" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 7-1" /></>,
     db: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" /><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>,
     star: <><path d="M12 3l2.7 5.7 6.3.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.3-.9z" /></>,
     file: <><path d="M14 3H6v18h12V7z" /><path d="M14 3v4h4" /></>,
@@ -2766,7 +2806,16 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       if (cancel) return;
       setFullRec(r);
       if (r) window.AuditLog.push('view', `${table}/${r.number}`, r.short_description);
-    }).catch(() => {});
+    }).catch(e => {
+      if (cancel) return;
+      // 403 → HR gate. Render a friendly message rather than the loading
+      // spinner forever.
+      if (e && /403/.test(e.message || '')) {
+        setFullRec({ __hr_locked: true, sys_id });
+      } else {
+        setFullRec(false);
+      }
+    });
     data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
     data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
@@ -2794,6 +2843,19 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const rec = fullRec;
   if (rec === null) {
     return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading…</div>;
+  }
+  if (rec && rec.__hr_locked) {
+    const label = data.hrStatus.group_label || 'this group';
+    return (
+      <div className="empty">
+        <div className="glyph"><window.Icon name="lock" /></div>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>This record is restricted</div>
+        <div style={{ maxWidth: 360, color: 'var(--fg-3)', fontSize: 13 }}>
+          It belongs to <strong>{label}</strong>. Click <strong>Unlock {label}</strong> in the
+          top bar to enter the access password and view it.
+        </div>
+      </div>
+    );
   }
   if (!rec) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;
@@ -4233,6 +4295,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showRaw, setShowRaw] = useState(TWEAK_DEFAULTS.showRawDefault);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [hrModalOpen, setHrModalOpen] = useState(false);
   const data = window.HistoricalWowData;
 
   // Re-render whenever the loader notifies (table-by-table progress, then ready).
@@ -4300,6 +4363,16 @@ function App() {
           </div>
         </div>
         <div className="controls">
+          {data.hrStatus.enabled && (
+            <HrGateButton
+              status={data.hrStatus}
+              onUnlockClick={() => setHrModalOpen(true)}
+              onLockClick={async () => {
+                await data.lockHr();
+                window.location.reload();
+              }}
+            />
+          )}
           <button className={'toggle' + (showRaw ? ' on' : '')} onClick={() => setShowRaw(v => !v)} title="Show raw values alongside display values">
             <window.Icon name={showRaw ? 'eye' : 'eye_off'} size={13} />
             <span>raw</span>
@@ -4329,6 +4402,17 @@ function App() {
 
       <window.KPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {auditOpen && <AuditLogPanel onClose={() => setAuditOpen(false)} />}
+      {hrModalOpen && (
+        <HrUnlockModal
+          status={data.hrStatus}
+          onClose={() => setHrModalOpen(false)}
+          onSuccess={() => {
+            setHrModalOpen(false);
+            window.AuditLog.push('view', 'hr-unlock', `unlocked ${data.hrStatus.group_label}`);
+            window.location.reload();
+          }}
+        />
+      )}
 
       <window.TweaksPanel title="Tweaks">
         <window.TweakSection label="Theme" />
@@ -4528,6 +4612,120 @@ window.useRoute = function () {
   }
   return [r, nav];
 };
+
+// --- HR gate UI ----------------------------------------------------------
+// HR-restricted incidents (assignment_group == HR_GROUP_SYS_ID on the
+// server) are filtered out of every API response unless the browser holds
+// the hr_unlock cookie set by POST /api/hr-unlock with the right password.
+// The button below shows current state; clicking it opens the modal (locked)
+// or POSTs /api/hr-lock and reloads (unlocked).
+
+function HrGateButton({ status, onUnlockClick, onLockClick }) {
+  const unlocked = status.unlocked;
+  const label = status.group_label || 'HR';
+  return (
+    <button
+      className={'toggle' + (unlocked ? ' on' : '')}
+      onClick={unlocked ? onLockClick : onUnlockClick}
+      title={unlocked
+        ? `${label} access enabled — click to lock again`
+        : `${label} incidents are hidden — click to unlock`}
+      style={{
+        gap: 6,
+        background: unlocked ? 'oklch(94% 0.05 145)' : undefined,
+        borderColor: unlocked ? 'oklch(82% 0.08 145)' : undefined,
+        color: unlocked ? 'oklch(32% 0.08 145)' : undefined,
+      }}
+    >
+      <window.Icon name={unlocked ? 'unlock' : 'lock'} size={13} />
+      <span>{unlocked ? `${label} unlocked` : `Unlock ${label}`}</span>
+    </button>
+  );
+}
+
+function HrUnlockModal({ status, onClose, onSuccess }) {
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const inputRef = React.useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!pw || busy) return;
+    setBusy(true); setErr('');
+    try {
+      await window.HistoricalWowData.unlockHr(pw);
+      onSuccess();
+    } catch (e) {
+      setErr(e.message === 'wrong password' ? 'Wrong password.' : `Failed: ${e.message}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="audit-log-overlay" onClick={onClose} style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-elev)', border: '1px solid var(--border-2)', borderRadius: 12,
+        boxShadow: 'var(--shadow-lg)', padding: 24, width: 'min(420px, 92vw)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <window.Icon name="lock" size={16} />
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Unlock {status.group_label}</h3>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.55, marginBottom: 16 }}>
+          Incidents assigned to <strong>{status.group_label}</strong> are hidden from this archive
+          by default. Enter the access password to include them in lists, search, and the record view.
+          The unlock applies to this browser only and clears when you lock or close the browser.
+        </div>
+        <form onSubmit={submit}>
+          <input
+            ref={inputRef}
+            type="password"
+            value={pw}
+            onChange={e => { setPw(e.target.value); setErr(''); }}
+            placeholder="HR access password"
+            autoComplete="off"
+            disabled={busy}
+            style={{
+              width: '100%', padding: '10px 12px', fontSize: 13.5,
+              border: '1px solid var(--border-2)', borderRadius: 8,
+              fontFamily: 'var(--font-sans)', background: 'var(--bg)',
+            }}
+          />
+          {err && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--c-red)' }}>{err}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="toggle"
+              style={{ padding: '6px 14px' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !pw}
+              className="toggle on"
+              style={{ padding: '6px 14px', opacity: (busy || !pw) ? 0.5 : 1 }}
+            >
+              {busy ? 'Unlocking…' : 'Unlock'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>

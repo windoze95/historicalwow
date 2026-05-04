@@ -37,6 +37,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showRaw, setShowRaw] = useState(TWEAK_DEFAULTS.showRawDefault);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [hrModalOpen, setHrModalOpen] = useState(false);
   const data = window.HistoricalWowData;
 
   // Re-render whenever the loader notifies (table-by-table progress, then ready).
@@ -104,6 +105,16 @@ function App() {
           </div>
         </div>
         <div className="controls">
+          {data.hrStatus.enabled && (
+            <HrGateButton
+              status={data.hrStatus}
+              onUnlockClick={() => setHrModalOpen(true)}
+              onLockClick={async () => {
+                await data.lockHr();
+                window.location.reload();
+              }}
+            />
+          )}
           <button className={'toggle' + (showRaw ? ' on' : '')} onClick={() => setShowRaw(v => !v)} title="Show raw values alongside display values">
             <window.Icon name={showRaw ? 'eye' : 'eye_off'} size={13} />
             <span>raw</span>
@@ -133,6 +144,17 @@ function App() {
 
       <window.KPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {auditOpen && <AuditLogPanel onClose={() => setAuditOpen(false)} />}
+      {hrModalOpen && (
+        <HrUnlockModal
+          status={data.hrStatus}
+          onClose={() => setHrModalOpen(false)}
+          onSuccess={() => {
+            setHrModalOpen(false);
+            window.AuditLog.push('view', 'hr-unlock', `unlocked ${data.hrStatus.group_label}`);
+            window.location.reload();
+          }}
+        />
+      )}
 
       <window.TweaksPanel title="Tweaks">
         <window.TweakSection label="Theme" />
@@ -332,5 +354,119 @@ window.useRoute = function () {
   }
   return [r, nav];
 };
+
+// --- HR gate UI ----------------------------------------------------------
+// HR-restricted incidents (assignment_group == HR_GROUP_SYS_ID on the
+// server) are filtered out of every API response unless the browser holds
+// the hr_unlock cookie set by POST /api/hr-unlock with the right password.
+// The button below shows current state; clicking it opens the modal (locked)
+// or POSTs /api/hr-lock and reloads (unlocked).
+
+function HrGateButton({ status, onUnlockClick, onLockClick }) {
+  const unlocked = status.unlocked;
+  const label = status.group_label || 'HR';
+  return (
+    <button
+      className={'toggle' + (unlocked ? ' on' : '')}
+      onClick={unlocked ? onLockClick : onUnlockClick}
+      title={unlocked
+        ? `${label} access enabled — click to lock again`
+        : `${label} incidents are hidden — click to unlock`}
+      style={{
+        gap: 6,
+        background: unlocked ? 'oklch(94% 0.05 145)' : undefined,
+        borderColor: unlocked ? 'oklch(82% 0.08 145)' : undefined,
+        color: unlocked ? 'oklch(32% 0.08 145)' : undefined,
+      }}
+    >
+      <window.Icon name={unlocked ? 'unlock' : 'lock'} size={13} />
+      <span>{unlocked ? `${label} unlocked` : `Unlock ${label}`}</span>
+    </button>
+  );
+}
+
+function HrUnlockModal({ status, onClose, onSuccess }) {
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const inputRef = React.useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!pw || busy) return;
+    setBusy(true); setErr('');
+    try {
+      await window.HistoricalWowData.unlockHr(pw);
+      onSuccess();
+    } catch (e) {
+      setErr(e.message === 'wrong password' ? 'Wrong password.' : `Failed: ${e.message}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="audit-log-overlay" onClick={onClose} style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-elev)', border: '1px solid var(--border-2)', borderRadius: 12,
+        boxShadow: 'var(--shadow-lg)', padding: 24, width: 'min(420px, 92vw)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <window.Icon name="lock" size={16} />
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Unlock {status.group_label}</h3>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.55, marginBottom: 16 }}>
+          Incidents assigned to <strong>{status.group_label}</strong> are hidden from this archive
+          by default. Enter the access password to include them in lists, search, and the record view.
+          The unlock applies to this browser only and clears when you lock or close the browser.
+        </div>
+        <form onSubmit={submit}>
+          <input
+            ref={inputRef}
+            type="password"
+            value={pw}
+            onChange={e => { setPw(e.target.value); setErr(''); }}
+            placeholder="HR access password"
+            autoComplete="off"
+            disabled={busy}
+            style={{
+              width: '100%', padding: '10px 12px', fontSize: 13.5,
+              border: '1px solid var(--border-2)', borderRadius: 8,
+              fontFamily: 'var(--font-sans)', background: 'var(--bg)',
+            }}
+          />
+          {err && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--c-red)' }}>{err}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="toggle"
+              style={{ padding: '6px 14px' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !pw}
+              className="toggle on"
+              style={{ padding: '6px 14px', opacity: (busy || !pw) ? 0.5 : 1 }}
+            >
+              {busy ? 'Unlocking…' : 'Unlock'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

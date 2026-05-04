@@ -513,11 +513,12 @@ def _write_row(f, row):
 
 def fetch_pages_offset(table, query):
     """Generator yielding pages of rows for the given query."""
+    page_size = page_size_for(table)
     offset = 0
     while True:
         params = {
             'sysparm_query': query,
-            'sysparm_limit': page_size_for(table),
+            'sysparm_limit': page_size,
             'sysparm_offset': offset,
             'sysparm_display_value': 'all',
             'sysparm_exclude_reference_link': 'true',
@@ -542,9 +543,13 @@ def fetch_pages_offset(table, query):
         if not rows:
             return
         yield rows
-        if len(rows) < PAGE_SIZE:
+        # Use the per-table page size for the early-stop check. Tables with
+        # smaller overrides (incident=1000, change_request=1000, …) would
+        # otherwise stop after the first page when len(rows) == 1000 since
+        # `1000 < PAGE_SIZE(5000)` is True — silently truncating deltas.
+        if len(rows) < page_size:
             return
-        offset += PAGE_SIZE
+        offset += page_size
 
 
 # ---- Full pull (cursor by sys_id, resumable) -------------------------------

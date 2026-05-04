@@ -383,7 +383,14 @@ def api_get_json(path, params=None):
 def api_get_binary(path):
     url = f'https://{INSTANCE}{path}'
     last_err = None
-    for attempt in range(1, RETRIES + 1):
+    # Binary fetches retry less aggressively than table fetches: most 500s
+    # on attachment file bodies are persistent (broken/quarantined source
+    # blobs), and 5 retries × exponential backoff would tie up a parallel
+    # worker for ~30-60s per dead attachment. The slow rate already
+    # observed in production was almost entirely retry-blocking, not
+    # actual download throughput. Override via SN_BINARY_RETRIES.
+    retries = int(os.environ.get('SN_BINARY_RETRIES', '2'))
+    for attempt in range(1, retries + 1):
         try:
             req = urllib.request.Request(url, headers={
                 'Authorization': f'Bearer {get_token()}',
@@ -395,12 +402,15 @@ def api_get_binary(path):
                 _token['access_token'] = None
                 continue
             if e.code == 429 or 500 <= e.code < 600:
-                time.sleep(_backoff(attempt))
+                # On the last attempt, don't bother sleeping just to fail.
+                if attempt < retries:
+                    time.sleep(_backoff(attempt))
                 last_err = e
                 continue
             raise
         except _TRANSIENT as e:
-            time.sleep(_backoff(attempt))
+            if attempt < retries:
+                time.sleep(_backoff(attempt))
             last_err = e
     raise RuntimeError(f'binary GET {path} failed: {last_err}')
 

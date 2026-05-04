@@ -947,6 +947,32 @@ def _safe_name(name):
     return cleaned[:200] or 'file'
 
 
+def _download_one_attachment(row):
+    """Worker: fetch one attachment file body. Returns (outcome, err_or_none)
+    where outcome is 'written' | 'skipped' | 'failed'. Resume-safe: target
+    file existence is checked before any HTTP request, so a re-run with
+    files already on disk skips them at near-disk-stat speed."""
+    sid = _extract_sid(row)
+    file_name = field(row, 'file_name')
+    if not sid:
+        return ('skipped', None)
+    # Shard by first two hex chars of sys_id so we don't end up with
+    # ~341k flat entries under attachments/ (Finder/Spotlight/Time Machine
+    # all struggle with that).
+    shard = (sid[:2] or '__').lower()
+    target_dir = ATTACH_DIR / shard / sid
+    target = target_dir / _safe_name(file_name)
+    if target.exists() and target.stat().st_size > 0:
+        return ('skipped', None)
+    try:
+        blob, _ctype = api_get_binary(f'/api/now/attachment/{sid}/file')
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blob)
+        return ('written', None)
+    except Exception as e:
+        return ('failed', f'attachment {sid[:8]} ({file_name}): {e}')
+
+
 def export_attachment_bodies():
     if SKIP_ATTACH:
         log.info('Skipping attachment bodies (SN_SKIP_ATTACHMENTS=1)')
@@ -958,55 +984,71 @@ def export_attachment_bodies():
 
     ATTACH_DIR.mkdir(exist_ok=True)
     total = _count_lines(meta_path)
-    log.info('Downloading attachment bodies — %d in metadata. '
-             'Already-downloaded files are skipped. Ctrl+C is safe.', total)
+    workers = int(os.environ.get('SN_ATTACHMENT_WORKERS', '8'))
+    log.info('Downloading attachment bodies — %d in metadata, %d parallel '
+             'workers. Already-downloaded files are skipped. Ctrl+C is safe.',
+             total, workers)
 
     written = skipped = failed = 0
     started = time.time()
-    with meta_path.open('r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
 
-            sid = _extract_sid(row)
-            file_name = field(row, 'file_name')
-            if not sid:
-                continue
+    def _row_iter():
+        with meta_path.open('r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-            # Shard into 256 buckets by first two hex chars of sys_id so we
-            # don't end up with ~341k flat entries under attachments/
-            # (Finder/Spotlight/Time Machine all struggle with that).
-            shard = (sid[:2] or '__').lower()
-            target_dir = ATTACH_DIR / shard / sid
-            target = target_dir / _safe_name(file_name)
-            if target.exists() and target.stat().st_size > 0:
-                skipped += 1
-                continue
+    # Sliding-window pattern: keep `inflight` futures pending at any time so
+    # we don't load all 341k rows into memory at once but still saturate the
+    # workers. inflight = workers*4 lets every thread always have a job
+    # queued behind it without piling on hundreds of pending futures.
+    from concurrent.futures import wait as fut_wait, FIRST_COMPLETED
+    inflight_cap = max(workers * 4, 16)
+    pending = set()
+    log_every = 200  # one progress line per 200 attachments
 
-            try:
-                blob, _ctype = api_get_binary(f'/api/now/attachment/{sid}/file')
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(blob)
+    def _drain(pending):
+        nonlocal written, skipped, failed
+        done, pending = fut_wait(pending, return_when=FIRST_COMPLETED)
+        for fut in done:
+            outcome, err = fut.result()
+            if outcome == 'written':
                 written += 1
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
+            elif outcome == 'skipped':
+                skipped += 1
+            else:
                 failed += 1
-                log.error('  attachment %s (%s): %s', sid[:8], file_name, e)
-
-            if (written + skipped + failed) % 25 == 0:
+                if err:
+                    log.error('  %s', err)
+            done_count = written + skipped + failed
+            if done_count % log_every == 0:
                 elapsed = time.time() - started
-                done = written + skipped + failed
-                rate = written / elapsed if elapsed else 0
-                eta = (total - done) / rate if rate else None
-                log.info('  attachments: %d downloaded, %d skipped, %d failed of %d (%.1f/s%s)',
+                rate = (written + skipped) / elapsed if elapsed else 0
+                eta = (total - done_count) / rate if rate else None
+                log.info('  attachments: %d downloaded, %d skipped, '
+                         '%d failed of %d (%.1f/s%s)',
                          written, skipped, failed, total, rate,
                          f', ETA {int(eta)}s' if eta else '')
+        return pending
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for row in _row_iter():
+                pending.add(ex.submit(_download_one_attachment, row))
+                if len(pending) >= inflight_cap:
+                    pending = _drain(pending)
+            # Drain remaining futures at end-of-stream.
+            while pending:
+                pending = _drain(pending)
+    except KeyboardInterrupt:
+        log.warning('  attachments: interrupted at %d/%d (resumable; '
+                    're-run to continue)', written + skipped + failed, total)
+        raise
 
     log.info('  ✓ attachments — %d downloaded, %d skipped, %d failed in %ds',
              written, skipped, failed, int(time.time() - started))

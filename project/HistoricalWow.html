@@ -1775,6 +1775,10 @@ window.HistoricalWowData = (function () {
     const res = await apiGet(`/api/attachments/${sys_id}`);
     return (res.rows || []).map(flatten);
   };
+  data.fetchVariables = async function (ritm_sys_id) {
+    const res = await apiGet(`/api/variables/${ritm_sys_id}`);
+    return { rows: res.rows || [], cat_item: res.cat_item || null };
+  };
   data.fetchCIRelations = async function (sys_id) {
     const res = await apiGet(`/api/related/cmdb/${sys_id}`);
     return {
@@ -2783,6 +2787,19 @@ Object.assign(window, { ListPage });
 // Record detail page — works for any task table (incident, change_request,
 // problem, sc_request, sc_req_item, sc_task, sysapproval_group, …).
 
+// Parent → child relationship map for the "Tasks" section. The link field
+// varies by parent: incident uses generic `parent`, but the catalog flow
+// uses `request` (sc_request → sc_req_item) and `request_item`
+// (sc_req_item → sc_task). Without this, opening an RITM showed no child
+// catalog tasks because we were filtering on `parent` (which is empty).
+const CHILD_REL = {
+  incident:        { table: 'incident_task', field: 'parent' },
+  change_request:  { table: 'change_task',   field: 'parent' },
+  problem:         { table: 'problem_task',  field: 'parent' },
+  sc_request:      { table: 'sc_req_item',   field: 'request' },
+  sc_req_item:     { table: 'sc_task',       field: 'request_item' },
+};
+
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const data = window.HistoricalWowData;
   const [tab, setTab] = React.useState('journal');
@@ -2796,11 +2813,13 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const [ciLinks, setCILinks]   = React.useState([]);
   const [slas, setSLAs]         = React.useState([]);
   const [approvals, setApprovals] = React.useState([]);
+  const [variables, setVariables] = React.useState({ rows: [], cat_item: null });
 
   React.useEffect(() => {
     let cancel = false;
     setFullRec(null); setJournals(null); setAudits(null); setAtts(null);
     setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
+    setVariables({ rows: [], cat_item: null });
 
     data.fetchRecord(table, sys_id).then(r => {
       if (cancel) return;
@@ -2822,12 +2841,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
 
     // Per-record relationships (each is a small filtered query — was eager-
     // loaded as 422k+90k+75k rows, now 0–N rows per record).
-    const childTablesByParent = {
-      incident: 'incident_task', change_request: 'change_task', problem: 'problem_task',
-    };
-    const childTable = childTablesByParent[table];
-    if (childTable) {
-      data.fetchTaskList(childTable, { filters: { parent: sys_id }, limit: 200, slim: 1 })
+    const rel = CHILD_REL[table];
+    if (rel) {
+      data.fetchTaskList(rel.table, { filters: { [rel.field]: sys_id }, limit: 200, slim: 1 })
         .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
     }
     data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
@@ -2836,6 +2852,10 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
     data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
       .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+    if (table === 'sc_req_item') {
+      data.fetchVariables(sys_id)
+        .then(r => { if (!cancel) setVariables(r); }).catch(() => {});
+    }
 
     return () => { cancel = true; };
   }, [table, sys_id]);
@@ -2870,6 +2890,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       <div className="left">
         <RecordHeader rec={rec} table={table} />
         <FieldsSection rec={rec} table={table} showRaw={showRaw} />
+        <VariablesSection rows={variables.rows} cat_item={variables.cat_item} />
         {tasks.length > 0 && <TasksSection tasks={tasks} table={table} />}
         {slas.length > 0 && <SLAsSection slas={slas} />}
         {ciLinks.length > 0 && <AffectedCIsSection ciLinks={ciLinks} />}
@@ -3072,8 +3093,7 @@ function FieldsSection({ rec, table, showRaw }) {
 }
 
 function TasksSection({ tasks, table }) {
-  const childMap = { incident: 'incident_task', change_request: 'change_task', problem: 'problem_task' };
-  const childTable = childMap[table];
+  const childTable = CHILD_REL[table]?.table;
   const heading = childTable ? window.taskLabel(childTable, 'plural') : 'Child tasks';
   return (
     <div className="section">
@@ -3086,6 +3106,76 @@ function TasksSection({ tasks, table }) {
             <span className="desc">{t.short_description}</span>
             <span className="chip green">closed</span>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Catalog variables — render the form fields a user typed when submitting
+// an RITM. Variable definitions vary per catalog item (sc_cat_item), so
+// we drive the layout off the joined item_option_new rows and don't try
+// to be clever about types beyond a few known cases:
+//   1=string, 2=text, 5=select, 6=multi-line, 7=reference, 8=checkbox,
+//   9=date, 17=tree picker, 21=email, 22=URL, 24=lookup, 26=lookup select.
+function VariablesSection({ rows, cat_item }) {
+  if (!rows || rows.length === 0) return null;
+  const renderValue = (v, type, reference) => {
+    const val = v == null || v === '' ? '—' : String(v);
+    if (val === '—') return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+    const typeNum = parseInt(type, 10);
+    // Reference variable → try to resolve via lookup maps. The `reference`
+    // column tells us which table the sys_id points at.
+    if ((typeNum === 7 || typeNum === 24 || typeNum === 26) && /^[a-f0-9]{32}$/.test(val)) {
+      if (reference === 'sys_user') {
+        return <window.UserCell sys_id={val} />;
+      }
+      if (reference === 'sys_user_group') {
+        const g = window.findGroup(val);
+        return g ? <span className="ref-link" onClick={() => window.navigate(`/groups/${val}`)}>{g.name}</span>
+                 : <span className="mono" style={{ fontSize: 11.5 }}>{val.slice(0, 8)}…</span>;
+      }
+      if (reference === 'cmdb_ci') {
+        const c = window.findCI(val);
+        return c ? <span className="ref-link" onClick={() => window.navigate(`/cis/${val}`)}>{c.name}</span>
+                 : <span className="mono" style={{ fontSize: 11.5 }}>{val.slice(0, 8)}…</span>;
+      }
+      // Unknown reference table — just show the sys_id.
+      return <span className="mono" style={{ fontSize: 11.5 }}>{val.slice(0, 8)}…</span>;
+    }
+    // Checkbox: ServiceNow stores 'true'/'false'.
+    if (typeNum === 8) {
+      return <span>{(val === 'true' || val === '1') ? 'Yes' : 'No'}</span>;
+    }
+    // Multi-line / long text — preserve newlines.
+    if (typeNum === 2 || typeNum === 6) {
+      return <span style={{ whiteSpace: 'pre-wrap' }}>{val}</span>;
+    }
+    return <span>{val}</span>;
+  };
+  return (
+    <div className="section">
+      <h3>
+        Variables
+        <span className="count">{rows.length}</span>
+        {cat_item && <span style={{
+          marginLeft: 10, fontSize: 11.5, color: 'var(--fg-3)',
+          fontWeight: 400, fontFamily: 'var(--font-mono)',
+        }}>{cat_item}</span>}
+      </h3>
+      <div className="kv-block" style={{
+        display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: 6, columnGap: 14,
+        padding: '10px 12px',
+      }}>
+        {rows.map(v => (
+          <React.Fragment key={v.opt_sys_id || v.def_sys_id || v.var_name}>
+            <div style={{ color: 'var(--fg-3)', fontSize: 12 }}>
+              {v.label || v.var_name || '(unnamed)'}
+            </div>
+            <div style={{ fontSize: 12.5 }}>
+              {renderValue(v.value, v.type, v.reference)}
+            </div>
+          </React.Fragment>
         ))}
       </div>
     </div>

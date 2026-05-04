@@ -155,6 +155,10 @@ window.HistoricalWowData = (function () {
     const res = await apiGet(`/api/attachments/${sys_id}`);
     return (res.rows || []).map(flatten);
   };
+  data.fetchVariables = async function (ritm_sys_id) {
+    const res = await apiGet(`/api/variables/${ritm_sys_id}`);
+    return { rows: res.rows || [], cat_item: res.cat_item || null };
+  };
   data.fetchCIRelations = async function (sys_id) {
     const res = await apiGet(`/api/related/cmdb/${sys_id}`);
     return {

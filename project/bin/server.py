@@ -14,6 +14,7 @@ Replaces nginx in the container. Single Python process, stdlib only
   GET /api/audit/<documentkey>   → audit entries for a record
   GET /api/attachments/<table_sys_id>  → attachment metadata for a record
   GET /api/related/cmdb/<sys_id> → upstream + downstream CI relationships
+  GET /api/variables/<ritm_sys_id> → catalog variables submitted on an RITM
   GET /api/search?q=...&types=incident,problem  → cross-table search
   GET /data/attachments/<...>    → attachment file body (filesystem)
   GET /data/manifest.json        → manifest (compatibility shim for legacy data.js)
@@ -81,6 +82,8 @@ REFERENCE_TABLES = {
     'sys_choice', 'core_company', 'cmn_department', 'cmn_location', 'cmn_cost_center',
     'sys_journal_field', 'sys_audit', 'sys_attachment',
     'task_ci', 'task_sla', 'sysapproval_approver',
+    'sc_cat_item', 'item_option_new', 'sc_item_option', 'sc_item_option_mtom',
+    'question', 'question_choice',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 
@@ -347,6 +350,46 @@ def get_attachments_for(handler, table_sys_id):
         (table_sys_id,)
     ).fetchall()
     _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]})
+
+
+def get_variables_for(handler, ritm_sys_id):
+    """Return the catalog variables a user submitted on an RITM.
+
+    Joins sc_item_option_mtom (link table) → sc_item_option (value) →
+    item_option_new (def: label, type, reference target). The shape is
+    consistent across catalog items even though every form has a
+    different set of fields, since item_option_new carries the schema."""
+    if not is_hr_unlocked(handler) and is_hr_record(ritm_sys_id):
+        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+    conn = get_conn()
+    rows = conn.execute(
+        '''SELECT
+              o.sys_id          AS opt_sys_id,
+              o.value           AS value,
+              d.sys_id          AS def_sys_id,
+              d.name            AS var_name,
+              d.question_text   AS label,
+              d.type            AS type,
+              d."order"         AS order_idx,
+              d.reference       AS reference,
+              c.name            AS cat_item_name
+            FROM sc_item_option_mtom m
+            LEFT JOIN sc_item_option   o ON o.sys_id = m.sc_item_option
+            LEFT JOIN item_option_new  d ON d.sys_id = o.item_option_new
+            LEFT JOIN sc_cat_item      c ON c.sys_id = o.cat_item
+            WHERE m.request_item = ?
+            ORDER BY CAST(NULLIF(d."order", "") AS INTEGER), d.question_text''',
+        (ritm_sys_id,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        # Skip rows where the variable definition is missing — the link
+        # table can have orphans pointing at definitions that were deleted.
+        if not d.get('label') and not d.get('var_name'):
+            continue
+        out.append(d)
+    _json_response(handler, {'rows': out, 'cat_item': out[0]['cat_item_name'] if out else None})
 
 
 def get_ci_relations(handler, sys_id):
@@ -616,6 +659,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r'^/api/related/cmdb/([^/]+)$', path)
         if m:
             return get_ci_relations(self, m.group(1))
+        m = re.match(r'^/api/variables/([^/]+)$', path)
+        if m:
+            return get_variables_for(self, m.group(1))
 
         m = re.match(r'^/api/([a-z_][a-z_0-9]*)$', path)
         if m:

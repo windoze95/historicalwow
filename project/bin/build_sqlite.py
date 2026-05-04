@@ -196,6 +196,46 @@ SCHEMAS = {
         ('state',       lambda r: _v(r.get('state'))),
         ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
     ],
+
+    # Catalog: definitions + per-RITM variable values. The viewer joins
+    # sc_item_option_mtom → sc_item_option → item_option_new to render
+    # the form fields a user typed when submitting an RITM.
+    'sc_cat_item':         [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('sys_class_name',    lambda r: _v(r.get('sys_class_name'))),
+        ('sc_catalogs',       lambda r: _v(r.get('sc_catalogs'))),
+    ],
+    'item_option_new':     [
+        ('name',          lambda r: _v(r.get('name'))),
+        ('question_text', lambda r: _v(r.get('question_text'))),
+        ('type',          lambda r: _v(r.get('type'))),
+        ('cat_item',      lambda r: _v(r.get('cat_item'))),
+        ('mandatory',     lambda r: 1 if str(_v(r.get('mandatory')) or 'false').lower() == 'true' else 0),
+        ('order',         lambda r: _v(r.get('order'))),
+        ('reference',     lambda r: _v(r.get('reference'))),  # for type=reference, the target table
+    ],
+    'sc_item_option':      [
+        ('value',           lambda r: _v(r.get('value'))),
+        ('item_option_new', lambda r: _v(r.get('item_option_new'))),
+        ('cat_item',        lambda r: _v(r.get('cat_item'))),
+        ('order',           lambda r: _v(r.get('order'))),
+    ],
+    'sc_item_option_mtom': [
+        ('request_item',   lambda r: _v(r.get('request_item'))),
+        ('sc_item_option', lambda r: _v(r.get('sc_item_option'))),
+    ],
+    'question':            [
+        ('name',          lambda r: _v(r.get('name'))),
+        ('question_text', lambda r: _v(r.get('question_text'))),
+        ('type',          lambda r: _v(r.get('type'))),
+    ],
+    'question_choice':     [
+        ('question', lambda r: _v(r.get('question'))),
+        ('text',     lambda r: _v(r.get('text'))),
+        ('value',    lambda r: _v(r.get('value'))),
+        ('order',    lambda r: _v(r.get('order'))),
+    ],
 }
 
 

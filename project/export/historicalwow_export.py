@@ -205,6 +205,15 @@ DEFAULT_TABLES = [
     'task_ci',
     'task_sla',
     'sysapproval_approver',
+    # Catalog: definitions + per-RITM variable values. The viewer joins
+    # sc_item_option_mtom → sc_item_option → item_option_new to render the
+    # form fields a user typed when submitting an RITM.
+    'sc_cat_item',
+    'item_option_new',
+    'sc_item_option',
+    'sc_item_option_mtom',
+    'question',
+    'question_choice',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',

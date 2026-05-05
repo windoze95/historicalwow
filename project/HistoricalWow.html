@@ -2635,7 +2635,19 @@ function Pager({ page, setPage, lastPage }) {
 function UserList() {
   const data = window.HistoricalWowData;
   const [q, setQ] = React.useState('');
-  let rows = data.sys_user.slice();
+  // sys_user isn't eager-loaded as an array anymore (saves ~5 MB of envelope
+  // payload at boot); the compact projection lives in data.sys_user_lookup
+  // (Map of sys_id → {name, user_name, title, department, location}). Walk
+  // it to build the list rows.
+  const allRows = React.useMemo(() => {
+    const out = [];
+    for (const [sys_id, info] of data.sys_user_lookup) {
+      out.push({ sys_id, ...info });
+    }
+    return out;
+  }, [data.sys_user_lookup]);
+
+  let rows = allRows;
   if (q.trim()) {
     const ql = q.toLowerCase();
     rows = rows.filter(r =>
@@ -2644,14 +2656,14 @@ function UserList() {
       (r.title || '').toLowerCase().includes(ql)
     );
   }
-  rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  rows = rows.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const display = rows.slice(0, 500);  // cap render for perf
 
   return (
     <div>
       <div className="page-header">
         <h1>Users <span className="count mono">{data.manifest.tables.find(t => t.table === 'sys_user')?.source_rows?.toLocaleString() || '—'}</span></h1>
-        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user</span> · {rows.length.toLocaleString()} of {data.sys_user.length.toLocaleString()} loaded</div>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user</span> · {rows.length.toLocaleString()} of {allRows.length.toLocaleString()} loaded</div>
         <div className="toolbar">
           <div className="spacer" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…"

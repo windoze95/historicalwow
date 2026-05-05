@@ -1740,6 +1740,77 @@ window.HistoricalWowData = (function () {
     return out;
   }
 
+  // ---- IndexedDB cache --------------------------------------------------
+  // Lookup maps are deterministic functions of the snapshot — the same
+  // input (manifest.captured_at) always produces the same output. So we
+  // store them in IndexedDB keyed on the snapshot id, and only refetch
+  // when the snapshot changes (i.e. when a new export was ingested
+  // server-side). For 33 MB cmdb_ci_lookup over a slow VPN, this cuts
+  // repeat-visit boot time from "stream + parse 33 MB" to "open IDB,
+  // structured-clone-deserialize directly into a Map" — typically
+  // 100-500 ms vs 5-30 s.
+  const IDB_NAME = 'historicalwow';
+  const IDB_STORE = 'lookups';
+
+  function openIDB() {
+    return new Promise((resolve, reject) => {
+      try {
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(IDB_STORE)) {
+            req.result.createObjectStore(IDB_STORE);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function idbGet(db, key) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbPut(db, key, value) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // Fetch-with-IDB-cache. snapshotId comes from manifest.captured_at;
+  // if the stored entry's snapshotId matches, return it immediately and
+  // skip the network entirely. Otherwise fetch fresh and overwrite.
+  async function fetchWithIdbCache(key, snapshotId, fetcher) {
+    let db;
+    try { db = await openIDB(); } catch (e) {
+      console.warn(`[historicalwow] IDB open failed (${e.message}); falling back to network for ${key}`);
+      return fetcher();
+    }
+    try {
+      const stored = await idbGet(db, key);
+      if (stored && stored.snapshotId === snapshotId && stored.value) {
+        return stored.value;
+      }
+    } catch (e) {
+      console.warn(`[historicalwow] IDB read failed for ${key}; refetching:`, e.message);
+    }
+    const value = await fetcher();
+    try {
+      await idbPut(db, key, { snapshotId, value });
+    } catch (e) {
+      console.warn(`[historicalwow] IDB write failed for ${key} (cache disabled this session):`, e.message);
+    }
+    return value;
+  }
+
   async function apiGet(path) {
     let lastErr = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1889,15 +1960,19 @@ window.HistoricalWowData = (function () {
   // these (UserCell, RefLink kind=ci) gracefully fall back to the
   // envelope's __display_<field> until the lookup map arrives, so the
   // page renders immediately and progressively enhances.
+  //
+  // Both lookups go through IDB cache. Within a snapshot, the second
+  // visit (and every visit after) skips the network entirely — IDB
+  // hands back the parsed object via structured clone in a few hundred
+  // ms instead of streaming + parsing 38 MB of gzipped JSON.
   function loadBackgroundLookups() {
-    apiGet('/api/sys_user_lookup').then(map => {
-      data.sys_user_lookup = new Map(Object.entries(map));
-      notify();
-    }).catch(e => console.warn('[historicalwow] sys_user_lookup failed:', e.message));
-    apiGet('/api/cmdb_ci_lookup').then(map => {
-      data.cmdb_ci_lookup = new Map(Object.entries(map));
-      notify();
-    }).catch(e => console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message));
+    const snapshotId = (data.manifest && data.manifest.captured_at) || 'unknown';
+    fetchWithIdbCache('sys_user_lookup', snapshotId, () => apiGet('/api/sys_user_lookup'))
+      .then(map => { data.sys_user_lookup = new Map(Object.entries(map)); notify(); })
+      .catch(e => console.warn('[historicalwow] sys_user_lookup failed:', e.message));
+    fetchWithIdbCache('cmdb_ci_lookup', snapshotId, () => apiGet('/api/cmdb_ci_lookup'))
+      .then(map => { data.cmdb_ci_lookup = new Map(Object.entries(map)); notify(); })
+      .catch(e => console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message));
   }
 
   async function loadAll() {

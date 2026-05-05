@@ -260,6 +260,11 @@ function Sidebar({ route }) {
     { sep: 'Approvals' },
     navItem('/group-approvals', 'shield',   'Group approvals',  'sysapproval_group'),
     { sep: 'Asset' },
+    navItem('/hardware',        'ci',       'Hardware',         'alm_hardware'),
+    navItem('/licenses',        'file',     'Software licenses','alm_software_license'),
+    navItem('/consumables',     'archive',  'Consumables',      'alm_consumable'),
+    navItem('/facilities',      'archive',  'Facilities',       'alm_facility'),
+    navItem('/stockrooms',      'folder',   'Stockrooms',       'alm_stockroom'),
     navItem('/asset-tasks',     'archive',  'Asset tasks',      'asset_task'),
     { sep: 'Reference' },
     navItem('/users',           'user',     'Users',            'sys_user'),
@@ -274,6 +279,9 @@ function Sidebar({ route }) {
       '/problems': 'problem', '/requests': 'sc_request',
       '/requested-items': 'sc_req_item', '/catalog-tasks': 'sc_task',
       '/group-approvals': 'sysapproval_group', '/asset-tasks': 'asset_task',
+      '/hardware': 'alm_hardware', '/licenses': 'alm_software_license',
+      '/consumables': 'alm_consumable', '/facilities': 'alm_facility',
+      '/stockrooms': 'alm_stockroom', '/assets': 'alm_asset',
       '/users': 'sys_user', '/groups': 'sys_user_group', '/cis': 'cmdb_ci',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||

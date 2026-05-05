@@ -78,6 +78,12 @@ PARALLEL_TABLES = (
         'cmdb_ci',
         'cmdb_rel_ci',
         'sys_attachment',
+        # Asset tables — typically tens-to-hundreds-of-thousands of rows
+        # for hardware in a mid-size company, so worth sharded fetches.
+        # ASSET_TABLES is defined later in the module; inline the names
+        # here to keep the constant self-contained.
+        'alm_asset', 'alm_hardware', 'alm_software_license',
+        'alm_consumable', 'alm_facility', 'alm_stockroom',
     }
 )
 
@@ -192,6 +198,21 @@ TASK_TABLES = [
 ]
 TASK_TABLES_SET = set(TASK_TABLES)
 
+# Asset records (alm_* family). Pulled with `sys_class_name=<table>` so
+# each subtype lands in its own NDJSON file even though they all live
+# in the alm_asset parent class server-side. alm_asset itself catches
+# anything not slotted into a more specific subtype.
+ASSET_TABLES = [
+    'alm_asset',
+    'alm_hardware',
+    'alm_software_license',
+    'alm_consumable',
+    'alm_facility',
+    'alm_stockroom',
+]
+ASSET_TABLES_SET = set(ASSET_TABLES)
+CLASS_FILTERED_SET = TASK_TABLES_SET | ASSET_TABLES_SET
+
 DEFAULT_TABLES = [
     # Reference (small, used to resolve cross-links)
     'sys_choice',
@@ -221,6 +242,8 @@ DEFAULT_TABLES = [
     'sc_item_option_mtom',
     'question',
     'question_choice',
+    # Asset records (alm_* family).
+    *ASSET_TABLES,
     # Activity (large)
     'sys_journal_field',
     'sys_audit',
@@ -263,7 +286,7 @@ def page_size_for(table):
 # audit/journal/attachment entries attached to tables the viewer doesn't
 # render — sys_user changes, cmdb_ci updates, every other system table.
 # Without this, sys_audit alone is tens of millions of irrelevant rows.
-DISPLAYED_TABLES = ','.join(TASK_TABLES)
+DISPLAYED_TABLES = ','.join(TASK_TABLES + ASSET_TABLES)
 
 TABLE_FILTERS = {
     'sys_audit':         f'tablenameIN{DISPLAYED_TABLES}',
@@ -273,11 +296,12 @@ TABLE_FILTERS = {
 
 
 def class_filter(table):
-    """For task-class tables, return `sys_class_name=<table>` so we don't
-    pull rows from descendant classes (which get exported on their own pass).
-    Returns empty string for tables where inheritance behavior is desired
-    (cmdb_ci should return all subtypes; sys_user has no inheritance)."""
-    return f'sys_class_name={table}' if table in TASK_TABLES_SET else ''
+    """For class-hierarchy tables (task, asset), return
+    `sys_class_name=<table>` so we don't pull rows from descendant classes
+    (which get exported on their own pass). Returns empty string for
+    tables where inheritance behavior is desired (cmdb_ci should return
+    all subtypes; sys_user has no inheritance)."""
+    return f'sys_class_name={table}' if table in CLASS_FILTERED_SET else ''
 
 
 # ---- Logging ---------------------------------------------------------------

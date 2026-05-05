@@ -17,6 +17,12 @@ window.TASK_LABELS = {
   asset_task:        { plural: 'Asset tasks',       singular: 'Asset task' },
   incident_task:     { plural: 'Incident tasks',    singular: 'Incident task' },
   change_task:       { plural: 'Change tasks',      singular: 'Change task' },
+  alm_asset:           { plural: 'Assets',            singular: 'Asset' },
+  alm_hardware:        { plural: 'Hardware',          singular: 'Hardware asset' },
+  alm_software_license:{ plural: 'Software licenses', singular: 'Software license' },
+  alm_consumable:      { plural: 'Consumables',       singular: 'Consumable' },
+  alm_facility:        { plural: 'Facilities',        singular: 'Facility' },
+  alm_stockroom:       { plural: 'Stockrooms',        singular: 'Stockroom' },
 };
 window.taskLabel = function (table, mode = 'plural') {
   const e = window.TASK_LABELS[table];
@@ -27,10 +33,16 @@ window.taskLabel = function (table, mode = 'plural') {
 
 const PAGE_SIZE = 50;
 
+const ASSET_TABLES = [
+  'alm_asset', 'alm_hardware', 'alm_software_license',
+  'alm_consumable', 'alm_facility', 'alm_stockroom',
+];
+
 const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sys_user')        return <UserList />;
   if (table === 'sys_user_group')  return <GroupList />;
   if (table === 'cmdb_ci')         return <CIList />;
+  if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
     return <TaskList key={table} table={table} />;
   }
@@ -171,6 +183,164 @@ function Pager({ page, setPage, lastPage }) {
         onClick={() => setPage(p => Math.min(lastPage, p + 1))}>next ›</button>
       <button className="filter-pill" disabled={page >= lastPage}
         onClick={() => setPage(lastPage)}>last »</button>
+    </div>
+  );
+}
+
+// ---- Assets (alm_* family) ----------------------------------------------
+// Per-table column choices so each subtype renders the fields you'd
+// actually look up: serial+model for hardware, vendor+expiration for
+// licenses, etc. Uses the generic /api/<table> endpoint with the same
+// pagination/search shape as TaskList.
+
+const ASSET_COLS = {
+  alm_hardware: [
+    { key: 'asset_tag',     label: 'Asset tag',      cls: 'num',  w: 110 },
+    { key: 'display_name',  label: 'Name',           grow: true },
+    { key: 'serial_number', label: 'Serial',         cls: 'num',  w: 140 },
+    { key: 'model',         label: 'Model',          ref: 'cmdb_ci' },
+    { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
+    { key: 'assigned_to',   label: 'Assigned to',    ref: 'user', w: 180 },
+  ],
+  alm_software_license: [
+    { key: 'asset_tag',     label: 'Asset tag',      cls: 'num',  w: 110 },
+    { key: 'display_name',  label: 'License',        grow: true },
+    { key: 'vendor',        label: 'Vendor',         ref: 'company', w: 160 },
+    { key: 'license_count', label: 'Seats',          cls: 'num',  w: 70 },
+    { key: 'expiration_date', label: 'Expires',      w: 110 },
+    { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
+  ],
+  alm_consumable: [
+    { key: 'asset_tag',     label: 'Asset tag', cls: 'num', w: 110 },
+    { key: 'display_name',  label: 'Name', grow: true },
+    { key: 'quantity',      label: 'Qty', cls: 'num', w: 70 },
+    { key: 'model',         label: 'Model', ref: 'cmdb_ci' },
+    { key: 'location',      label: 'Location', ref: 'location', w: 180 },
+    { key: 'state',         label: 'Status', choice: ['alm_asset', 'install_status'], w: 110 },
+  ],
+  alm_facility: [
+    { key: 'asset_tag',     label: 'Asset tag', cls: 'num', w: 110 },
+    { key: 'display_name',  label: 'Name', grow: true },
+    { key: 'location',      label: 'Location', ref: 'location', w: 180 },
+    { key: 'state',         label: 'Status', choice: ['alm_asset', 'install_status'], w: 110 },
+  ],
+  alm_stockroom: [
+    { key: 'name',          label: 'Name', grow: true },
+    { key: 'display_name',  label: 'Display name' },
+    { key: 'location',      label: 'Location', ref: 'location', w: 180 },
+    { key: 'manager',       label: 'Manager', ref: 'user', w: 180 },
+  ],
+  alm_asset: [
+    { key: 'asset_tag',     label: 'Asset tag', cls: 'num', w: 110 },
+    { key: 'display_name',  label: 'Name', grow: true },
+    { key: 'sys_class_name',label: 'Class', cls: 'mono', w: 160 },
+    { key: 'state',         label: 'Status', choice: ['alm_asset', 'install_status'], w: 110 },
+    { key: 'assigned_to',   label: 'Assigned to', ref: 'user', w: 180 },
+  ],
+};
+
+function AssetList({ table }) {
+  const data = window.HistoricalWowData;
+  const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+  const cols = ASSET_COLS[table] || ASSET_COLS.alm_asset;
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  React.useEffect(() => { setPage(0); }, [debouncedQ, table]);
+
+  React.useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    data.fetchTaskList(table, {
+      limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+      q: debouncedQ || undefined,
+      order_by: 'sys_updated_on', dir: 'desc',
+    }).then(r => { if (!cancel) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancel) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancel = true; };
+  }, [page, debouncedQ, table]);
+
+  const renderCell = (row, col) => {
+    const v = row[col.key];
+    if (col.ref === 'user') {
+      return v ? <window.UserCell sys_id={v} displayName={row['__display_' + col.key]} /> : <span className="muted">—</span>;
+    }
+    if (col.ref === 'company') {
+      const c = window.findCompany?.(v);
+      return c?.name || row['__display_' + col.key] || (v ? <span className="mono" style={{ fontSize: 11.5 }}>{String(v).slice(0, 8)}…</span> : '—');
+    }
+    if (col.ref === 'location') {
+      const l = window.findLocation?.(v);
+      return l?.name || row['__display_' + col.key] || '—';
+    }
+    if (col.ref === 'cmdb_ci') {
+      const ci = window.findCI?.(v);
+      return ci?.name || row['__display_' + col.key] || (v ? <span className="mono" style={{ fontSize: 11.5 }}>{String(v).slice(0, 8)}…</span> : '—');
+    }
+    if (col.choice) {
+      const decoded = window.decodeChoice(col.choice[0], col.choice[1], v);
+      return v ? <span className={`chip ${window.stateChipClass('incident', v)}`}>{decoded.label || v}</span> : '—';
+    }
+    return v != null && v !== '' ? String(v) : <span className="muted">—</span>;
+  };
+
+  const lastPage = Math.max(0, Math.ceil(resp.total / PAGE_SIZE) - 1);
+  const label = window.taskLabel(table, 'plural');
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>{label} <span className="count mono">{resp.total.toLocaleString()}</span></h1>
+        <div className="sub">
+          <span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> · page {page + 1} of {lastPage + 1}
+        </div>
+        <div className="toolbar">
+          <div className="spacer" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search asset tag, name, serial…"
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 280 }} />
+        </div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          {cols.map(c => (
+            <th key={c.key} className={c.cls || ''} style={c.w ? { width: c.w } : undefined}>{c.label}</th>
+          ))}
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={cols.length} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && (resp.rows || []).length === 0 && (
+            <tr><td colSpan={cols.length} style={{ padding: '24px 12px', color: 'var(--fg-4)', textAlign: 'center' }}>No matching assets.</td></tr>
+          )}
+          {(resp.rows || []).map(r => (
+            <tr key={r.sys_id} onClick={() => window.navigate(window.recordUrl(table, r.sys_id))}>
+              {cols.map(c => (
+                <td key={c.key} className={c.cls || ''}>{renderCell(r, c)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '12px 0' }}>
+        <button className="filter-pill" disabled={page === 0}
+          onClick={() => setPage(0)}>« first</button>
+        <button className="filter-pill" disabled={page === 0}
+          onClick={() => setPage(p => Math.max(0, p - 1))}>‹ prev</button>
+        <span style={{ fontSize: 12, color: 'var(--fg-3)', padding: '0 12px' }}>page {page + 1} of {lastPage + 1}</span>
+        <button className="filter-pill" disabled={page >= lastPage}
+          onClick={() => setPage(p => Math.min(lastPage, p + 1))}>next ›</button>
+        <button className="filter-pill" disabled={page >= lastPage}
+          onClick={() => setPage(lastPage)}>last »</button>
+      </div>
     </div>
   );
 }

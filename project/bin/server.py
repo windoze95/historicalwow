@@ -84,6 +84,8 @@ REFERENCE_TABLES = {
     'task_ci', 'task_sla', 'sysapproval_approver',
     'sc_cat_item', 'item_option_new', 'sc_item_option', 'sc_item_option_mtom',
     'question', 'question_choice',
+    'alm_asset', 'alm_hardware', 'alm_software_license',
+    'alm_consumable', 'alm_facility', 'alm_stockroom',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 

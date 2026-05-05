@@ -324,6 +324,42 @@ SCHEMAS = {
         ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
         ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
     ],
+    'alm_license': [
+        ('asset_tag',     lambda r: _v(r.get('asset_tag'))),
+        ('display_name',  lambda r: _v(r.get('display_name'))),
+        ('vendor',        lambda r: _v(r.get('vendor'))),
+        ('license_count', lambda r: _v(r.get('license_count'))),
+        ('expiration_date', lambda r: _v(r.get('expiration_date'))),
+        ('state',         lambda r: _v(r.get('install_status'))),
+        ('substatus',     lambda r: _v(r.get('substatus'))),
+        ('owned_by',      lambda r: _v(r.get('owned_by'))),
+        ('cost_center',   lambda r: _v(r.get('cost_center'))),
+        ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
+        ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
+    ],
+
+    # Software inventory (Discovery / SAM-light).
+    'cmdb_ci_spkg': [
+        ('name',         lambda r: _v(r.get('name'))),
+        ('version',      lambda r: _v(r.get('version'))),
+        ('manufacturer', lambda r: _v(r.get('manufacturer'))),
+        ('vendor',       lambda r: _v(r.get('vendor'))),
+        ('edition',      lambda r: _v(r.get('edition'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+        ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
+        ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
+    ],
+    'cmdb_software_instance': [
+        ('ci',           lambda r: _v(r.get('ci'))),
+        ('software',     lambda r: _v(r.get('software'))),
+        ('display_name', lambda r: _v(r.get('display_name'))),
+        ('version',      lambda r: _v(r.get('version'))),
+        ('install_date', lambda r: _v(r.get('install_date'))),
+        ('install_status', lambda r: _v(r.get('install_status'))),
+        ('publisher',    lambda r: _v(r.get('publisher'))),
+        ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
+        ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
+    ],
 }
 
 

@@ -82,8 +82,10 @@ PARALLEL_TABLES = (
         # for hardware in a mid-size company, so worth sharded fetches.
         # ASSET_TABLES is defined later in the module; inline the names
         # here to keep the constant self-contained.
-        'alm_asset', 'alm_hardware', 'alm_software_license',
+        'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
         'alm_consumable', 'alm_facility', 'alm_stockroom',
+        # Software inventory — cmdb_software_instance is 300k+ rows.
+        'cmdb_software_instance', 'cmdb_ci_spkg',
     }
 )
 
@@ -206,9 +208,18 @@ ASSET_TABLES = [
     'alm_asset',
     'alm_hardware',
     'alm_software_license',
+    'alm_license',
     'alm_consumable',
     'alm_facility',
     'alm_stockroom',
+]
+
+# Software inventory tables (Discovery / SAM-light). These aren't asset
+# records per se but are useful "what software is in our environment"
+# data that would otherwise be lost when the source instance shuts down.
+SOFTWARE_TABLES = [
+    'cmdb_ci_spkg',           # software package definitions (Tableau Desktop, etc.)
+    'cmdb_software_instance', # installed-software-per-CI mapping
 ]
 ASSET_TABLES_SET = set(ASSET_TABLES)
 CLASS_FILTERED_SET = TASK_TABLES_SET | ASSET_TABLES_SET
@@ -244,6 +255,8 @@ DEFAULT_TABLES = [
     'question_choice',
     # Asset records (alm_* family).
     *ASSET_TABLES,
+    # Software inventory (Discovery / SAM-light).
+    *SOFTWARE_TABLES,
     # Activity (large)
     'sys_journal_field',
     'sys_audit',
@@ -286,7 +299,7 @@ def page_size_for(table):
 # audit/journal/attachment entries attached to tables the viewer doesn't
 # render — sys_user changes, cmdb_ci updates, every other system table.
 # Without this, sys_audit alone is tens of millions of irrelevant rows.
-DISPLAYED_TABLES = ','.join(TASK_TABLES + ASSET_TABLES)
+DISPLAYED_TABLES = ','.join(TASK_TABLES + ASSET_TABLES + SOFTWARE_TABLES)
 
 TABLE_FILTERS = {
     'sys_audit':         f'tablenameIN{DISPLAYED_TABLES}',

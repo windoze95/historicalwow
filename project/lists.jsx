@@ -20,9 +20,12 @@ window.TASK_LABELS = {
   alm_asset:           { plural: 'Assets',            singular: 'Asset' },
   alm_hardware:        { plural: 'Hardware',          singular: 'Hardware asset' },
   alm_software_license:{ plural: 'Software licenses', singular: 'Software license' },
+  alm_license:         { plural: 'Licenses',          singular: 'License' },
   alm_consumable:      { plural: 'Consumables',       singular: 'Consumable' },
   alm_facility:        { plural: 'Facilities',        singular: 'Facility' },
   alm_stockroom:       { plural: 'Stockrooms',        singular: 'Stockroom' },
+  cmdb_ci_spkg:        { plural: 'Software packages', singular: 'Software package' },
+  cmdb_software_instance: { plural: 'Software installs', singular: 'Software install' },
 };
 window.taskLabel = function (table, mode = 'plural') {
   const e = window.TASK_LABELS[table];
@@ -34,8 +37,9 @@ window.taskLabel = function (table, mode = 'plural') {
 const PAGE_SIZE = 50;
 
 const ASSET_TABLES = [
-  'alm_asset', 'alm_hardware', 'alm_software_license',
+  'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
   'alm_consumable', 'alm_facility', 'alm_stockroom',
+  'cmdb_ci_spkg', 'cmdb_software_instance',
 ];
 
 const ListPage = window.ListPage = function ListPage({ table }) {
@@ -236,6 +240,28 @@ const ASSET_COLS = {
     { key: 'sys_class_name',label: 'Class', cls: 'mono', w: 160 },
     { key: 'state',         label: 'Status', choice: ['alm_asset', 'install_status'], w: 110 },
     { key: 'assigned_to',   label: 'Assigned to', ref: 'user', w: 180 },
+  ],
+  alm_license: [
+    { key: 'asset_tag',     label: 'Asset tag', cls: 'num', w: 110 },
+    { key: 'display_name',  label: 'License', grow: true },
+    { key: 'vendor',        label: 'Vendor', ref: 'company', w: 160 },
+    { key: 'license_count', label: 'Seats',  cls: 'num',     w: 70 },
+    { key: 'expiration_date', label: 'Expires',              w: 110 },
+    { key: 'state',         label: 'Status', choice: ['alm_asset', 'install_status'], w: 110 },
+  ],
+  cmdb_ci_spkg: [
+    { key: 'name',          label: 'Software',  grow: true },
+    { key: 'version',       label: 'Version',   cls: 'mono', w: 110 },
+    { key: 'manufacturer',  label: 'Manufacturer', ref: 'company', w: 160 },
+    { key: 'edition',       label: 'Edition',   w: 140 },
+    { key: 'sys_class_name',label: 'Class',     cls: 'mono', w: 160 },
+  ],
+  cmdb_software_instance: [
+    { key: 'display_name',  label: 'Software',  grow: true },
+    { key: 'version',       label: 'Version',   cls: 'mono', w: 110 },
+    { key: 'ci',            label: 'Installed on', ref: 'cmdb_ci', w: 220 },
+    { key: 'install_date',  label: 'Installed', w: 110 },
+    { key: 'install_status',label: 'Status',    w: 110 },
   ],
 };
 

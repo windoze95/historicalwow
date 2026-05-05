@@ -3678,8 +3678,26 @@ function RefLink({ kind, sys_id, fallback }) {
   return <span>{fallback || ''}</span>;
 }
 
+// Inline link to a catalog parent record (sc_request, sc_req_item, or
+// sc_cat_item). Renders the display value (REQ0010001, RITM0010005, …)
+// with the friendly URL and a small chip indicating the type.
+function CatalogParentLink({ sys_id, display, target_table }) {
+  if (!sys_id) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  return (
+    <span className="ref-link" onClick={() => window.navigate(window.recordUrl(target_table, sys_id))}>
+      <span className="mono" style={{ marginRight: 4 }}>{display || sys_id_short(sys_id)}</span>
+      <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>· {window.taskLabel(target_table, 'singular')}</span>
+    </span>
+  );
+}
+
 function FieldsSection({ rec, table, showRaw }) {
   const isChange = window.CHANGE_STYLE_TABLES.has(table);
+  // Catalog upward-chain: sc_task → sc_req_item → sc_request, plus the
+  // catalog item definition the form was generated from. Each link is
+  // shown only when the field is populated, so non-catalog tasks (which
+  // happen to share the FieldsSection) don't get empty rows.
+  const showCatalog = (table === 'sc_task' || table === 'sc_req_item' || table === 'sc_request');
   return (
     <>
       <div className="section">
@@ -3700,6 +3718,34 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
         </div>
       </div>
+      {showCatalog && (rec.request_item || rec.request || rec.cat_item) && (
+        <div className="section">
+          <h3>Catalog</h3>
+          <div className="fields">
+            {table === 'sc_task' && (
+              <Field label="Requested item" showRaw={showRaw} raw={rec.request_item}>
+                <CatalogParentLink sys_id={rec.request_item}
+                  display={rec.__display_request_item}
+                  target_table="sc_req_item" />
+              </Field>
+            )}
+            {(table === 'sc_task' || table === 'sc_req_item') && (
+              <Field label="Request" showRaw={showRaw} raw={rec.request}>
+                <CatalogParentLink sys_id={rec.request}
+                  display={rec.__display_request}
+                  target_table="sc_request" />
+              </Field>
+            )}
+            {rec.cat_item && (
+              <Field label="Catalog item" showRaw={showRaw} raw={rec.cat_item}>
+                <CatalogParentLink sys_id={rec.cat_item}
+                  display={rec.__display_cat_item}
+                  target_table="sc_cat_item" />
+              </Field>
+            )}
+          </div>
+        </div>
+      )}
       {!isChange && (
         <div className="section">
           <h3>Classification</h3>

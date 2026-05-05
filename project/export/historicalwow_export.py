@@ -957,6 +957,11 @@ def _safe_name(name):
     return cleaned[:200] or 'file'
 
 
+def _attachment_path(sid, file_name):
+    shard = (sid[:2] or '__').lower()
+    return ATTACH_DIR / shard / sid / _safe_name(file_name)
+
+
 def _download_one_attachment(row):
     """Worker: fetch one attachment file body. Returns (outcome, err_or_none)
     where outcome is 'written' | 'skipped' | 'failed'. Resume-safe: target
@@ -966,21 +971,38 @@ def _download_one_attachment(row):
     file_name = field(row, 'file_name')
     if not sid:
         return ('skipped', None)
-    # Shard by first two hex chars of sys_id so we don't end up with
-    # ~341k flat entries under attachments/ (Finder/Spotlight/Time Machine
-    # all struggle with that).
-    shard = (sid[:2] or '__').lower()
-    target_dir = ATTACH_DIR / shard / sid
-    target = target_dir / _safe_name(file_name)
-    if target.exists() and target.stat().st_size > 0:
+    target = _attachment_path(sid, file_name)
+    if target.exists() and (target.is_symlink() or target.stat().st_size > 0):
         return ('skipped', None)
     try:
         blob, _ctype = api_get_binary(f'/api/now/attachment/{sid}/file')
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob)
         return ('written', None)
     except Exception as e:
         return ('failed', f'attachment {sid[:8]} ({file_name}): {e}')
+
+
+def _symlink_secondary(sec_sid, sec_file_name, primary_sid, primary_file_name):
+    """For a non-primary attachment that has the same content hash as a
+    primary we already downloaded, write a relative symlink pointing at the
+    primary's bytes. Saves the disk space without breaking the per-sys_id
+    URL the viewer requests."""
+    sec_target = _attachment_path(sec_sid, sec_file_name)
+    if sec_target.exists() or sec_target.is_symlink():
+        return ('skipped', None)
+    primary_target = _attachment_path(primary_sid, primary_file_name)
+    if not primary_target.exists():
+        # Primary download failed or hasn't happened. Skip; a future run
+        # will retry the primary and then this symlink can land.
+        return ('failed', f'no primary for {sec_sid[:8]} → {primary_sid[:8]}')
+    try:
+        sec_target.parent.mkdir(parents=True, exist_ok=True)
+        rel = os.path.relpath(primary_target, sec_target.parent)
+        sec_target.symlink_to(rel)
+        return ('linked', None)
+    except Exception as e:
+        return ('failed', f'symlink {sec_sid[:8]}: {e}')
 
 
 def export_attachment_bodies():
@@ -993,36 +1015,82 @@ def export_attachment_bodies():
         return
 
     ATTACH_DIR.mkdir(exist_ok=True)
-    total = _count_lines(meta_path)
-    workers = int(os.environ.get('SN_ATTACHMENT_WORKERS', '8'))
-    log.info('Downloading attachment bodies — %d in metadata, %d parallel '
-             'workers. Already-downloaded files are skipped. Ctrl+C is safe.',
-             total, workers)
 
+    # ---- Phase 0: scan metadata, dedupe by content hash ----
+    # ServiceNow's sys_attachment.hash is the SHA1 of the file content. Email
+    # signature images / Outlook image001.png stubs / corporate logos repeat
+    # thousands of times across email-imported tickets. Downloading every
+    # one wastes both bandwidth and disk. Strategy: pick ONE canonical
+    # sys_id per hash (lowest-sorted for determinism across re-runs),
+    # download only those, then symlink the rest.
+    log.info('Scanning sys_attachment metadata for hash-dedup…')
+    primaries = []          # rows we'll actually download
+    secondaries = []        # (sec_sid, sec_file_name, primary_sid, primary_file_name)
+    no_hash = 0
+    total = 0
+    primary_for_hash = {}   # hash → (sid, file_name); winners are sorted-low
+    rows_pending_hash = []  # rows that need a second pass once primaries are picked
+
+    # First pass: collect winners. Sort by sys_id so the choice is stable
+    # across re-runs (otherwise a future re-run might pick a different
+    # primary and re-download a near-duplicate set).
+    all_rows = []
+    with meta_path.open('r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            sid = _extract_sid(r)
+            if not sid:
+                continue
+            all_rows.append((sid, field(r, 'hash') or '', field(r, 'file_name') or ''))
+    all_rows.sort(key=lambda t: t[0])
+    total = len(all_rows)
+    for sid, h, fname in all_rows:
+        if not h:
+            primaries.append((sid, fname))
+            no_hash += 1
+            continue
+        if h not in primary_for_hash:
+            primary_for_hash[h] = (sid, fname)
+            primaries.append((sid, fname))
+        else:
+            psid, pname = primary_for_hash[h]
+            secondaries.append((sid, fname, psid, pname))
+
+    log.info(
+        'attachments: %d total → %d primaries (%d unique hashes) + '
+        '%d secondaries (symlinks) + %d no-hash. dedup avoids %d HTTP fetches.',
+        total, len(primaries), len(primary_for_hash),
+        len(secondaries), no_hash, len(secondaries),
+    )
+
+    workers = int(os.environ.get('SN_ATTACHMENT_WORKERS', '8'))
+
+    # ---- Phase 1: download primaries in parallel ----
+    log.info('Phase 1: downloading %d primary attachments with %d workers '
+             '(resume-safe; Ctrl+C is OK)', len(primaries), workers)
     written = skipped = failed = 0
     started = time.time()
 
-    def _row_iter():
-        with meta_path.open('r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-    # Sliding-window pattern: keep `inflight` futures pending at any time so
-    # we don't load all 341k rows into memory at once but still saturate the
-    # workers. inflight = workers*4 lets every thread always have a job
-    # queued behind it without piling on hundreds of pending futures.
     from concurrent.futures import wait as fut_wait, FIRST_COMPLETED
     inflight_cap = max(workers * 4, 16)
     pending = set()
-    log_every = 200  # one progress line per 200 attachments
+    log_every = 200
 
-    def _drain(pending):
+    # Build a synthetic "row" dict the worker expects. Cheaper than re-parsing
+    # the JSON row; we already have sid + file_name.
+    def _row_for(sid, fname):
+        return {
+            'sys_id': {'value': sid},
+            'file_name': {'value': fname},
+        }
+
+    def _drain(pending, total_for_log):
         nonlocal written, skipped, failed
         done, pending = fut_wait(pending, return_when=FIRST_COMPLETED)
         for fut in done:
@@ -1039,29 +1107,52 @@ def export_attachment_bodies():
             if done_count % log_every == 0:
                 elapsed = time.time() - started
                 rate = (written + skipped) / elapsed if elapsed else 0
-                eta = (total - done_count) / rate if rate else None
-                log.info('  attachments: %d downloaded, %d skipped, '
+                eta = (total_for_log - done_count) / rate if rate else None
+                log.info('  primaries: %d downloaded, %d skipped, '
                          '%d failed of %d (%.1f/s%s)',
-                         written, skipped, failed, total, rate,
+                         written, skipped, failed, total_for_log, rate,
                          f', ETA {int(eta)}s' if eta else '')
         return pending
 
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            for row in _row_iter():
-                pending.add(ex.submit(_download_one_attachment, row))
+            for sid, fname in primaries:
+                pending.add(ex.submit(_download_one_attachment, _row_for(sid, fname)))
                 if len(pending) >= inflight_cap:
-                    pending = _drain(pending)
-            # Drain remaining futures at end-of-stream.
+                    pending = _drain(pending, len(primaries))
             while pending:
-                pending = _drain(pending)
+                pending = _drain(pending, len(primaries))
     except KeyboardInterrupt:
-        log.warning('  attachments: interrupted at %d/%d (resumable; '
-                    're-run to continue)', written + skipped + failed, total)
+        log.warning('  primaries: interrupted at %d/%d (resumable; '
+                    're-run to continue)', written + skipped + failed,
+                    len(primaries))
         raise
 
-    log.info('  ✓ attachments — %d downloaded, %d skipped, %d failed in %ds',
+    log.info('  ✓ Phase 1 — %d downloaded, %d skipped, %d failed in %ds',
              written, skipped, failed, int(time.time() - started))
+
+    # ---- Phase 2: create symlinks for secondaries ----
+    if not secondaries:
+        return
+    log.info('Phase 2: linking %d secondary attachments (no HTTP)',
+             len(secondaries))
+    started2 = time.time()
+    linked = link_skipped = link_failed = 0
+    for sec_sid, sec_fname, psid, pname in secondaries:
+        outcome, err = _symlink_secondary(sec_sid, sec_fname, psid, pname)
+        if outcome == 'linked':
+            linked += 1
+        elif outcome == 'skipped':
+            link_skipped += 1
+        else:
+            link_failed += 1
+            if err:
+                log.warning('  %s', err)
+        if (linked + link_skipped + link_failed) % 5000 == 0:
+            log.info('  symlinks: %d linked, %d skipped, %d failed of %d',
+                     linked, link_skipped, link_failed, len(secondaries))
+    log.info('  ✓ Phase 2 — %d linked, %d skipped, %d failed in %ds',
+             linked, link_skipped, link_failed, int(time.time() - started2))
 
 
 # ---- Manifest --------------------------------------------------------------

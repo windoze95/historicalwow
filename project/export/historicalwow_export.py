@@ -560,8 +560,13 @@ def fetch_pages_offset(table, query):
         try:
             payload = api_get_json(f'/api/now/table/{table}', params)
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                log.warning('  %s: table not present (404)', table)
+            # 404 = endpoint missing. 400 = ServiceNow's "Invalid table"
+            # response when the table doesn't exist on this instance
+            # (alm_software_license on instances without SAM Pro, for
+            # example). Both mean "no such table — export 0 rows" so a
+            # missing module doesn't kill the rest of the run.
+            if e.code in (400, 404):
+                log.warning('  %s: table not available on this instance (HTTP %d)', table, e.code)
                 return
             raise
         rows = payload.get('result', [])
@@ -624,8 +629,8 @@ def export_table_full(table):
             try:
                 payload = api_get_json(f'/api/now/table/{table}', params)
             except urllib.error.HTTPError as e:
-                if e.code == 404:
-                    log.warning('  %s: table not present (404) — skipping', table)
+                if e.code in (400, 404):
+                    log.warning('  %s: table not available on this instance (HTTP %d) — skipping', table, e.code)
                     return 0, ''
                 raise
 

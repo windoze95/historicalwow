@@ -35,7 +35,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const [approvals, setApprovals] = React.useState([]);
   const [variables, setVariables] = React.useState({ rows: [], cat_item: null });
   const [assetCITickets, setAssetCITickets] = React.useState(null); // tickets that reference this asset's linked CI
+  const [groupApprovals, setGroupApprovals] = React.useState(null); // sysapproval_group rows under this parent
   const isAsset = ASSET_TABLES_SET.has(table);
+  const isGroupApproval = table === 'sysapproval_group';
 
   React.useEffect(() => {
     let cancel = false;
@@ -43,6 +45,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
     setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
     setVariables({ rows: [], cat_item: null });
     setAssetCITickets(null);
+    setGroupApprovals(null);
 
     data.fetchRecord(table, sys_id).then(r => {
       if (cancel) return;
@@ -72,6 +75,16 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       } else if (cancel || !r || !isAsset) {
         // leave assetCITickets null so we just hide the section
       }
+      // sysapproval_group needs its parent + group sys_ids to find the
+      // spawned approvers (they point at parent, not at the group record).
+      if (r && isGroupApproval) {
+        const grp = r.assignment_group || r.group;
+        const filters = grp ? { sysapproval: r.parent, group: grp } : { sysapproval: r.parent };
+        if (r.parent) {
+          data.fetchTaskList('sysapproval_approver', { filters, limit: 100 })
+            .then(res => { if (!cancel) setApprovals(res.rows || []); }).catch(() => {});
+        }
+      }
     }).catch(e => {
       if (cancel) return;
       // 403 → HR gate. Render a friendly message rather than the loading
@@ -99,11 +112,27 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
       data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
         .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
-      data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
-        .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+      // sysapproval_approver normally points to the parent task via
+      // `sysapproval`. For a sysapproval_group record we'd usually find
+      // zero direct matches; the dedicated isGroupApproval block below
+      // handles those by filtering on parent+group instead — skip the
+      // direct lookup here so we don't race with it (first call returns
+      // [] before the second resolves).
+      if (!isGroupApproval) {
+        data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
+          .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+      }
       if (table === 'sc_req_item') {
         data.fetchVariables(sys_id)
           .then(r => { if (!cancel) setVariables(r); }).catch(() => {});
+      }
+      // Group approvals routed for this parent task. Only meaningful for
+      // tables that actually receive approvals (change_request,
+      // sc_request, sc_req_item) — but querying for everything else
+      // returns 0 cheaply, so don't bother gating.
+      if (!isGroupApproval) {
+        data.fetchTaskList('sysapproval_group', { filters: { parent: sys_id }, limit: 25, slim: 1 })
+          .then(r => { if (!cancel) setGroupApprovals(r.rows || []); }).catch(() => {});
       }
     }
 
@@ -148,10 +177,16 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
           <AssetCITicketsSection rows={assetCITickets} ci={rec.ci} ci_display={rec.__display_ci} />
         )}
         <VariablesSection rows={variables.rows} cat_item={variables.cat_item} />
+        {isGroupApproval && (
+          <GroupApprovalContextSection rec={rec} />
+        )}
         {tasks.length > 0 && <TasksSection tasks={tasks} table={table} />}
         {slas.length > 0 && <SLAsSection slas={slas} />}
         {ciLinks.length > 0 && <AffectedCIsSection ciLinks={ciLinks} />}
         {approvals.length > 0 && <ApprovalsSection approvals={approvals} />}
+        {groupApprovals && groupApprovals.length > 0 && (
+          <GroupApprovalsSection rows={groupApprovals} />
+        )}
         <ManifestFooter rec={rec} />
       </div>
       <div className="right">
@@ -226,6 +261,128 @@ function RecordHeader({ rec, table }) {
           sys_id {rec.sys_id.slice(0, 8)}…
         </span>
       </div>
+    </div>
+  );
+}
+
+// ---- Group approvals -----------------------------------------------------
+// Maps a record number prefix (CHG / RITM / REQ / INC / PRB) to the
+// task table that owns it. Used to navigate from a sysapproval_group
+// up to the parent task without having to query every candidate table —
+// ServiceNow's own number prefixes carry the type in the leading
+// alphabetic chars.
+const NUMBER_PREFIX_TABLE = {
+  INC:    'incident',
+  CHG:    'change_request',
+  PRB:    'problem',
+  PTASK:  'problem_task',
+  CTASK:  'change_task',
+  ITASK:  'incident_task',
+  REQ:    'sc_request',
+  RITM:   'sc_req_item',
+  SCTASK: 'sc_task',
+  ATASK:  'asset_task',
+};
+
+function tableFromNumber(num) {
+  if (!num) return null;
+  const m = String(num).match(/^([A-Z]+)\d/);
+  return m ? NUMBER_PREFIX_TABLE[m[1]] : null;
+}
+
+function ParentTaskLink({ parent_sys_id, parent_display, fallback_label }) {
+  if (!parent_sys_id) {
+    return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>{fallback_label || '—'}</span>;
+  }
+  const tbl = tableFromNumber(parent_display);
+  const url = tbl ? window.recordUrl(tbl, parent_sys_id) : `/tasks/${tbl || 'task'}/${parent_sys_id}`;
+  return (
+    <span className="ref-link" onClick={() => window.navigate(url)}>
+      <span className="mono" style={{ marginRight: 4 }}>{parent_display || sys_id_short(parent_sys_id)}</span>
+      {tbl && <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>· {window.taskLabel(tbl, 'singular')}</span>}
+    </span>
+  );
+}
+
+function stateChipColor(state) {
+  // sysapproval_group / approver state values are mostly: requested,
+  // approved, rejected, cancelled, no_longer_required, duplicate.
+  const s = (state || '').toLowerCase();
+  if (s === 'approved') return 'green';
+  if (s === 'rejected') return 'red';
+  if (s === 'cancelled' || s === 'no_longer_required' || s === 'duplicate') return 'gray';
+  return 'amber'; // requested / pending / etc.
+}
+
+// On a parent task page, list the group-level approval records routed
+// for it (one card per `sysapproval_group` whose `parent` = this).
+function GroupApprovalsSection({ rows }) {
+  return (
+    <div className="section">
+      <h3>Group approvals <span className="count">{rows.length}</span></h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 14 }}>
+        {rows.map(g => {
+          const grp = g.assignment_group;
+          const grpDisplay = g.__display_assignment_group || (grp && window.findGroup(grp)?.name) || sys_id_short(grp);
+          return (
+            <div key={g.sys_id}
+                 onClick={() => window.navigate(window.recordUrl('sysapproval_group', g.sys_id))}
+                 style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                          border: '1px solid var(--border)', borderRadius: 6,
+                          background: 'var(--bg-elev)', cursor: 'pointer' }}>
+              <window.Icon name="users" size={12} />
+              <span>{grpDisplay}</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span className={`chip ${stateChipColor(g.state)}`}>{g.__display_state || g.state || '—'}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>{g.number || g.sys_id.slice(0, 8) + '…'}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// On a sysapproval_group page, surface what we're approving (parent task
+// link) and which group it was routed to. The existing ApprovalsSection
+// already shows individual approver decisions once we've loaded them.
+function GroupApprovalContextSection({ rec }) {
+  const grp = rec.assignment_group || rec.group;
+  const grpDisplay = rec.__display_assignment_group || rec.__display_group ||
+                     (grp && window.findGroup(grp)?.name) || sys_id_short(grp);
+  return (
+    <div className="section">
+      <h3>Approval context</h3>
+      <div className="fields">
+        <Field label="Approving" showRaw={false}>
+          <ParentTaskLink
+            parent_sys_id={rec.parent}
+            parent_display={rec.__display_parent}
+            fallback_label="(no parent)"
+          />
+        </Field>
+        <Field label="Routed to group" showRaw={false}>
+          {grp
+            ? <RefLink kind="group" sys_id={grp} fallback={grpDisplay} />
+            : <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>}
+        </Field>
+        <Field label="Approval state" showRaw={false}>
+          <span className={`chip ${stateChipColor(rec.state)}`}>
+            {rec.__display_state || rec.state || '—'}
+          </span>
+        </Field>
+        <Field label="Requested by" showRaw={false}>
+          {rec.requested_by
+            ? <RefLink kind="user" sys_id={rec.requested_by} fallback={rec.__display_requested_by} />
+            : <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>}
+        </Field>
+      </div>
+      {rec.comments && (
+        <div className="kv-block" style={{ marginTop: 10, whiteSpace: 'pre-wrap' }}>
+          {rec.comments}
+        </div>
+      )}
     </div>
   );
 }
@@ -753,14 +910,24 @@ function ApprovalsSection({ approvals }) {
     <div className="section">
       <h3>Approvals <span className="count">{approvals.length}</span></h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 14 }}>
-        {approvals.map(a => (
-          <div key={a.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)' }}>
-            <window.UserCell sys_id={a.approver} displayName={a.__display_approver} />
-            <span style={{ marginLeft: 'auto' }}>
-              <span className={`chip ${a.state === 'approved' ? 'green' : 'amber'}`}>{a.state}</span>
-            </span>
-          </div>
-        ))}
+        {approvals.map(a => {
+          const groupDisplay = a.group
+            ? (a.__display_group || window.findGroup(a.group)?.name || sys_id_short(a.group))
+            : null;
+          return (
+            <div key={a.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)' }}>
+              <window.UserCell sys_id={a.approver} displayName={a.__display_approver} />
+              {groupDisplay && (
+                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
+                  via <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(`/groups/${a.group}`); }}>{groupDisplay}</span>
+                </span>
+              )}
+              <span style={{ marginLeft: 'auto' }}>
+                <span className={`chip ${stateChipColor(a.state)}`}>{a.__display_state || a.state}</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -16,12 +16,15 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function applyTweaks(t) {
   const r = document.documentElement.style;
-  r.setProperty('--accent',        `oklch(52% 0.11 ${t.accentHue})`);
-  r.setProperty('--accent-2',      `oklch(58% 0.11 ${t.accentHue})`);
-  r.setProperty('--accent-bg',     `oklch(94% 0.03 ${t.accentHue})`);
-  r.setProperty('--accent-border', `oklch(82% 0.06 ${t.accentHue})`);
-  r.setProperty('--accent-fg',     `oklch(32% 0.08 ${t.accentHue})`);
-  r.setProperty('--selected',      `oklch(94% 0.018 ${t.accentHue})`);
+  // Lightness/chroma values match the parchment palette in styles.css —
+  // the "lifted" chip background sits ~88% so it stands above the 93%
+  // page bg without going whiter.
+  r.setProperty('--accent',        `oklch(50% 0.12 ${t.accentHue})`);
+  r.setProperty('--accent-2',      `oklch(56% 0.12 ${t.accentHue})`);
+  r.setProperty('--accent-bg',     `oklch(88% 0.045 ${t.accentHue})`);
+  r.setProperty('--accent-border', `oklch(75% 0.080 ${t.accentHue})`);
+  r.setProperty('--accent-fg',     `oklch(30% 0.09 ${t.accentHue})`);
+  r.setProperty('--selected',      `oklch(89% 0.040 ${t.accentHue})`);
   // density tweaks row padding via CSS var; simple approach: tweak base font size
   const base = ({ compact: 12.5, balanced: 13.5, comfy: 14.5 })[t.density] || 13.5;
   document.body.style.fontSize = (base * (t.fontScale || 1)) + 'px';

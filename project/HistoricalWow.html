@@ -11,48 +11,56 @@
 /* HistoricalWow — ServiceNow Historical Archive Viewer */
 
 :root {
-  /* Surface — warm neutral */
-  --bg: oklch(98.4% 0.003 95);
-  --bg-2: oklch(96.8% 0.004 95);
-  --bg-3: oklch(94.5% 0.005 95);
-  --bg-elev: oklch(99.5% 0.002 95);
-  --hover: oklch(95% 0.005 95);
-  --selected: oklch(94% 0.018 155);
+  /* Surface — warm parchment. Hue 70 (warm amber territory) at 0.018-0.025
+     chroma gives the page a noticeable but unobtrusive warmth — somewhere
+     between cream paper and oat. Lightness drops from 98% to 93% so the
+     whole page reads as a soft warm field, not bleached white. */
+  --bg: oklch(93% 0.018 70);
+  --bg-2: oklch(91% 0.020 70);
+  --bg-3: oklch(88% 0.024 70);
+  --bg-elev: oklch(95.5% 0.013 70);
+  --hover: oklch(90% 0.026 70);
+  --selected: oklch(89% 0.04 155);
 
-  /* Borders */
-  --border: oklch(91% 0.005 95);
-  --border-2: oklch(87% 0.006 95);
-  --border-strong: oklch(80% 0.008 95);
+  /* Borders — pulled darker to keep definition against the warmer bg */
+  --border: oklch(82% 0.022 70);
+  --border-2: oklch(76% 0.026 70);
+  --border-strong: oklch(67% 0.030 70);
 
-  /* Text — graphite */
-  --fg: oklch(22% 0.008 95);
-  --fg-2: oklch(38% 0.008 95);
-  --fg-3: oklch(54% 0.008 95);
-  --fg-4: oklch(68% 0.007 95);
+  /* Text — warm graphite (slight hue match so dark text reads as part of
+     the same family, not a desaturated overlay) */
+  --fg: oklch(22% 0.012 70);
+  --fg-2: oklch(38% 0.012 70);
+  --fg-3: oklch(52% 0.012 70);
+  --fg-4: oklch(65% 0.012 70);
 
-  /* Accent — preserved green */
-  --accent: oklch(52% 0.11 155);
-  --accent-2: oklch(58% 0.11 155);
-  --accent-bg: oklch(94% 0.03 155);
-  --accent-border: oklch(82% 0.06 155);
-  --accent-fg: oklch(32% 0.08 155);
+  /* Accent — preserved green; bg/border tints adjusted for the new
+     parchment context so the chip "lifts" off the page */
+  --accent: oklch(50% 0.12 155);
+  --accent-2: oklch(56% 0.12 155);
+  --accent-bg: oklch(88% 0.045 155);
+  --accent-border: oklch(75% 0.080 155);
+  --accent-fg: oklch(30% 0.09 155);
 
-  /* Status / priority hues — same chroma family */
-  --c-red: oklch(56% 0.13 25);
-  --c-red-bg: oklch(95% 0.025 25);
-  --c-red-border: oklch(86% 0.05 25);
-  --c-amber: oklch(60% 0.11 75);
-  --c-amber-bg: oklch(95% 0.03 75);
-  --c-amber-border: oklch(86% 0.06 75);
-  --c-blue: oklch(54% 0.11 245);
-  --c-blue-bg: oklch(95% 0.025 245);
-  --c-blue-border: oklch(86% 0.05 245);
-  --c-violet: oklch(54% 0.11 295);
-  --c-violet-bg: oklch(95% 0.025 295);
-  --c-violet-border: oklch(86% 0.05 295);
-  --c-gray: oklch(54% 0.005 95);
-  --c-gray-bg: oklch(94% 0.004 95);
-  --c-gray-border: oklch(85% 0.006 95);
+  /* Status / priority hues. Backgrounds raised to ~91% (above page bg)
+     and chroma bumped a bit so chips stand out against parchment without
+     looking washed-out. Gray is given a warm tint instead of true neutral
+     to fit the palette. */
+  --c-red:        oklch(54% 0.14 25);
+  --c-red-bg:     oklch(91% 0.045 25);
+  --c-red-border: oklch(80% 0.080 25);
+  --c-amber:      oklch(58% 0.12 75);
+  --c-amber-bg:   oklch(91% 0.050 75);
+  --c-amber-border: oklch(80% 0.090 75);
+  --c-blue:       oklch(52% 0.12 245);
+  --c-blue-bg:    oklch(91% 0.040 245);
+  --c-blue-border: oklch(80% 0.075 245);
+  --c-violet:     oklch(52% 0.12 295);
+  --c-violet-bg:  oklch(91% 0.040 295);
+  --c-violet-border: oklch(80% 0.075 295);
+  --c-gray:       oklch(50% 0.012 70);
+  --c-gray-bg:    oklch(90% 0.014 70);
+  --c-gray-border: oklch(78% 0.018 70);
 
   /* Type */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -4371,12 +4379,15 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function applyTweaks(t) {
   const r = document.documentElement.style;
-  r.setProperty('--accent',        `oklch(52% 0.11 ${t.accentHue})`);
-  r.setProperty('--accent-2',      `oklch(58% 0.11 ${t.accentHue})`);
-  r.setProperty('--accent-bg',     `oklch(94% 0.03 ${t.accentHue})`);
-  r.setProperty('--accent-border', `oklch(82% 0.06 ${t.accentHue})`);
-  r.setProperty('--accent-fg',     `oklch(32% 0.08 ${t.accentHue})`);
-  r.setProperty('--selected',      `oklch(94% 0.018 ${t.accentHue})`);
+  // Lightness/chroma values match the parchment palette in styles.css —
+  // the "lifted" chip background sits ~88% so it stands above the 93%
+  // page bg without going whiter.
+  r.setProperty('--accent',        `oklch(50% 0.12 ${t.accentHue})`);
+  r.setProperty('--accent-2',      `oklch(56% 0.12 ${t.accentHue})`);
+  r.setProperty('--accent-bg',     `oklch(88% 0.045 ${t.accentHue})`);
+  r.setProperty('--accent-border', `oklch(75% 0.080 ${t.accentHue})`);
+  r.setProperty('--accent-fg',     `oklch(30% 0.09 ${t.accentHue})`);
+  r.setProperty('--selected',      `oklch(89% 0.040 ${t.accentHue})`);
   // density tweaks row padding via CSS var; simple approach: tweak base font size
   const base = ({ compact: 12.5, balanced: 13.5, comfy: 14.5 })[t.density] || 13.5;
   document.body.style.fontSize = (base * (t.fontScale || 1)) + 'px';

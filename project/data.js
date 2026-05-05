@@ -6,11 +6,14 @@
 // it. Only small reference tables get eager-loaded so component code can do
 // synchronous lookups (window.findUser, decodeChoice, etc.).
 //
-// What's eager (all fired in parallel on boot, gzipped, cached 5 min):
+// What's critical (blocks UI render — all small, parallel, gzipped):
 //   sys_choice, core_company, cmn_department, cmn_location, cmn_cost_center,
-//   sys_user_group, sys_user_grmember,
-//   sys_user_lookup (sys_id → {name, user_name, title, …} compact map),
-//   cmdb_ci_lookup  (sys_id → {name, sys_class_name, …}    compact map).
+//   sys_user_group, sys_user_grmember, manifest, hr_status.
+//
+// What's background (loads after `ready=true`; components fall back to
+// the envelope's __display_<field> until the map arrives):
+//   sys_user_lookup (sys_id → {name, user_name, title, …}, ~5 MB gz),
+//   cmdb_ci_lookup  (sys_id → {name, sys_class_name, …},  ~33 MB gz).
 //
 // What's lazy (fetched per view via API helpers):
 //   every task table (incident, change_request, problem, sc_request, …)
@@ -72,7 +75,11 @@ window.HistoricalWowData = (function () {
     hrStatus: { enabled: false, unlocked: false, group_sys_id: '', group_label: '' },
     loadStatus: {
       ready: false, source: null, table: null,
-      total: EAGER_TABLES.length + 4,  // +manifest +cmdb_ci_lookup +sys_user_lookup +hr_status
+      // Critical jobs the loading screen blocks on: manifest + EAGER_TABLES
+      // + hr_status. The two big lookup maps (sys_user_lookup,
+      // cmdb_ci_lookup — together 38 MB gzipped) load in the background
+      // after `ready=true` so they don't block the UI on slow networks.
+      total: EAGER_TABLES.length + 2,
       loaded: 0,
       error: null,
     },
@@ -222,10 +229,10 @@ window.HistoricalWowData = (function () {
 
   // ---- load orchestration ------------------------------------------------
 
-  // One job = (label, work-fn). All jobs after manifest run in parallel via
-  // Promise.allSettled — boot is bounded by the slowest single fetch
-  // (typically cmdb_ci_lookup), not the sum of all of them.
-  function makeJobs() {
+  // Critical jobs — block UI render. Small reference data + manifest +
+  // hr_status. All firing in parallel; total is bounded by the slowest
+  // single fetch (~few hundred KB compressed each).
+  function makeCriticalJobs() {
     const jobs = [];
     for (const [table, alias] of EAGER_TABLES) {
       jobs.push([table, async () => {
@@ -238,24 +245,6 @@ window.HistoricalWowData = (function () {
         }
       }]);
     }
-    jobs.push(['sys_user_lookup', async () => {
-      try {
-        const map = await apiGet('/api/sys_user_lookup');
-        data.sys_user_lookup = new Map(Object.entries(map));
-      } catch (e) {
-        console.warn('[historicalwow] sys_user_lookup failed:', e.message);
-        data.sys_user_lookup = new Map();
-      }
-    }]);
-    jobs.push(['cmdb_ci_lookup', async () => {
-      try {
-        const map = await apiGet('/api/cmdb_ci_lookup');
-        data.cmdb_ci_lookup = new Map(Object.entries(map));
-      } catch (e) {
-        console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message);
-        data.cmdb_ci_lookup = new Map();
-      }
-    }]);
     jobs.push(['hr_status', async () => {
       try {
         data.hrStatus = await apiGet('/api/hr-status');
@@ -266,9 +255,22 @@ window.HistoricalWowData = (function () {
     return jobs;
   }
 
+  // Background jobs — fire after `ready=true`. Components that depend on
+  // these (UserCell, RefLink kind=ci) gracefully fall back to the
+  // envelope's __display_<field> until the lookup map arrives, so the
+  // page renders immediately and progressively enhances.
+  function loadBackgroundLookups() {
+    apiGet('/api/sys_user_lookup').then(map => {
+      data.sys_user_lookup = new Map(Object.entries(map));
+      notify();
+    }).catch(e => console.warn('[historicalwow] sys_user_lookup failed:', e.message));
+    apiGet('/api/cmdb_ci_lookup').then(map => {
+      data.cmdb_ci_lookup = new Map(Object.entries(map));
+      notify();
+    }).catch(e => console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message));
+  }
+
   async function loadAll() {
-    // Manifest fires in parallel with everything else — nothing in the load
-    // path depends on manifest data, only the loading-screen label does.
     data.loadStatus.table = 'manifest';
     notify();
     const manifestP = apiGet('/api/manifest').then(m => {
@@ -282,7 +284,7 @@ window.HistoricalWowData = (function () {
       notify();
     });
 
-    const jobs = makeJobs();
+    const jobs = makeCriticalJobs();
     await Promise.allSettled([
       manifestP,
       ...jobs.map(([label, fn]) => fn().finally(() => {
@@ -296,6 +298,9 @@ window.HistoricalWowData = (function () {
     data.loadStatus.table = null;
     data.loadStatus.ready = true;
     notify();
+    // Kick off the heavy lookups now that the UI is unblocked. They'll
+    // notify subscribers individually as they finish.
+    loadBackgroundLookups();
   }
 
   data.ready = loadAll();

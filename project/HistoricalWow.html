@@ -3003,6 +3003,11 @@ const CHILD_REL = {
   sc_req_item:     { table: 'sc_task',       field: 'request_item' },
 };
 
+const ASSET_TABLES_SET = new Set([
+  'alm_asset', 'alm_hardware', 'alm_software_license',
+  'alm_consumable', 'alm_facility', 'alm_stockroom',
+]);
+
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const data = window.HistoricalWowData;
   const [tab, setTab] = React.useState('journal');
@@ -3017,17 +3022,44 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const [slas, setSLAs]         = React.useState([]);
   const [approvals, setApprovals] = React.useState([]);
   const [variables, setVariables] = React.useState({ rows: [], cat_item: null });
+  const [assetCITickets, setAssetCITickets] = React.useState(null); // tickets that reference this asset's linked CI
+  const isAsset = ASSET_TABLES_SET.has(table);
 
   React.useEffect(() => {
     let cancel = false;
     setFullRec(null); setJournals(null); setAudits(null); setAtts(null);
     setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
     setVariables({ rows: [], cat_item: null });
+    setAssetCITickets(null);
 
     data.fetchRecord(table, sys_id).then(r => {
       if (cancel) return;
       setFullRec(r);
-      if (r) window.AuditLog.push('view', `${table}/${r.number}`, r.short_description);
+      if (r) {
+        const audit_label = r.short_description || r.display_name || r.name || '';
+        const audit_target = r.number || r.asset_tag || sys_id.slice(0, 8);
+        window.AuditLog.push('view', `${table}/${audit_target}`, audit_label);
+      }
+      // Asset → CI → tickets: when viewing a hardware/asset, also pull the
+      // tickets that reference the linked CI so the user gets the implicit
+      // "what tickets touched this laptop" view in one place.
+      if (r && isAsset && r.ci) {
+        Promise.all([
+          data.fetchTaskList('incident',       { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
+          data.fetchTaskList('change_request', { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
+          data.fetchTaskList('problem',        { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
+        ]).then(([inc, chg, prb]) => {
+          if (cancel) return;
+          const merged = [
+            ...(inc.rows || []).map(x => ({ ...x, _table: 'incident' })),
+            ...(chg.rows || []).map(x => ({ ...x, _table: 'change_request' })),
+            ...(prb.rows || []).map(x => ({ ...x, _table: 'problem' })),
+          ].sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
+          setAssetCITickets(merged);
+        });
+      } else if (cancel || !r || !isAsset) {
+        // leave assetCITickets null so we just hide the section
+      }
     }).catch(e => {
       if (cancel) return;
       // 403 → HR gate. Render a friendly message rather than the loading
@@ -3043,21 +3075,24 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
 
     // Per-record relationships (each is a small filtered query — was eager-
-    // loaded as 422k+90k+75k rows, now 0–N rows per record).
-    const rel = CHILD_REL[table];
-    if (rel) {
-      data.fetchTaskList(rel.table, { filters: { [rel.field]: sys_id }, limit: 200, slim: 1 })
-        .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
-    }
-    data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
-      .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
-    data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
-      .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
-    data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
-      .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
-    if (table === 'sc_req_item') {
-      data.fetchVariables(sys_id)
-        .then(r => { if (!cancel) setVariables(r); }).catch(() => {});
+    // loaded as 422k+90k+75k rows, now 0–N rows per record). Asset records
+    // skip these — they don't have parent/task_ci/sla/approver relations.
+    if (!isAsset) {
+      const rel = CHILD_REL[table];
+      if (rel) {
+        data.fetchTaskList(rel.table, { filters: { [rel.field]: sys_id }, limit: 200, slim: 1 })
+          .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
+      }
+      data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
+        .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
+      data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
+        .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
+      data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
+        .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+      if (table === 'sc_req_item') {
+        data.fetchVariables(sys_id)
+          .then(r => { if (!cancel) setVariables(r); }).catch(() => {});
+      }
     }
 
     return () => { cancel = true; };
@@ -3091,8 +3126,15 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   return (
     <div className="record">
       <div className="left">
-        <RecordHeader rec={rec} table={table} />
-        <FieldsSection rec={rec} table={table} showRaw={showRaw} />
+        {isAsset
+          ? <AssetRecordHeader rec={rec} table={table} />
+          : <RecordHeader rec={rec} table={table} />}
+        {isAsset
+          ? <AssetFieldsSection rec={rec} table={table} showRaw={showRaw} />
+          : <FieldsSection rec={rec} table={table} showRaw={showRaw} />}
+        {isAsset && assetCITickets && assetCITickets.length > 0 && (
+          <AssetCITicketsSection rows={assetCITickets} ci={rec.ci} ci_display={rec.__display_ci} />
+        )}
         <VariablesSection rows={variables.rows} cat_item={variables.cat_item} />
         {tasks.length > 0 && <TasksSection tasks={tasks} table={table} />}
         {slas.length > 0 && <SLAsSection slas={slas} />}
@@ -3171,6 +3213,269 @@ function RecordHeader({ rec, table }) {
         <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
           sys_id {rec.sys_id.slice(0, 8)}…
         </span>
+      </div>
+    </div>
+  );
+}
+
+// ---- Asset record header / fields / related tickets ---------------------
+
+function AssetRecordHeader({ rec, table }) {
+  const subclass = rec.sys_class_name || table;
+  const statusDec = window.decodeChoice('alm_asset', 'install_status', rec.state || rec.install_status);
+  const statusLabel = statusDec.label || rec.__display_install_status || rec.state || '—';
+  const title = rec.display_name || rec.name || rec.asset_tag || sys_id_short(rec.sys_id);
+  return (
+    <div className="record-header">
+      <div className="crumbs">
+        <a onClick={() => window.navigate(window.listUrl(table))}>{window.taskLabel(table, 'plural')}</a>
+        <window.Icon name="chevron_right" size={11} />
+        <span className="mono">{rec.asset_tag || rec.sys_id.slice(0, 8) + '…'}</span>
+      </div>
+      <h1>
+        <span className="num">{rec.asset_tag || ''}</span>
+        <span style={{ flex: 1, minWidth: 0 }}>{title}</span>
+      </h1>
+      <div className="title-row">
+        <span className="chip">{statusLabel}</span>
+        {subclass && subclass !== table && (
+          <span className="chip" style={{ fontFamily: 'var(--font-mono)' }}>{subclass}</span>
+        )}
+        <span className="dot">·</span>
+        <span>created {window.fmtRelative(rec.sys_created_on)}</span>
+        <span className="dot">·</span>
+        <span>updated {window.fmtRelative(rec.sys_updated_on)}</span>
+        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
+          sys_id {rec.sys_id.slice(0, 8)}…
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function sys_id_short(s) { return s ? s.slice(0, 8) + '…' : '—'; }
+
+// Render any sys_id-shaped reference field with a sensible link target
+// based on the field's name and the ServiceNow `__display_<field>`
+// envelope value. Falls back to the plain display value (or the sys_id
+// short form) when the target table isn't one we render.
+function AssetRef({ rec, field, kind, fallback }) {
+  const v = rec[field];
+  const display = fallback || rec['__display_' + field];
+  if (!v) return <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>;
+  if (kind === 'user') return <RefLink kind="user" sys_id={v} fallback={display} />;
+  if (kind === 'group') return <RefLink kind="group" sys_id={v} fallback={display} />;
+  if (kind === 'ci') return <RefLink kind="ci" sys_id={v} fallback={display} />;
+  if (kind === 'company') {
+    const c = window.findCompany?.(v);
+    return c ? <span>{c.name}</span> : <span>{display || sys_id_short(v)}</span>;
+  }
+  if (kind === 'department') {
+    const d = window.findDepartment?.(v);
+    return d ? <span>{d.name}</span> : <span>{display || sys_id_short(v)}</span>;
+  }
+  if (kind === 'location') {
+    const l = window.findLocation?.(v);
+    return l ? <span>{l.name}</span> : <span>{display || sys_id_short(v)}</span>;
+  }
+  if (kind === 'cost_center') {
+    const cc = window.HistoricalWowData.cost_centers.find(c => c.sys_id === v);
+    return cc ? <span>{cc.name || cc.code}</span> : <span>{display || sys_id_short(v)}</span>;
+  }
+  return <span>{display || sys_id_short(v)}</span>;
+}
+
+function AssetFieldsSection({ rec, table, showRaw }) {
+  // Per-table custom layouts. Hardware gets the most fields; software
+  // license / consumable / facility / stockroom tweak a few. Anything not
+  // listed here falls back to a generic dump of the envelope.
+  const sections = ASSET_FIELD_LAYOUT[table] || ASSET_FIELD_LAYOUT.alm_asset;
+  return (
+    <>
+      {rec.short_description && (
+        <div className="section">
+          <h3>Description</h3>
+          <div className="kv-block">{rec.short_description}</div>
+        </div>
+      )}
+      {sections.map((sec, i) => (
+        <div className="section" key={i}>
+          <h3>{sec.heading}</h3>
+          <div className="fields">
+            {sec.fields.map(f => {
+              const visible = f.always || rec[f.key] !== undefined;
+              if (!visible) return null;
+              return (
+                <Field key={f.key} label={f.label} showRaw={showRaw} raw={rec[f.key]}>
+                  {f.render ? f.render(rec) : <AssetRef rec={rec} field={f.key} kind={f.kind} />}
+                </Field>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+const ASSET_FIELD_LAYOUT = {
+  alm_hardware: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',     label: 'Asset tag',    render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',        label: 'sys_id',       render: (r) => <span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{r.sys_id}</span> },
+        { key: 'display_name',  label: 'Name',         render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'sys_class_name',label: 'Class',        render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.sys_class_name || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Hardware', fields: [
+        { key: 'serial_number', label: 'Serial',       render: (r) => <span className="mono">{r.serial_number || '—'}</span> },
+        { key: 'model',         label: 'Model',        kind: 'ci' },
+        { key: 'model_category',label: 'Category',     kind: 'ci' },
+        { key: 'manufacturer',  label: 'Manufacturer', kind: 'company' },
+        { key: 'warranty_expiration', label: 'Warranty', render: (r) => <span>{r.warranty_expiration || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Lifecycle', fields: [
+        { key: 'install_status',label: 'Status',       render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+        { key: 'substatus',     label: 'Substatus',    render: (r) => <span>{r.__display_substatus || r.substatus || '—'}</span> },
+        { key: 'install_date',  label: 'Installed',    render: (r) => <span>{r.install_date || '—'}</span> },
+        { key: 'purchase_date', label: 'Purchased',    render: (r) => <span>{r.purchase_date || '—'}</span> },
+        { key: 'retired',       label: 'Retired',      render: (r) => <span>{r.retired || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Ownership', fields: [
+        { key: 'assigned_to',   label: 'Assigned to',  kind: 'user' },
+        { key: 'owned_by',      label: 'Owned by',     kind: 'user' },
+        { key: 'managed_by',    label: 'Managed by',   kind: 'user' },
+        { key: 'department',    label: 'Department',   kind: 'department' },
+        { key: 'company',       label: 'Company',      kind: 'company' },
+        { key: 'cost_center',   label: 'Cost center',  kind: 'cost_center' },
+        { key: 'location',      label: 'Location',     kind: 'location' },
+      ],
+    },
+    {
+      heading: 'Configuration item', fields: [
+        { key: 'ci',            label: 'Linked CI',    kind: 'ci', always: true },
+      ],
+    },
+  ],
+  alm_software_license: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',    label: 'Asset tag',    render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',       label: 'sys_id',       render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name', label: 'Name',         render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'vendor',       label: 'Vendor',       kind: 'company' },
+      ],
+    },
+    {
+      heading: 'License', fields: [
+        { key: 'license_count',   label: 'Seats',          render: (r) => <span className="mono">{r.license_count || '—'}</span> },
+        { key: 'expiration_date', label: 'Expires',        render: (r) => <span>{r.expiration_date || '—'}</span> },
+        { key: 'license_key',     label: 'License key',    render: (r) => <span className="mono" style={{ fontSize: 11.5 }}>{r.license_key || '—'}</span> },
+        { key: 'install_status',  label: 'Status',         render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Ownership', fields: [
+        { key: 'owned_by',     label: 'Owned by',     kind: 'user' },
+        { key: 'managed_by',   label: 'Managed by',   kind: 'user' },
+        { key: 'company',      label: 'Company',      kind: 'company' },
+        { key: 'cost_center',  label: 'Cost center',  kind: 'cost_center' },
+      ],
+    },
+  ],
+  alm_consumable: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',    label: 'Asset tag',  render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',       label: 'sys_id',     render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name', label: 'Name',       render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'quantity',     label: 'Quantity',   render: (r) => <span className="mono">{r.quantity || '—'}</span> },
+        { key: 'model',        label: 'Model',      kind: 'ci' },
+      ],
+    },
+    {
+      heading: 'Lifecycle', fields: [
+        { key: 'install_status', label: 'Status',   render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+        { key: 'location',     label: 'Location',   kind: 'location' },
+      ],
+    },
+  ],
+  alm_facility: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',    label: 'Asset tag',  render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',       label: 'sys_id',     render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name', label: 'Name',       render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'install_status', label: 'Status',   render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+        { key: 'location',     label: 'Location',   kind: 'location' },
+      ],
+    },
+  ],
+  alm_stockroom: [
+    {
+      heading: 'Stockroom', fields: [
+        { key: 'name',         label: 'Name',       render: (r) => <span>{r.name || '—'}</span> },
+        { key: 'sys_id',       label: 'sys_id',     render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name', label: 'Display',    render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'manager',      label: 'Manager',    kind: 'user' },
+        { key: 'location',     label: 'Location',   kind: 'location' },
+      ],
+    },
+  ],
+  alm_asset: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',    label: 'Asset tag',  render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',       label: 'sys_id',     render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name', label: 'Name',       render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'sys_class_name', label: 'Class',    render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.sys_class_name || '—'}</span> },
+        { key: 'install_status', label: 'Status',   render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Ownership', fields: [
+        { key: 'assigned_to',  label: 'Assigned to', kind: 'user' },
+        { key: 'owned_by',     label: 'Owned by',    kind: 'user' },
+        { key: 'company',      label: 'Company',     kind: 'company' },
+        { key: 'cost_center',  label: 'Cost center', kind: 'cost_center' },
+        { key: 'location',     label: 'Location',    kind: 'location' },
+      ],
+    },
+    {
+      heading: 'Configuration item', fields: [
+        { key: 'ci',           label: 'Linked CI',   kind: 'ci', always: true },
+      ],
+    },
+  ],
+};
+
+function AssetCITicketsSection({ rows, ci, ci_display }) {
+  return (
+    <div className="section">
+      <h3>
+        Tickets referencing the linked CI
+        <span className="count">{rows.length}</span>
+        <span style={{ marginLeft: 10, fontSize: 11.5, fontWeight: 400, color: 'var(--fg-3)' }}>
+          via <RefLink kind="ci" sys_id={ci} fallback={ci_display} />
+        </span>
+      </h3>
+      <div className="related-list" style={{ padding: 0, marginBottom: 12 }}>
+        {rows.map(t => (
+          <div key={t.sys_id + t._table} className="related-item"
+               onClick={() => window.navigate(window.recordUrl(t._table, t.sys_id))}>
+            <span className="num">{t.number}</span>
+            <span className="desc">{t.short_description}</span>
+            <span className="chip" style={{ marginLeft: 'auto', fontSize: 10.5 }}>
+              {window.taskLabel(t._table, 'singular')}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -3794,15 +4099,23 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
   const u = window.findUser(sys_id);
   const [asCaller, setAsCaller]     = React.useState(null);
   const [asAssignee, setAsAssignee] = React.useState(null);
+  const [hwAssigned, setHwAssigned] = React.useState(null);
+  const [hwOwned, setHwOwned]       = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
     setAsCaller(null); setAsAssignee(null);
+    setHwAssigned(null); setHwOwned(null);
     data.fetchTaskList('incident', { limit: 12, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
     data.fetchTaskList('incident', { limit: 12, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
+    // Hardware this user is assigned / owns
+    data.fetchTaskList('alm_hardware', { limit: 24, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setHwAssigned(r); }).catch(() => { if (!cancel) setHwAssigned({ rows: [], total: 0 }); });
+    data.fetchTaskList('alm_hardware', { limit: 24, filters: { owned_by: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setHwOwned(r); }).catch(() => { if (!cancel) setHwOwned({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -3870,9 +4183,50 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
         <h2>Incidents · as assignee <span className="count">{asAssignee ? asAssignee.total.toLocaleString() : '…'}</span></h2>
         <SmallIncTable incidents={asAssignee?.rows || (asAssignee == null ? null : [])} />
       </div>
+      {hwAssigned && hwAssigned.total > 0 && (
+        <div className="ref-section">
+          <h2>Hardware · assigned <span className="count">{hwAssigned.total.toLocaleString()}</span></h2>
+          <HardwareGrid rows={hwAssigned.rows} />
+        </div>
+      )}
+      {hwOwned && hwOwned.total > 0 && (
+        <div className="ref-section">
+          <h2>Hardware · owned <span className="count">{hwOwned.total.toLocaleString()}</span></h2>
+          <HardwareGrid rows={hwOwned.rows} />
+        </div>
+      )}
     </div>
   );
 };
+
+function HardwareGrid({ rows }) {
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</div>;
+  }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+      {rows.map(h => (
+        <div key={h.sys_id}
+             onClick={() => window.navigate(`/hardware/${h.sys_id}`)}
+             style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <window.Icon name="ci" size={12} />
+            <span className="mono" style={{ fontSize: 12 }}>{h.asset_tag || h.sys_id.slice(0, 8) + '…'}</span>
+            <span className="chip" style={{ marginLeft: 'auto', fontSize: 10.5 }}>
+              {h.__display_install_status || h.install_status || h.state || '—'}
+            </span>
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {h.display_name || h.name || '—'}
+          </div>
+          {h.serial_number && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 2 }}>SN {h.serial_number}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Compact tabular list of task records. Defaults to incident routing for
 // backward compatibility — pass `table={...}` to navigate to other task types.
@@ -4023,15 +4377,21 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
   const [full, setFull] = React.useState(null);
   const [relations, setRelations] = React.useState({ upstream: null, downstream: null });
   const [taskBuckets, setTaskBuckets] = React.useState(null);
+  const [linkedAsset, setLinkedAsset] = React.useState(null);
   React.useEffect(() => {
     if (slim) window.AuditLog.push('view', `cmdb_ci/${slim.name}`, slim.name);
     let cancel = false;
     setFull(null); setRelations({ upstream: null, downstream: null }); setTaskBuckets(null);
+    setLinkedAsset(null);
     data.fetchRecord('cmdb_ci', sys_id).then(r => { if (!cancel) setFull(r); }).catch(() => {});
     data.fetchCIRelations(sys_id).then(r => { if (!cancel) setRelations(r); }).catch(() => setRelations({ upstream: [], downstream: [] }));
     bucketTaskRecordsAsync('cmdb_ci', sys_id)
       .then(b => { if (!cancel) setTaskBuckets(b); })
       .catch(() => { if (!cancel) setTaskBuckets([]); });
+    // Reverse: any alm_hardware row whose `ci` field points back here.
+    data.fetchTaskList('alm_hardware', { limit: 1, filters: { ci: sys_id } })
+      .then(r => { if (!cancel) setLinkedAsset(r.rows?.[0] || false); })
+      .catch(() => { if (!cancel) setLinkedAsset(false); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -4064,6 +4424,17 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
         <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name}</div></div>
         <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name}</div></div>
         <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number}</div></div>
+        <div className="cell">
+          <div className="label">Asset record</div>
+          <div className="val">
+            {linkedAsset === null ? <span style={{ color: 'var(--fg-4)' }}>…</span>
+              : linkedAsset
+                ? <span className="ref-link" onClick={() => window.navigate(`/hardware/${linkedAsset.sys_id}`)}>
+                    {linkedAsset.asset_tag || linkedAsset.display_name || linkedAsset.sys_id.slice(0, 8) + '…'}
+                  </span>
+                : <span style={{ color: 'var(--fg-4)' }}>—</span>}
+          </div>
+        </div>
         <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">Description</div><div className="val">{c.short_description}</div></div>
       </div>
 

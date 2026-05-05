@@ -149,15 +149,23 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
   const u = window.findUser(sys_id);
   const [asCaller, setAsCaller]     = React.useState(null);
   const [asAssignee, setAsAssignee] = React.useState(null);
+  const [hwAssigned, setHwAssigned] = React.useState(null);
+  const [hwOwned, setHwOwned]       = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
     setAsCaller(null); setAsAssignee(null);
+    setHwAssigned(null); setHwOwned(null);
     data.fetchTaskList('incident', { limit: 12, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
     data.fetchTaskList('incident', { limit: 12, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
+    // Hardware this user is assigned / owns
+    data.fetchTaskList('alm_hardware', { limit: 24, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setHwAssigned(r); }).catch(() => { if (!cancel) setHwAssigned({ rows: [], total: 0 }); });
+    data.fetchTaskList('alm_hardware', { limit: 24, filters: { owned_by: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
+      .then(r => { if (!cancel) setHwOwned(r); }).catch(() => { if (!cancel) setHwOwned({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -225,9 +233,50 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
         <h2>Incidents · as assignee <span className="count">{asAssignee ? asAssignee.total.toLocaleString() : '…'}</span></h2>
         <SmallIncTable incidents={asAssignee?.rows || (asAssignee == null ? null : [])} />
       </div>
+      {hwAssigned && hwAssigned.total > 0 && (
+        <div className="ref-section">
+          <h2>Hardware · assigned <span className="count">{hwAssigned.total.toLocaleString()}</span></h2>
+          <HardwareGrid rows={hwAssigned.rows} />
+        </div>
+      )}
+      {hwOwned && hwOwned.total > 0 && (
+        <div className="ref-section">
+          <h2>Hardware · owned <span className="count">{hwOwned.total.toLocaleString()}</span></h2>
+          <HardwareGrid rows={hwOwned.rows} />
+        </div>
+      )}
     </div>
   );
 };
+
+function HardwareGrid({ rows }) {
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</div>;
+  }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+      {rows.map(h => (
+        <div key={h.sys_id}
+             onClick={() => window.navigate(`/hardware/${h.sys_id}`)}
+             style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <window.Icon name="ci" size={12} />
+            <span className="mono" style={{ fontSize: 12 }}>{h.asset_tag || h.sys_id.slice(0, 8) + '…'}</span>
+            <span className="chip" style={{ marginLeft: 'auto', fontSize: 10.5 }}>
+              {h.__display_install_status || h.install_status || h.state || '—'}
+            </span>
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {h.display_name || h.name || '—'}
+          </div>
+          {h.serial_number && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 2 }}>SN {h.serial_number}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Compact tabular list of task records. Defaults to incident routing for
 // backward compatibility — pass `table={...}` to navigate to other task types.
@@ -378,15 +427,21 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
   const [full, setFull] = React.useState(null);
   const [relations, setRelations] = React.useState({ upstream: null, downstream: null });
   const [taskBuckets, setTaskBuckets] = React.useState(null);
+  const [linkedAsset, setLinkedAsset] = React.useState(null);
   React.useEffect(() => {
     if (slim) window.AuditLog.push('view', `cmdb_ci/${slim.name}`, slim.name);
     let cancel = false;
     setFull(null); setRelations({ upstream: null, downstream: null }); setTaskBuckets(null);
+    setLinkedAsset(null);
     data.fetchRecord('cmdb_ci', sys_id).then(r => { if (!cancel) setFull(r); }).catch(() => {});
     data.fetchCIRelations(sys_id).then(r => { if (!cancel) setRelations(r); }).catch(() => setRelations({ upstream: [], downstream: [] }));
     bucketTaskRecordsAsync('cmdb_ci', sys_id)
       .then(b => { if (!cancel) setTaskBuckets(b); })
       .catch(() => { if (!cancel) setTaskBuckets([]); });
+    // Reverse: any alm_hardware row whose `ci` field points back here.
+    data.fetchTaskList('alm_hardware', { limit: 1, filters: { ci: sys_id } })
+      .then(r => { if (!cancel) setLinkedAsset(r.rows?.[0] || false); })
+      .catch(() => { if (!cancel) setLinkedAsset(false); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -419,6 +474,17 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
         <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name}</div></div>
         <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name}</div></div>
         <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number}</div></div>
+        <div className="cell">
+          <div className="label">Asset record</div>
+          <div className="val">
+            {linkedAsset === null ? <span style={{ color: 'var(--fg-4)' }}>…</span>
+              : linkedAsset
+                ? <span className="ref-link" onClick={() => window.navigate(`/hardware/${linkedAsset.sys_id}`)}>
+                    {linkedAsset.asset_tag || linkedAsset.display_name || linkedAsset.sys_id.slice(0, 8) + '…'}
+                  </span>
+                : <span style={{ color: 'var(--fg-4)' }}>—</span>}
+          </div>
+        </div>
         <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">Description</div><div className="val">{c.short_description}</div></div>
       </div>
 

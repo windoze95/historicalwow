@@ -2084,7 +2084,12 @@ window.fmtDate = function (s) {
 };
 window.fmtRelative = function (s) {
   if (!s) return '';
-  const now = new Date('2026-04-30T12:00:00Z');
+  // Anchor relative-time math at the snapshot's captured_at, not the
+  // browser's real clock: this is a static archive and the user is viewing
+  // a frozen moment. Otherwise everything would slowly drift to "X months
+  // ago" forever.
+  const ref = window.HistoricalWowData?.manifest?.captured_at;
+  const now = ref ? new Date(ref) : new Date();
   const t = new Date(s.replace(' ', 'T') + 'Z');
   const diff = (now - t) / 1000;
   if (diff < 60) return 'just now';
@@ -3247,11 +3252,13 @@ function ApprovalsSection({ approvals }) {
 }
 
 function ManifestFooter({ rec }) {
+  const m = window.HistoricalWowData?.manifest || {};
+  const tag = [m.snapshot_date, m.label].filter(Boolean).join(' ') || 'unlabeled snapshot';
   return (
     <div className="section" style={{ borderBottom: 'none', color: 'var(--fg-4)', fontSize: 11.5, paddingTop: 14, paddingBottom: 30 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)' }}>
         <window.Icon name="archive" size={11} />
-        <span>archived from snapshot 2026-04-30 T-baseline</span>
+        <span>archived from snapshot {tag}</span>
         <span style={{ marginLeft: 'auto' }}>sha256 {rec.sys_id.slice(8, 24)}</span>
       </div>
     </div>
@@ -3470,7 +3477,7 @@ window.HomePage = function HomePage({ openPalette }) {
           ServiceNow Historical Archive
         </div>
         <h1 style={{ margin: '6px 0 8px', fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>
-          Snapshot · 2026-04-30 T-baseline
+          Snapshot · {data.manifest.snapshot_date || '—'} {data.manifest.label || ''}
         </h1>
         <div style={{ color: 'var(--fg-3)', fontSize: 13.5, maxWidth: 720, lineHeight: 1.6 }}>
           Read-only archive of <span className="mono" style={{ fontSize: 12.5 }}>loves.service-now.com</span>.

@@ -30,7 +30,7 @@ window.HomePage = function HomePage({ openPalette }) {
           ServiceNow Historical Archive
         </div>
         <h1 style={{ margin: '6px 0 8px', fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>
-          Snapshot · 2026-04-30 T-baseline
+          Snapshot · {data.manifest.snapshot_date || '—'} {data.manifest.label || ''}
         </h1>
         <div style={{ color: 'var(--fg-3)', fontSize: 13.5, maxWidth: 720, lineHeight: 1.6 }}>
           Read-only archive of <span className="mono" style={{ fontSize: 12.5 }}>loves.service-now.com</span>.

@@ -158,7 +158,12 @@ window.fmtDate = function (s) {
 };
 window.fmtRelative = function (s) {
   if (!s) return '';
-  const now = new Date('2026-04-30T12:00:00Z');
+  // Anchor relative-time math at the snapshot's captured_at, not the
+  // browser's real clock: this is a static archive and the user is viewing
+  // a frozen moment. Otherwise everything would slowly drift to "X months
+  // ago" forever.
+  const ref = window.HistoricalWowData?.manifest?.captured_at;
+  const now = ref ? new Date(ref) : new Date();
   const t = new Date(s.replace(' ', 'T') + 'Z');
   const diff = (now - t) / 1000;
   if (diff < 60) return 'just now';

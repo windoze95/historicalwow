@@ -462,11 +462,13 @@ function ApprovalsSection({ approvals }) {
 }
 
 function ManifestFooter({ rec }) {
+  const m = window.HistoricalWowData?.manifest || {};
+  const tag = [m.snapshot_date, m.label].filter(Boolean).join(' ') || 'unlabeled snapshot';
   return (
     <div className="section" style={{ borderBottom: 'none', color: 'var(--fg-4)', fontSize: 11.5, paddingTop: 14, paddingBottom: 30 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)' }}>
         <window.Icon name="archive" size={11} />
-        <span>archived from snapshot 2026-04-30 T-baseline</span>
+        <span>archived from snapshot {tag}</span>
         <span style={{ marginLeft: 'auto' }}>sha256 {rec.sys_id.slice(8, 24)}</span>
       </div>
     </div>

@@ -62,7 +62,7 @@
   --radius-lg: 10px;
   --topbar-h: 44px;
   --banner-h: 28px;
-  --sidebar-w: 224px;
+  --sidebar-w: 244px;
 
   /* Shadows */
   /* Shadows — true black with higher alpha. On dark surfaces a tinted
@@ -88,6 +88,24 @@ html, body {
 }
 
 #root { height: 100%; }
+
+/* Scrollbars — themed to the surface palette so they don't show up as
+   chrome-default white slabs against the warm dark bg. The thumb uses
+   --border-2 at rest and brightens to --border-strong on hover; the
+   track is the page bg so it visually disappears until the thumb shows. */
+* {
+  scrollbar-width: thin;                                /* Firefox */
+  scrollbar-color: var(--border-2) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 8px;
+  border: 2px solid var(--bg);                          /* gives the thumb breathing room from the edge */
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+*::-webkit-scrollbar-corner { background: transparent; }
 
 button {
   font-family: inherit;

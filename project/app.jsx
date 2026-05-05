@@ -32,7 +32,7 @@ function applyTweaks(t) {
   document.documentElement.style.setProperty('--banner-h', t.showBanner ? '28px' : '0px');
   const banner = document.querySelector('.banner');
   if (banner) banner.style.display = t.showBanner ? '' : 'none';
-  document.documentElement.style.setProperty('--sidebar-w', t.sidebarCollapsed ? '64px' : '224px');
+  document.documentElement.style.setProperty('--sidebar-w', t.sidebarCollapsed ? '64px' : '244px');
 }
 
 function App() {

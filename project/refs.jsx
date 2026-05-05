@@ -13,14 +13,25 @@ window.HomePage = function HomePage({ openPalette }) {
     data.fetchTaskList('incident', { limit: 8, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setRecent((r.rows || []).map(x => ({ rec: x, table: 'incident' }))); })
       .catch(() => { if (!cancel) setRecent([]); });
-    // Open P1: priority=1, state in non-closed. Server doesn't have IN, so
-    // fetch a small page where priority=1 (most P1s) and filter client-side.
-    data.fetchTaskList('incident', { limit: 50, filters: { priority: '1' }, order_by: 'sys_updated_on', dir: 'desc' })
-      .then(r => { if (!cancel) {
-        const open = (r.rows || []).filter(i => !['6','7','8'].includes(String(i.state))).slice(0, 4);
-        setOpenP1(open);
-      } })
-      .catch(() => { if (!cancel) setOpenP1([]); });
+    // "Open P1 / P2 at snapshot time" — historical lens: which high-priority
+    // incidents were still open the moment we exported. The /api endpoint
+    // doesn't support OR or NOT-IN, so we fan out two queries (P1 and P2)
+    // with a generous limit and filter client-side. Sorting by opened_at
+    // DESC biases toward newer tickets that are more likely to still be
+    // open, so 200-row pages comfortably catch any open ones.
+    Promise.all([
+      data.fetchTaskList('incident', { limit: 200, filters: { priority: '1' }, order_by: 'opened_at', dir: 'desc' }).catch(() => ({ rows: [] })),
+      data.fetchTaskList('incident', { limit: 200, filters: { priority: '2' }, order_by: 'opened_at', dir: 'desc' }).catch(() => ({ rows: [] })),
+    ]).then(([p1, p2]) => {
+      if (cancel) return;
+      const isClosed = s => ['6', '7', '8'].includes(String(s));
+      const merged = [...(p1.rows || []), ...(p2.rows || [])]
+        .filter(i => !isClosed(i.state))
+        .sort((a, b) => String(a.priority).localeCompare(String(b.priority))
+                      || (b.opened_at || '').localeCompare(a.opened_at || ''))
+        .slice(0, 6);
+      setOpenP1(merged);
+    });
     return () => { cancel = true; };
   }, []);
   return (
@@ -51,25 +62,45 @@ window.HomePage = function HomePage({ openPalette }) {
         <span className="kbd-inline">⌘ K</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
-        {data.manifest.tables.slice(0, 8).map(t => (
-          <div key={t.table} style={{
-            background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
-            padding: '12px 14px', cursor: 'pointer',
-          }} onClick={() => {
-            const map = { incident: '/incidents', change_request: '/changes', sys_user: '/users', sys_user_group: '/groups', cmdb_ci: '/cis' };
-            if (map[t.table]) window.navigate(map[t.table]);
-          }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)' }}>{t.table}</div>
-            <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-.02em', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
-              {t.source_rows.toLocaleString()}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>
-              {t.rows.toLocaleString()} loaded
-            </div>
+      {(() => {
+        // Featured tiles. Order matters — these render left-to-right /
+        // top-to-bottom. The `slice(0, 8)` of the alphabetically-sorted
+        // manifest was producing useless tiles like asset_task=0 and
+        // cmn_cost_center=411 while the headline tables (incident,
+        // sys_user, alm_hardware) never made the cut.
+        const FEATURED = [
+          { table: 'incident',       label: 'Incidents',         url: '/incidents' },
+          { table: 'change_request', label: 'Change requests',   url: '/changes' },
+          { table: 'problem',        label: 'Problems',          url: '/problems' },
+          { table: 'sc_req_item',    label: 'Requested items',   url: '/requested-items' },
+          { table: 'cmdb_ci',        label: 'Configuration items', url: '/cis' },
+          { table: 'sys_user',       label: 'Users',             url: '/users' },
+          { table: 'alm_hardware',   label: 'Hardware',          url: '/hardware' },
+          { table: 'cmdb_software_instance', label: 'Software installs', url: '/software-installs' },
+        ];
+        const tilesByTable = Object.fromEntries((data.manifest.tables || []).map(t => [t.table, t]));
+        const tiles = FEATURED
+          .map(f => ({ ...f, info: tilesByTable[f.table] }))
+          .filter(f => f.info && (f.info.source_rows || 0) > 0);
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+            {tiles.map(f => (
+              <div key={f.table} style={{
+                background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: '12px 14px', cursor: 'pointer',
+              }} onClick={() => window.navigate(f.url)}>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>{f.label}</span>
+                  <span className="mono" style={{ color: 'var(--fg-4)', fontSize: 10.5 }}>· {f.table}</span>
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-.02em', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                  {f.info.source_rows.toLocaleString()}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 22 }}>
         <div>
@@ -110,11 +141,28 @@ window.HomePage = function HomePage({ openPalette }) {
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)' }}>{data.manifest.captured_at}</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', rowGap: 6, fontSize: 12 }}>
-              <span style={{ color: 'var(--fg-3)' }}>Tables exported</span><span className="mono">{data.manifest.tables.length}</span>
-              <span style={{ color: 'var(--fg-3)' }}>Source rows</span><span className="mono">{data.manifest.tables.reduce((a,t) => a + t.source_rows, 0).toLocaleString()}</span>
-              <span style={{ color: 'var(--fg-3)' }}>ACL skips</span><span className="mono">{data.manifest.integrity.acl_skips}</span>
-              <span style={{ color: 'var(--fg-3)' }}>Missing attachments</span><span className="mono">{data.manifest.integrity.missing_attachments}</span>
-              <span style={{ color: 'var(--fg-3)' }}>SHA-256 manifest</span><span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>{data.manifest.integrity.sha256_manifest.slice(0, 16)}…</span>
+              <span style={{ color: 'var(--fg-3)' }}>Tables exported</span>
+              <span className="mono">{data.manifest.tables.length}</span>
+              <span style={{ color: 'var(--fg-3)' }}>Source rows</span>
+              <span className="mono">{data.manifest.tables.reduce((a, t) => a + (t.source_rows || 0), 0).toLocaleString()}</span>
+              {data.manifest.integrity.acl_skips > 0 && (
+                <>
+                  <span style={{ color: 'var(--fg-3)' }}>ACL skips</span>
+                  <span className="mono">{data.manifest.integrity.acl_skips.toLocaleString()}</span>
+                </>
+              )}
+              {data.manifest.integrity.missing_attachments > 0 && (
+                <>
+                  <span style={{ color: 'var(--fg-3)' }}>Missing attachments</span>
+                  <span className="mono">{data.manifest.integrity.missing_attachments.toLocaleString()}</span>
+                </>
+              )}
+              {data.manifest.integrity.sha256_manifest && (
+                <>
+                  <span style={{ color: 'var(--fg-3)' }}>SHA-256 manifest</span>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>{data.manifest.integrity.sha256_manifest.slice(0, 16)}…</span>
+                </>
+              )}
             </div>
           </div>
           <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '20px 0 10px' }}>

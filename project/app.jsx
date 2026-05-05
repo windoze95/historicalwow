@@ -16,15 +16,16 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function applyTweaks(t) {
   const r = document.documentElement.style;
-  // Lightness/chroma values match the parchment palette in styles.css —
-  // the "lifted" chip background sits ~88% so it stands above the 93%
-  // page bg without going whiter.
-  r.setProperty('--accent',        `oklch(50% 0.12 ${t.accentHue})`);
-  r.setProperty('--accent-2',      `oklch(56% 0.12 ${t.accentHue})`);
-  r.setProperty('--accent-bg',     `oklch(88% 0.045 ${t.accentHue})`);
-  r.setProperty('--accent-border', `oklch(75% 0.080 ${t.accentHue})`);
-  r.setProperty('--accent-fg',     `oklch(30% 0.09 ${t.accentHue})`);
-  r.setProperty('--selected',      `oklch(89% 0.040 ${t.accentHue})`);
+  // Lightness/chroma values match the dark palette in styles.css — the
+  // accent stripe is bright (72%) so it pops on the 21% page bg, and
+  // the accent-bg sits at ~28% so chip pills lift just barely above
+  // the surface without going washed-out.
+  r.setProperty('--accent',        `oklch(72% 0.13 ${t.accentHue})`);
+  r.setProperty('--accent-2',      `oklch(78% 0.13 ${t.accentHue})`);
+  r.setProperty('--accent-bg',     `oklch(28% 0.055 ${t.accentHue})`);
+  r.setProperty('--accent-border', `oklch(42% 0.090 ${t.accentHue})`);
+  r.setProperty('--accent-fg',     `oklch(82% 0.11 ${t.accentHue})`);
+  r.setProperty('--selected',      `oklch(32% 0.055 ${t.accentHue})`);
   // density tweaks row padding via CSS var; simple approach: tweak base font size
   const base = ({ compact: 12.5, balanced: 13.5, comfy: 14.5 })[t.density] || 13.5;
   document.body.style.fontSize = (base * (t.fontScale || 1)) + 'px';
@@ -377,9 +378,9 @@ function HrGateButton({ status, onUnlockClick, onLockClick }) {
         : `${label} data is hidden — click to unlock`}
       style={{
         gap: 6,
-        background: unlocked ? 'oklch(94% 0.05 145)' : undefined,
-        borderColor: unlocked ? 'oklch(82% 0.08 145)' : undefined,
-        color: unlocked ? 'oklch(32% 0.08 145)' : undefined,
+        background: unlocked ? 'oklch(28% 0.055 145)' : undefined,
+        borderColor: unlocked ? 'oklch(42% 0.090 145)' : undefined,
+        color: unlocked ? 'oklch(82% 0.11 145)' : undefined,
       }}
     >
       <window.Icon name={unlocked ? 'unlock' : 'lock'} size={13} />

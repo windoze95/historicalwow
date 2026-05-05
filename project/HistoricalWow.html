@@ -11,56 +11,56 @@
 /* HistoricalWow — ServiceNow Historical Archive Viewer */
 
 :root {
-  /* Surface — warm parchment. Hue 70 (warm amber territory) at 0.018-0.025
-     chroma gives the page a noticeable but unobtrusive warmth — somewhere
-     between cream paper and oat. Lightness drops from 98% to 93% so the
-     whole page reads as a soft warm field, not bleached white. */
-  --bg: oklch(93% 0.018 70);
-  --bg-2: oklch(91% 0.020 70);
-  --bg-3: oklch(88% 0.024 70);
-  --bg-elev: oklch(95.5% 0.013 70);
-  --hover: oklch(90% 0.026 70);
-  --selected: oklch(89% 0.04 155);
+  /* Surface — warm dark, "library at dusk" feel. Hue 70 (amber) keeps a
+     subtle warmth in the dark surface so it reads as ink-on-leather,
+     not pure black. Lightness ~21% — enough to settle the eye but not
+     overwhelmingly dark. */
+  --bg: oklch(21% 0.012 70);
+  --bg-2: oklch(24% 0.013 70);
+  --bg-3: oklch(27% 0.015 70);
+  --bg-elev: oklch(25% 0.014 70);
+  --hover: oklch(29% 0.018 70);
+  --selected: oklch(32% 0.055 155);
 
-  /* Borders — pulled darker to keep definition against the warmer bg */
-  --border: oklch(82% 0.022 70);
-  --border-2: oklch(76% 0.026 70);
-  --border-strong: oklch(67% 0.030 70);
+  /* Borders — visible but soft. The contrast budget on dark themes is
+     tighter than light themes; over-bright borders read as harsh. */
+  --border: oklch(33% 0.018 70);
+  --border-2: oklch(40% 0.022 70);
+  --border-strong: oklch(52% 0.025 70);
 
-  /* Text — warm graphite (slight hue match so dark text reads as part of
-     the same family, not a desaturated overlay) */
-  --fg: oklch(22% 0.012 70);
-  --fg-2: oklch(38% 0.012 70);
-  --fg-3: oklch(52% 0.012 70);
-  --fg-4: oklch(65% 0.012 70);
+  /* Text — warm bone tones. Body text at ~91% lightness pairs with the
+     21% bg for readable but not screaming contrast. */
+  --fg: oklch(91% 0.012 70);
+  --fg-2: oklch(76% 0.012 70);
+  --fg-3: oklch(60% 0.012 70);
+  --fg-4: oklch(48% 0.012 70);
 
-  /* Accent — preserved green; bg/border tints adjusted for the new
-     parchment context so the chip "lifts" off the page */
-  --accent: oklch(50% 0.12 155);
-  --accent-2: oklch(56% 0.12 155);
-  --accent-bg: oklch(88% 0.045 155);
-  --accent-border: oklch(75% 0.080 155);
-  --accent-fg: oklch(30% 0.09 155);
+  /* Accent — green stays the brand hue but lifted in lightness so it
+     pops against the dark surface without burning the eye. */
+  --accent: oklch(72% 0.13 155);
+  --accent-2: oklch(78% 0.13 155);
+  --accent-bg: oklch(28% 0.055 155);
+  --accent-border: oklch(42% 0.090 155);
+  --accent-fg: oklch(82% 0.11 155);
 
-  /* Status / priority hues. Backgrounds raised to ~91% (above page bg)
-     and chroma bumped a bit so chips stand out against parchment without
-     looking washed-out. Gray is given a warm tint instead of true neutral
-     to fit the palette. */
-  --c-red:        oklch(54% 0.14 25);
-  --c-red-bg:     oklch(91% 0.045 25);
-  --c-red-border: oklch(80% 0.080 25);
-  --c-amber:      oklch(58% 0.12 75);
-  --c-amber-bg:   oklch(91% 0.050 75);
-  --c-amber-border: oklch(80% 0.090 75);
-  --c-blue:       oklch(52% 0.12 245);
-  --c-blue-bg:    oklch(91% 0.040 245);
-  --c-blue-border: oklch(80% 0.075 245);
-  --c-violet:     oklch(52% 0.12 295);
-  --c-violet-bg:  oklch(91% 0.040 295);
-  --c-violet-border: oklch(80% 0.075 295);
-  --c-gray:       oklch(50% 0.012 70);
-  --c-gray-bg:    oklch(90% 0.014 70);
-  --c-gray-border: oklch(78% 0.018 70);
+  /* Status / priority hues. Backgrounds drop to ~28% (above page bg);
+     foreground chip text is light and saturated. Gray gets a warm tint
+     so it sits in the same family as the rest of the palette. */
+  --c-red:        oklch(74% 0.16 25);
+  --c-red-bg:     oklch(28% 0.055 25);
+  --c-red-border: oklch(42% 0.100 25);
+  --c-amber:      oklch(80% 0.14 75);
+  --c-amber-bg:   oklch(28% 0.060 75);
+  --c-amber-border: oklch(42% 0.110 75);
+  --c-blue:       oklch(74% 0.13 245);
+  --c-blue-bg:    oklch(28% 0.055 245);
+  --c-blue-border: oklch(42% 0.090 245);
+  --c-violet:     oklch(74% 0.13 295);
+  --c-violet-bg:  oklch(28% 0.055 295);
+  --c-violet-border: oklch(42% 0.090 295);
+  --c-gray:       oklch(72% 0.012 70);
+  --c-gray-bg:    oklch(28% 0.012 70);
+  --c-gray-border: oklch(40% 0.014 70);
 
   /* Type */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -75,9 +75,11 @@
   --sidebar-w: 224px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px oklch(20% 0.01 95 / 0.04);
-  --shadow: 0 1px 3px oklch(20% 0.01 95 / 0.06), 0 4px 12px oklch(20% 0.01 95 / 0.04);
-  --shadow-lg: 0 4px 12px oklch(20% 0.01 95 / 0.08), 0 16px 40px oklch(20% 0.01 95 / 0.08);
+  /* Shadows — true black with higher alpha. On dark surfaces a tinted
+     shadow lifts a card; same alpha as the light theme would be invisible. */
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.25);
+  --shadow: 0 2px 4px oklch(0% 0 0 / 0.30), 0 6px 14px oklch(0% 0 0 / 0.25);
+  --shadow-lg: 0 6px 14px oklch(0% 0 0 / 0.40), 0 18px 44px oklch(0% 0 0 / 0.35);
 }
 
 * { box-sizing: border-box; }
@@ -127,7 +129,7 @@ a { color: inherit; text-decoration: none; }
 
 .banner {
   height: var(--banner-h);
-  background: oklch(96% 0.018 155);
+  background: var(--accent-bg);
   border-bottom: 1px solid var(--accent-border);
   color: var(--accent-fg);
   font-size: 11.5px;
@@ -917,8 +919,8 @@ a { color: inherit; text-decoration: none; }
 
 /* Mark for search highlight */
 mark {
-  background: oklch(94% 0.08 95);
-  color: var(--fg);
+  background: var(--c-amber-bg);
+  color: var(--c-amber);
   padding: 0 1px;
   border-radius: 2px;
 }
@@ -4379,15 +4381,16 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function applyTweaks(t) {
   const r = document.documentElement.style;
-  // Lightness/chroma values match the parchment palette in styles.css —
-  // the "lifted" chip background sits ~88% so it stands above the 93%
-  // page bg without going whiter.
-  r.setProperty('--accent',        `oklch(50% 0.12 ${t.accentHue})`);
-  r.setProperty('--accent-2',      `oklch(56% 0.12 ${t.accentHue})`);
-  r.setProperty('--accent-bg',     `oklch(88% 0.045 ${t.accentHue})`);
-  r.setProperty('--accent-border', `oklch(75% 0.080 ${t.accentHue})`);
-  r.setProperty('--accent-fg',     `oklch(30% 0.09 ${t.accentHue})`);
-  r.setProperty('--selected',      `oklch(89% 0.040 ${t.accentHue})`);
+  // Lightness/chroma values match the dark palette in styles.css — the
+  // accent stripe is bright (72%) so it pops on the 21% page bg, and
+  // the accent-bg sits at ~28% so chip pills lift just barely above
+  // the surface without going washed-out.
+  r.setProperty('--accent',        `oklch(72% 0.13 ${t.accentHue})`);
+  r.setProperty('--accent-2',      `oklch(78% 0.13 ${t.accentHue})`);
+  r.setProperty('--accent-bg',     `oklch(28% 0.055 ${t.accentHue})`);
+  r.setProperty('--accent-border', `oklch(42% 0.090 ${t.accentHue})`);
+  r.setProperty('--accent-fg',     `oklch(82% 0.11 ${t.accentHue})`);
+  r.setProperty('--selected',      `oklch(32% 0.055 ${t.accentHue})`);
   // density tweaks row padding via CSS var; simple approach: tweak base font size
   const base = ({ compact: 12.5, balanced: 13.5, comfy: 14.5 })[t.density] || 13.5;
   document.body.style.fontSize = (base * (t.fontScale || 1)) + 'px';
@@ -4740,9 +4743,9 @@ function HrGateButton({ status, onUnlockClick, onLockClick }) {
         : `${label} data is hidden — click to unlock`}
       style={{
         gap: 6,
-        background: unlocked ? 'oklch(94% 0.05 145)' : undefined,
-        borderColor: unlocked ? 'oklch(82% 0.08 145)' : undefined,
-        color: unlocked ? 'oklch(32% 0.08 145)' : undefined,
+        background: unlocked ? 'oklch(28% 0.055 145)' : undefined,
+        borderColor: unlocked ? 'oklch(42% 0.090 145)' : undefined,
+        color: unlocked ? 'oklch(82% 0.11 145)' : undefined,
       }}
     >
       <window.Icon name={unlocked ? 'unlock' : 'lock'} size={13} />

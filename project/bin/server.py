@@ -59,6 +59,85 @@ HR_GROUP_LABEL     = os.environ.get('HR_GROUP_LABEL', 'IT - HR Support')
 _hr_tokens: set[str] = set()
 _hr_tokens_lock = threading.Lock()
 
+
+# --- Lookup cache ---------------------------------------------------------
+# Precomputed gzipped JSON bytes for the boot-time lookup endpoints. These
+# are big (cmdb_ci_lookup scans 1M rows; sys_user_lookup ~140k) and the
+# work is the same for every browser, so doing it once per DB rebuild
+# turns a 6-second SQL+encode+gzip call into a memcpy.
+#
+# Cache key = absolute db_mtime. Any rebuild of historicalwow.db (which
+# bumps the mtime via SQLite's atomic rename / tempfile path) invalidates
+# every entry. New requests rebuild on demand; the warmup thread below
+# pre-populates the heavy ones at server startup so the first user
+# doesn't pay the cold-miss cost.
+_lookup_cache: dict = {}  # endpoint_id → (db_mtime, gz_bytes, etag)
+_lookup_cache_lock = threading.Lock()
+
+
+def _db_mtime() -> float:
+    return DB_PATH.stat().st_mtime if DB_PATH.exists() else 0.0
+
+
+def _serve_cached_lookup(handler, endpoint_id: str, builder, max_age: int = 3600):
+    """Serve a lookup JSON endpoint from the in-memory cache, building if
+    needed. `builder` is a no-arg callable returning a JSON-serializable
+    Python object. Browser cache validates via ETag (cheap 304s)."""
+    mtime = _db_mtime()
+    with _lookup_cache_lock:
+        cached = _lookup_cache.get(endpoint_id)
+        if not cached or cached[0] != mtime:
+            payload = builder()
+            body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+            gz_bytes = gzip.compress(body, compresslevel=6)
+            etag = f'W/"{int(mtime)}-{len(gz_bytes)}"'
+            _lookup_cache[endpoint_id] = (mtime, gz_bytes, etag)
+            log.info('lookup cache built %s — %d bytes gz', endpoint_id, len(gz_bytes))
+            cached = _lookup_cache[endpoint_id]
+        _, gz_bytes, etag = cached
+
+    # Browser revalidation — if the client's ETag matches, ship 304.
+    if handler.headers.get('If-None-Match', '') == etag:
+        handler.send_response(HTTPStatus.NOT_MODIFIED)
+        handler.send_header('ETag', etag)
+        handler.send_header('Cache-Control', f'public, max-age={max_age}')
+        handler.end_headers()
+        return
+
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header('Content-Type', 'application/json; charset=utf-8')
+    handler.send_header('Content-Encoding', 'gzip')
+    handler.send_header('Content-Length', str(len(gz_bytes)))
+    handler.send_header('Cache-Control', f'public, max-age={max_age}')
+    handler.send_header('ETag', etag)
+    handler.end_headers()
+    handler.wfile.write(gz_bytes)
+
+
+def warm_lookup_cache():
+    """Populate the heavy lookup caches at server startup so the first
+    user request hits memory, not SQLite. Runs in a background thread —
+    if it errors, the next user's request just builds it on demand."""
+    try:
+        log.info('warming lookup cache…')
+        _lookup_cache_set('manifest',         lambda: _build_manifest_payload())
+        _lookup_cache_set('sys_user_lookup',  lambda: _build_sys_user_lookup_payload())
+        _lookup_cache_set('cmdb_ci_lookup',   lambda: _build_cmdb_ci_lookup_payload())
+        log.info('lookup cache warm')
+    except Exception as e:
+        log.warning('lookup cache warmup failed: %s (will lazy-build on demand)', e)
+
+
+def _lookup_cache_set(endpoint_id, builder):
+    mtime = _db_mtime()
+    payload = builder()
+    body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+    gz_bytes = gzip.compress(body, compresslevel=6)
+    etag = f'W/"{int(mtime)}-{len(gz_bytes)}"'
+    with _lookup_cache_lock:
+        _lookup_cache[endpoint_id] = (mtime, gz_bytes, etag)
+    log.info('lookup cache pre-built %s — %d bytes gz', endpoint_id, len(gz_bytes))
+
 # Log to stdout so docker logs picks it up.
 logging.basicConfig(
     level=logging.INFO,
@@ -468,16 +547,12 @@ def cross_table_search(handler, params):
     _json_response(handler, {'rows': out, 'q': q})
 
 
-def get_manifest(handler):
+def _build_manifest_payload():
     p = DATA_DIR / 'manifest.json'
-    if not p.is_file():
-        return _send_error(handler, HTTPStatus.NOT_FOUND, 'manifest.json missing')
-    _send_static(handler, p, content_type='application/json; charset=utf-8')
+    return json.loads(p.read_text(encoding='utf-8')) if p.is_file() else {}
 
 
-def get_cmdb_ci_lookup(handler):
-    """Compact CI lookup table: sys_id → {name, sys_class_name, operational_status}.
-    Used by the viewer's findCI() helper without loading all 1M full records."""
+def _build_cmdb_ci_lookup_payload():
     conn = get_conn()
     rows = conn.execute(
         'SELECT sys_id, name, sys_class_name, operational_status FROM cmdb_ci'
@@ -489,7 +564,36 @@ def get_cmdb_ci_lookup(handler):
             'sys_class_name': r['sys_class_name'],
             'operational_status': r['operational_status'],
         }
-    _json_response(handler, out, cache_seconds=300)
+    return out
+
+
+def _build_sys_user_lookup_payload():
+    conn = get_conn()
+    rows = conn.execute(
+        'SELECT sys_id, name, user_name, title, department, location FROM sys_user'
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out[r['sys_id']] = {
+            'name': r['name'],
+            'user_name': r['user_name'],
+            'title': r['title'],
+            'department': r['department'],
+            'location': r['location'],
+        }
+    return out
+
+
+def get_manifest(handler):
+    if not (DATA_DIR / 'manifest.json').is_file():
+        return _send_error(handler, HTTPStatus.NOT_FOUND, 'manifest.json missing')
+    _serve_cached_lookup(handler, 'manifest', _build_manifest_payload)
+
+
+def get_cmdb_ci_lookup(handler):
+    """Compact CI lookup table — served from in-memory cache so first
+    request is O(network), not O(1M-row scan + json + gzip)."""
+    _serve_cached_lookup(handler, 'cmdb_ci_lookup', _build_cmdb_ci_lookup_payload)
 
 
 def get_hr_status(handler):
@@ -545,22 +649,8 @@ def post_hr_lock(handler):
 
 
 def get_sys_user_lookup(handler):
-    """Compact user lookup table: sys_id → {name, user_name, title, department, location}.
-    Used by the viewer's findUser() helper without loading all 142k full envelopes."""
-    conn = get_conn()
-    rows = conn.execute(
-        'SELECT sys_id, name, user_name, title, department, location FROM sys_user'
-    ).fetchall()
-    out = {}
-    for r in rows:
-        out[r['sys_id']] = {
-            'name': r['name'],
-            'user_name': r['user_name'],
-            'title': r['title'],
-            'department': r['department'],
-            'location': r['location'],
-        }
-    _json_response(handler, out, cache_seconds=300)
+    """Compact user lookup table — served from in-memory cache (140k rows)."""
+    _serve_cached_lookup(handler, 'sys_user_lookup', _build_sys_user_lookup_payload)
 
 
 # Tables whose contents change rarely between exports — safe to cache for
@@ -701,6 +791,12 @@ def main():
         log.info('hr gate ENABLED — group=%s (%s)', HR_GROUP_LABEL, HR_GROUP_SYS_ID)
     else:
         log.warning('hr gate DISABLED — set HR_UNLOCK_PASSWORD to protect HR incidents')
+    # Pre-build the heavy lookup caches on a background thread so the first
+    # user-facing request is O(network) instead of O(SQL+gzip). Doesn't
+    # block server start — if warmup races against the first request the
+    # request just lazy-builds via _serve_cached_lookup.
+    if DB_PATH.is_file():
+        threading.Thread(target=warm_lookup_cache, daemon=True, name='lookup-warmer').start()
     server = ReusableServer(('0.0.0.0', PORT), Handler)
     try:
         server.serve_forever()

@@ -35,6 +35,12 @@ window.URL_TO_TABLE = {
   groups:            'sys_user_group',
   cis:               'cmdb_ci',
   audit:             'audit_log',
+  'business-rules':  'sys_script',
+  'client-scripts':  'sys_script_client',
+  'script-includes': 'sys_script_include',
+  'scheduled-jobs':  'sysauto_script',
+  'ui-policies':     'sys_ui_policy',
+  'data-policies':   'sys_data_policy2',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])
@@ -54,6 +60,15 @@ function parseHash() {
 
   if (parts[0] === 'service-catalog') {
     return { view: 'service_catalog_home' };
+  }
+
+  if (parts[0] === 'logic') {
+    return { view: 'logic_home' };
+  }
+
+  if (parts[0] === 'sn-table') {
+    if (parts.length < 2) return { view: 'logic_home' };
+    return { view: 'sn_table_inspector', name: parts[1] };
   }
 
   if (parts[0] === 'tasks') {

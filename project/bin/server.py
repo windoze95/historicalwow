@@ -177,6 +177,14 @@ REFERENCE_TABLES = {
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
     'cmdb_ci_spkg', 'cmdb_software_instance',
+    # Server-side logic — business rules, client scripts, script includes,
+    # scheduled scripts, UI policies, data policies. Lets the per-table
+    # inspector answer "what runs on this table?" after the source instance
+    # is gone.
+    'sys_script', 'sys_script_client', 'sys_script_include',
+    'sysauto_script',
+    'sys_ui_policy', 'sys_ui_policy_action',
+    'sys_data_policy2', 'sys_data_policy_rule',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 
@@ -685,6 +693,13 @@ CACHE_5MIN = {
     'item_option_new_set', 'io_set_item', 'topic',
     'std_change_proposal',
     'item_option_new', 'question', 'question_choice',
+    # Server-side logic. Rules + scripts + policies — definitions change
+    # rarely (much rarer than transactional task rows) so a 5-minute cache
+    # is safe even for the bigger tables here (sys_script ~7k rows).
+    'sys_script', 'sys_script_client', 'sys_script_include',
+    'sysauto_script',
+    'sys_ui_policy', 'sys_ui_policy_action',
+    'sys_data_policy2', 'sys_data_policy_rule',
 }
 
 

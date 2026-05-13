@@ -279,6 +279,19 @@ DEFAULT_TABLES = [
     *ASSET_TABLES,
     # Software inventory (Discovery / SAM-light).
     *SOFTWARE_TABLES,
+    # Server-side logic — business rules, client scripts, script includes,
+    # scheduled scripts, UI policies, data policies. The viewer's per-table
+    # inspector uses these to answer "what fires when a record on table X
+    # is read/written?" — invaluable after the source instance is gone and
+    # the only artifact left is the archive.
+    'sys_script',
+    'sys_script_client',
+    'sys_script_include',
+    'sysauto_script',
+    'sys_ui_policy',
+    'sys_ui_policy_action',
+    'sys_data_policy2',
+    'sys_data_policy_rule',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',

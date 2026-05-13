@@ -20,6 +20,7 @@ JS_SOURCES = [
     ("refs.jsx",         "// Reference pages: user, group, ci, home dashboard"),
     ("tweaks-panel.jsx", "// tweaks-panel.jsx"),
     ("catalog.jsx",      "// Service catalog — overview dashboard, catalog item list, and a per-item"),
+    ("logic.jsx",        "// Logic — business rules, client scripts, script includes, scheduled jobs,"),
     ("app.jsx",          "// Main app shell, sidebar, topbar, audit log overlay, router"),
 ]
 CSS_SOURCES = [

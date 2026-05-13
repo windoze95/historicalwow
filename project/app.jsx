@@ -14,6 +14,19 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showRelativeDates": true
 }/*EDITMODE-END*/;
 
+// Tables whose list view is handled by logic.jsx (and therefore should NOT
+// fall through to the generic ListPage). sys_ui_policy and sys_data_policy2
+// have list pages in logic.jsx but no custom record page — those records
+// still go to the generic RecordPage below, which is why
+// LOGIC_RECORD_TABLES is the smaller set.
+const LOGIC_LIST_TABLES = new Set([
+  'sys_script', 'sys_script_client', 'sys_script_include',
+  'sysauto_script', 'sys_ui_policy', 'sys_data_policy2',
+]);
+const LOGIC_RECORD_TABLES = new Set([
+  'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
+]);
+
 function applyTweaks(t) {
   const r = document.documentElement.style;
   // Lightness/chroma values match the dark palette in styles.css — the
@@ -71,7 +84,9 @@ function App() {
     if (route.view === 'list') window.AuditLog.push('list', route.table, '');
     if (route.view === 'home') window.AuditLog.push('view', 'home', 'Snapshot landing');
     if (route.view === 'service_catalog_home') window.AuditLog.push('view', 'service-catalog', 'Service catalog overview');
-  }, [route.view, route.table]);
+    if (route.view === 'logic_home') window.AuditLog.push('view', 'logic', 'Server/client-side logic overview');
+    if (route.view === 'sn_table_inspector') window.AuditLog.push('view', `sn-table/${route.name}`, `Logic on ${route.name}`);
+  }, [route.view, route.table, route.name]);
 
   if (!data.loadStatus.ready) {
     return <LoadingScreen status={data.loadStatus} />;
@@ -140,10 +155,22 @@ function App() {
         <main className="main">
           {route.view === 'home' && <window.HomePage openPalette={() => setPaletteOpen(true)} />}
           {route.view === 'service_catalog_home' && <window.CatalogOverviewPage />}
+          {route.view === 'logic_home' && <window.LogicHomePage />}
+          {route.view === 'sn_table_inspector' && <window.SnTableInspectorPage name={route.name} />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
-          {route.view === 'list' && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
+          {route.view === 'list' && route.table === 'sys_script' && <window.BusinessRuleListPage />}
+          {route.view === 'list' && route.table === 'sys_script_client' && <window.ClientScriptListPage />}
+          {route.view === 'list' && route.table === 'sys_script_include' && <window.ScriptIncludeListPage />}
+          {route.view === 'list' && route.table === 'sysauto_script' && <window.ScheduledJobListPage />}
+          {route.view === 'list' && route.table === 'sys_ui_policy' && <window.UIPolicyListPage />}
+          {route.view === 'list' && route.table === 'sys_data_policy2' && <window.DataPolicyListPage />}
+          {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
           {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} showRaw={showRaw} />}
-          {route.view === 'record' && route.table !== 'sc_cat_item' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
+          {route.view === 'record' && route.table === 'sys_script' && <window.BusinessRuleRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sys_script_client' && <window.ClientScriptRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_ci' && <window.CIRefPage sys_id={route.sys_id} />}
@@ -279,11 +306,20 @@ function Sidebar({ route }) {
     navItem('/users',           'user',     'Users',            'sys_user'),
     navItem('/groups',          'users',    'Groups',           'sys_user_group'),
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
+    { sep: 'Logic' },
+    { id: '/logic',             icon: 'settings', label: 'Overview' },
+    navItem('/business-rules',  'flag',     'Business rules',   'sys_script'),
+    navItem('/client-scripts',  'change',   'Client scripts',   'sys_script_client'),
+    navItem('/scheduled-jobs',  'history',  'Scheduled jobs',   'sysauto_script'),
+    navItem('/script-includes', 'book',     'Script includes',  'sys_script_include'),
+    navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
+    navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
   ].filter(it => it !== null);
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
     if (id === '/') return route.view === 'home';
     if (id === '/service-catalog') return route.view === 'service_catalog_home';
+    if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
     const map = {
       '/incidents': 'incident', '/changes': 'change_request',
       '/problems': 'problem', '/requests': 'sc_request',
@@ -295,6 +331,9 @@ function Sidebar({ route }) {
       '/stockrooms': 'alm_stockroom', '/assets': 'alm_asset',
       '/software': 'cmdb_ci_spkg', '/software-installs': 'cmdb_software_instance',
       '/users': 'sys_user', '/groups': 'sys_user_group', '/cis': 'cmdb_ci',
+      '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
+      '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
+      '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||
            (route.view === 'record' && map[id] === route.table) ||

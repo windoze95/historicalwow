@@ -177,6 +177,14 @@ REFERENCE_TABLES = {
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
     'cmdb_ci_spkg', 'cmdb_software_instance',
+    # Server-side logic — business rules, client scripts, script includes,
+    # scheduled scripts, UI policies, data policies. Lets the per-table
+    # inspector answer "what runs on this table?" after the source instance
+    # is gone.
+    'sys_script', 'sys_script_client', 'sys_script_include',
+    'sysauto_script',
+    'sys_ui_policy', 'sys_ui_policy_action',
+    'sys_data_policy2', 'sys_data_policy_rule',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 
@@ -371,13 +379,21 @@ def list_table(handler, table, params):
         if text_cols:
             where.append('(' + ' OR '.join(f'"{c}" LIKE ?' for c in text_cols) + ')')
             args.extend([like] * len(text_cols))
-    # Exact-match field filters: any other ?key=value treated as col=value
+    # Exact-match field filters: any other ?key=value treated as col=value.
+    # Many boolean-shaped columns are extracted as 1/0 by build_sqlite (the
+    # `1 if str(_v(r.get('active'))) ... == 'true' else 0` pattern) but the
+    # UI carries them around as the ServiceNow display value 'true'/'false'.
+    # Coerce so `?active=true` matches stored 1 — otherwise toggles like
+    # "active only" silently return zero rows across every list page.
     RESERVED = {'limit', 'offset', 'q', 'order_by', 'dir', 'slim'}
+    BOOL_COERCE = {'true': '1', 'false': '0'}
     for k, vs in params.items():
         if k in RESERVED or k not in cols:
             continue
+        val = vs[0] if vs else ''
+        val = BOOL_COERCE.get(val.lower(), val)
         where.append(f'"{k}" = ?')
-        args.append(vs[0] if vs else '')
+        args.append(val)
 
     # HR gate: hide incidents assigned to the HR group when the request
     # isn't unlocked. Only `incident` is gated — same table the user asked
@@ -685,6 +701,13 @@ CACHE_5MIN = {
     'item_option_new_set', 'io_set_item', 'topic',
     'std_change_proposal',
     'item_option_new', 'question', 'question_choice',
+    # Server-side logic. Rules + scripts + policies — definitions change
+    # rarely (much rarer than transactional task rows) so a 5-minute cache
+    # is safe even for the bigger tables here (sys_script ~7k rows).
+    'sys_script', 'sys_script_client', 'sys_script_include',
+    'sysauto_script',
+    'sys_ui_policy', 'sys_ui_policy_action',
+    'sys_data_policy2', 'sys_data_policy_rule',
 }
 
 

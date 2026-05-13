@@ -358,6 +358,86 @@ SCHEMAS = {
         ('sys_updated_on',   lambda r: _v(r.get('sys_updated_on'))),
     ],
 
+    # Server-side logic. Indexed columns are picked so the per-table inspector
+    # can answer "what runs on table X?" via /api/sys_script?collection=X (and
+    # the client-script analogue via /api/sys_script_client?table=X). The
+    # actual `script` body is intentionally NOT indexed — scripts are big and
+    # only ever read out of the raw envelope, never used in WHERE clauses.
+    'sys_script':          [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('collection',        lambda r: _v(r.get('collection'))),   # target table the rule runs on
+        ('when',              lambda r: _v(r.get('when'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('priority',          lambda r: _v(r.get('priority'))),
+        ('condition',         lambda r: _v(r.get('condition'))),
+        ('filter_condition',  lambda r: _v(r.get('filter_condition'))),
+    ],
+    'sys_script_client':   [
+        ('name',      lambda r: _v(r.get('name'))),
+        ('table',     lambda r: _v(r.get('table'))),
+        ('type',      lambda r: _v(r.get('type'))),
+        ('ui_type',   lambda r: _v(r.get('ui_type'))),
+        ('active',    lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('condition', lambda r: _v(r.get('condition'))),
+    ],
+    'sys_script_include':  [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('api_name',    lambda r: _v(r.get('api_name'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('description', lambda r: _v(r.get('description'))),
+    ],
+    # sysauto_script: scheduled jobs. run_* fields indexed so a "next run"
+    # view can sort/filter without scanning the raw envelope.
+    'sysauto_script':      [
+        ('name',             lambda r: _v(r.get('name'))),
+        ('active',           lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('run_type',         lambda r: _v(r.get('run_type'))),
+        ('run_period',       lambda r: _v(r.get('run_period'))),
+        ('run_time',         lambda r: _v(r.get('run_time'))),
+        ('run_dayofweek',    lambda r: _v(r.get('run_dayofweek'))),
+        ('run_dayofmonth',   lambda r: _v(r.get('run_dayofmonth'))),
+        ('conditional',      lambda r: 1 if str(_v(r.get('conditional')) or 'false').lower() == 'true' else 0),
+        ('condition',        lambda r: _v(r.get('condition'))),
+        ('run_as',           lambda r: _v(r.get('run_as'))),
+    ],
+    # sys_ui_policy: both `table` and `model_table` get populated depending
+    # on the platform version that authored the record — index both so the
+    # inspector can match policies for table X regardless of which slot the
+    # value lives in.
+    'sys_ui_policy':       [
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('table',             lambda r: _v(r.get('table'))),
+        ('model_table',       lambda r: _v(r.get('model_table'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('conditions',        lambda r: _v(r.get('conditions'))),
+        ('ui_type',           lambda r: _v(r.get('ui_type'))),
+        ('run_scripts',       lambda r: 1 if str(_v(r.get('run_scripts')) or 'false').lower() == 'true' else 0),
+    ],
+    # sys_ui_policy_action.ui_policy ↔ sys_ui_policy.sys_id (same pattern as
+    # catalog_ui_policy_action.ui_policy above).
+    'sys_ui_policy_action': [
+        ('ui_policy', lambda r: _v(r.get('ui_policy'))),
+        ('table',     lambda r: _v(r.get('table'))),
+        ('field',     lambda r: _v(r.get('field'))),
+        ('mandatory', lambda r: _v(r.get('mandatory'))),
+        ('visible',   lambda r: _v(r.get('visible'))),
+        ('disabled',  lambda r: _v(r.get('disabled'))),
+    ],
+    # Server-side data policies — enforced on every write regardless of UI.
+    'sys_data_policy2':    [
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('model_table',       lambda r: _v(r.get('model_table'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('conditions',        lambda r: _v(r.get('conditions'))),
+    ],
+    'sys_data_policy_rule': [
+        ('sys_data_policy', lambda r: _v(r.get('sys_data_policy'))),
+        ('table',           lambda r: _v(r.get('table'))),
+        ('field',           lambda r: _v(r.get('field'))),
+        ('mandatory',       lambda r: _v(r.get('mandatory'))),
+        ('disabled',        lambda r: _v(r.get('disabled'))),
+    ],
+
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific
     # additions on top so the list views can filter on what they care about.
     'alm_asset': [

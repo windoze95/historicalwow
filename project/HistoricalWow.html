@@ -6170,23 +6170,34 @@ Object.assign(window, {
   }
 
   // Script-include name index. Loaded lazily on first record view that
-  // needs it, then cached for the rest of the session. Each entry:
-  // { sys_id, name, api_name, all_names: [...], _pattern: RegExp }.
-  // _pattern is a single combined alternation across every name × every
-  // call-shape variant we care about, pre-compiled so the hot scan loop
-  // does one regex test per include rather than rebuilding a regex per
-  // (name × body) pair.
+  // needs it, then cached for the rest of the session.
   //
-  // The earlier word-boundary scan matched on any mention of an
-  // include's name — including comments, string literals, error
-  // messages, and identifiers that happened to coincide. Once a
-  // false-positive include landed in the cascade, its own body named
-  // dozens more helpers in passing, and the recursive walk dragged
-  // them all in. Call-shape patterns make a match mean "we believe
-  // this rule actually calls this include" rather than "this name
-  // appeared somewhere in the script text", so the cascade follows
-  // the real dependency graph instead of the dictionary of common
-  // identifiers.
+  // Two-pass scan. The previous eager-precompile approach kept one
+  // RegExp per include in memory — at ~thousands of includes that's
+  // enough compiled-pattern state to OOM the tab on a heavy table.
+  // Instead:
+  //
+  //   (1) A single coarse alternation regex covers every include name,
+  //       partitioned into a few buckets so any one regex stays under
+  //       V8's pattern-size envelope. Test once per body to find any
+  //       name occurrence anywhere — comments included, fine.
+  //   (2) A name → include[] map turns each coarse hit into a
+  //       candidate include set (a name can map to multiple records
+  //       when the snapshot has duplicates across scopes).
+  //   (3) Strict call-shape patterns are compiled *lazily* per
+  //       candidate include — most includes are never candidates so
+  //       their RegExp is never constructed.
+  //
+  // Result: peak compiled-regex memory is the coarse buckets (~a
+  // dozen) plus however many candidate strict patterns the active
+  // table happens to touch (typically <200), not thousands.
+  //
+  // What "call-shape" means: a match requires the include's name to
+  // appear in a position that looks like an actual call (constructor,
+  // dotted method, prototype extension, class/object extension,
+  // gs.include / GlideAjax string literal). Bare mentions in comments
+  // or unrelated identifiers don't qualify, which keeps the recursive
+  // cascade from following the dictionary of common identifiers.
   const CALL_SHAPE_BUILDERS = [
     (e) => 'new\\s+' + e + '\\s*\\(',
     (e) => '\\b' + e + '\\.[A-Za-z_$][\\w$]*\\s*\\(',
@@ -6194,31 +6205,46 @@ Object.assign(window, {
     (e) => '\\bextends\\s+' + e + '\\b',
     (e) => '\\bextendsObject\\s*\\(\\s*' + e + '\\b',
     (e) => "gs\\.include\\(\\s*['\"]" + e + "['\"]\\s*\\)",
-    // Client-side calls into client_callable script includes go through
-    // GlideAjax with the include's name as a string literal — that
-    // shape isn't a direct constructor or dotted call on the include
-    // itself, so without this builder client dependencies would
-    // disappear from the cascade and the referenced-by list.
     (e) => "new\\s+GlideAjax\\s*\\(\\s*['\"]" + e + "['\"]",
   ];
-  function compileCallShapePattern(names) {
+  function escRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  function buildStrictPattern(allNames) {
     const parts = [];
-    for (const n of names) {
+    for (const n of allNames) {
       if (!n || n.length < 3) continue;
-      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      for (const build of CALL_SHAPE_BUILDERS) parts.push(build(esc));
+      const e = escRegex(n);
+      for (const build of CALL_SHAPE_BUILDERS) parts.push(build(e));
     }
     if (!parts.length) return null;
-    return new RegExp(parts.join('|'));
+    try { return new RegExp(parts.join('|')); }
+    catch (_) { return null; }
+  }
+  // Partition into ~500-name buckets so the joined alternation stays
+  // small. V8 will compile each into an efficient trie-like NFA; a
+  // single 6800-way alternation can refuse to compile on some
+  // versions.
+  function buildCoarseBuckets(allNamesSorted) {
+    const BUCKET = 500;
+    const out = [];
+    for (let i = 0; i < allNamesSorted.length; i += BUCKET) {
+      const chunk = allNamesSorted.slice(i, i + BUCKET).map(escRegex);
+      if (!chunk.length) continue;
+      try { out.push(new RegExp('\\b(?:' + chunk.join('|') + ')\\b', 'g')); }
+      catch (_) { /* skip bucket on compile failure rather than fail all */ }
+    }
+    return out;
   }
   let _includeIndex = null;
+  let _scanCtx = null;
   function getIncludeIndex() {
     if (_includeIndex) return _includeIndex;
     _includeIndex = fetchAllRows('sys_script_include', {
       order_by: 'name', dir: 'asc',
     }).then(r => {
-      if (r.missing) return [];
-      return r.rows.map(row => {
+      if (r.missing) { _scanCtx = { coarseBuckets: [], nameMap: new Map() }; return []; }
+      const list = r.rows.map(row => {
         const sid = row.sys_id;
         const name = String(row.name || '').trim();
         const api  = String(row.api_name || '').trim();
@@ -6226,20 +6252,38 @@ Object.assign(window, {
         if (name) names.add(name);
         if (api) {
           names.add(api);
-          // global.MyUtils → MyUtils (matches when callers omit scope).
           const tail = api.split('.').pop();
           if (tail) names.add(tail);
         }
-        const all_names = [...names];
         return {
-          sys_id: sid,
-          name,
-          api_name: api,
-          all_names,
-          _pattern: compileCallShapePattern(all_names),
+          sys_id: sid, name, api_name: api, all_names: [...names],
+          _pattern: undefined,   // lazy-compiled in scanForIncludes
         };
       });
-    }).catch(() => []);
+      // Collect every name worth scanning, deduped. Sort by length
+      // descending so V8's regex alternation prefers longer matches
+      // (avoids "Schedule" winning over "ScheduleEntry" on input
+      // where both appear).
+      const nameSet = new Set();
+      const nameMap = new Map();
+      for (const inc of list) {
+        for (const n of inc.all_names) {
+          if (!n || n.length < 3) continue;
+          nameSet.add(n);
+          if (!nameMap.has(n)) nameMap.set(n, []);
+          nameMap.get(n).push(inc);
+        }
+      }
+      const sorted = [...nameSet].sort((a, b) => b.length - a.length || a.localeCompare(b));
+      _scanCtx = {
+        coarseBuckets: buildCoarseBuckets(sorted),
+        nameMap,
+      };
+      return list;
+    }).catch(() => {
+      _scanCtx = { coarseBuckets: [], nameMap: new Map() };
+      return [];
+    });
     return _includeIndex;
   }
 
@@ -6286,23 +6330,37 @@ Object.assign(window, {
     return _reverseIncludeIndex;
   }
 
-  // Scan an arbitrary script body for include references. Returns the
-  // sys_include row objects (deduped) whose pre-compiled call-shape
-  // pattern matches `text`. See compileCallShapePattern for the kinds
-  // of usage we recognize — constructor invocations, dotted method
-  // calls, prototype extension, class/object extension, gs.include().
-  // Individual tests are isolated: a single pathological pattern can't
-  // poison the whole scan (the cascade tests thousands of patterns per
-  // body and dropping one is better than failing the whole prompt).
-  function scanForIncludes(text, includes) {
-    if (!text || !includes || !includes.length) return [];
+  // Scan an arbitrary script body for include references using the
+  // two-pass approach: bucketed coarse alternation finds candidates
+  // by bare-name occurrence, then we lazy-compile and test each
+  // candidate's strict call-shape pattern. Memory at any moment is
+  // bounded by the candidate count (typically <200) rather than the
+  // full include count (thousands).
+  //
+  // The `includes` parameter is accepted for back-compat with older
+  // callers but ignored — the scan reads from the module-level
+  // _scanCtx populated by getIncludeIndex().
+  function scanForIncludes(text /*, includes */) {
+    if (!text || !_scanCtx) return [];
+    const candidates = new Set();
+    for (const re of _scanCtx.coarseBuckets) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        const incs = _scanCtx.nameMap.get(m[0]);
+        if (incs) for (const inc of incs) candidates.add(inc);
+      }
+    }
     const hits = new Map();
-    for (const inc of includes) {
+    for (const inc of candidates) {
+      if (inc._pattern === undefined) {
+        // Lazy compile, cached on the include record itself. `false`
+        // marks "tried and failed", `null` marks "no eligible names".
+        inc._pattern = buildStrictPattern(inc.all_names) || false;
+      }
       if (!inc._pattern) continue;
       try {
-        if (inc._pattern.test(text)) {
-          hits.set(inc.sys_id, inc);
-        }
+        if (inc._pattern.test(text)) hits.set(inc.sys_id, inc);
       } catch (_) {
         // Per-include failure — skip and keep scanning.
       }

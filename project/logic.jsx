@@ -325,12 +325,57 @@
     return [...hits.values()];
   }
 
+  // gs.getProperty('foo.bar') / gs.getProperty("foo.bar", default) — scrape
+  // every literal property name out of a script body. Returns deduped names.
+  // Matches the most common forms only; `gs.getProperty(varName)` and other
+  // dynamic lookups are skipped on purpose (we can't know the value).
+  // Regex is constructed per call so concurrent scans don't share lastIndex.
+  function scanForProperties(text) {
+    if (!text) return [];
+    const rx = /gs\.getProperty\s*\(\s*['"]([^'"]+)['"]/g;
+    const names = new Set();
+    let m;
+    while ((m = rx.exec(text)) !== null) {
+      const n = String(m[1] || '').trim();
+      if (n) names.add(n);
+    }
+    return [...names];
+  }
+
+  // Flow / subflow / action invocations from server scripts. Three
+  // call shapes seen in the wild:
+  //   sn_fd.FlowAPI.get('flow_name')           // also getRunner / startFlow / startSubflow / startActionFromRecord
+  //   hub.executeFlow('flow_name')             // legacy wrapper
+  //   new SubflowExecutor('flow_name')         // older orchestration helper
+  // The captured string is matched against sys_hub_flow.name AND
+  // sys_hub_flow.internal_name later. Regexes are per-call to avoid
+  // concurrent-scan lastIndex races.
+  function scanForFlows(text) {
+    if (!text) return [];
+    const rxs = [
+      /sn_fd\.FlowAPI\.(?:get(?:Runner)?|startFlow|startSubflow|startActionFromRecord)\s*\(\s*['"]([^'"]+)['"]/g,
+      /hub\.executeFlow\s*\(\s*['"]([^'"]+)['"]/g,
+      /new\s+SubflowExecutor\s*\(\s*['"]([^'"]+)['"]/g,
+    ];
+    const names = new Set();
+    for (const rx of rxs) {
+      let m;
+      while ((m = rx.exec(text)) !== null) {
+        const n = String(m[1] || '').trim();
+        if (n) names.add(n);
+      }
+    }
+    return [...names];
+  }
+
   const L = {
     fetchTable,
     fetchAllRows,
     getIncludeIndex,
     getReverseIncludeIndex,
     scanForIncludes,
+    scanForProperties,
+    scanForFlows,
     fetchRecord: (table, sys_id) => data.fetchRecord(table, sys_id),
     fetchTotalCount: (table) => fetchCached('count_' + table, async () => {
       const r = await fetchTable(table, { limit: 1 });
@@ -1645,6 +1690,14 @@ include vs. stock OOTB utility), say so explicitly rather than
 guessing. Re-build with "Resolve script includes" enabled to get the
 user-modified helpers inline.`}
 
+**About the supporting context below.** The ACLs, UI actions, dictionary
+entries, choice values, system properties, and flows listed in this
+prompt are **not exhaustive** for the table — they're filtered to active
+records and to what a literal text scan of the rule bodies above could
+resolve. Anything you'd expect to see and don't can be assumed OOTB or
+absent from this snapshot; reason from platform defaults rather than
+flagging the omission.
+
 ---
 
 ## Table
@@ -1743,6 +1796,177 @@ user-modified helpers inline.`}
       }
     }
 
+    // ACLs — name covers <table>, <table>.<field>, <table>.<action>. Sort
+    // by name so the dotted hierarchy reads top-down (incident, then
+    // incident.assigned_to, then incident.action_x).
+    const acls = activeRows(d.acls).slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    push('');
+    push(`## ACLs — ${acls.length} active`);
+    for (const a of acls) {
+      push('');
+      const cond = a.condition ? String(a.condition).trim() : '';
+      const scr  = a.script ? String(a.script).trim() : '';
+      const meta = [
+        a.name ? `name=${a.name}` : null,
+        a.operation ? `operation=${a.operation}` : null,
+        isTrue(a.admin_overrides) ? 'admin_overrides=true' : null,
+      ].filter(Boolean).join(', ');
+      // Pure declarative ACLs (no script and no condition) — single line.
+      if (!cond && !scr) {
+        push(`- ${meta}`);
+        continue;
+      }
+      push(`### "${a.name || '(unnamed)'}" — ${meta}`);
+      if (cond) push(`Condition: \`${cond}\``);
+      if (scr) {
+        // First ~30 lines is enough to see the gist of any access-decision
+        // helper; full bodies blow up the prompt and rarely add insight.
+        const lines30 = scr.split('\n').slice(0, 30).join('\n');
+        push('');
+        push(code(lines30));
+        const total = scr.split('\n').length;
+        if (total > 30) push(`(script truncated — ${total - 30} more line(s))`);
+      }
+    }
+
+    // UI actions — sort by order then name. Each gets metadata + script.
+    const uiact = activeRows(d.uiact).slice().sort(byOrder);
+    push('');
+    push(`## UI Actions — ${uiact.length} active`);
+    for (const u of uiact) {
+      push('');
+      const where = [
+        isTrue(u.form_button)        ? 'form_button'        : null,
+        isTrue(u.form_link)          ? 'form_link'          : null,
+        isTrue(u.form_context_menu)  ? 'form_context_menu'  : null,
+        isTrue(u.list_button)        ? 'list_button'        : null,
+        isTrue(u.list_choice)        ? 'list_choice'        : null,
+        isTrue(u.list_context_menu)  ? 'list_context_menu'  : null,
+        isTrue(u.list_banner_button) ? 'list_banner_button' : null,
+        isTrue(u.show_insert)        ? 'show_insert'        : null,
+        isTrue(u.show_update)        ? 'show_update'        : null,
+        isTrue(u.client)             ? 'client'             : null,
+        isTrue(u.isolate_script)     ? 'isolate_script'     : null,
+      ].filter(Boolean).join(', ');
+      const meta = [
+        u.order != null ? `order=${u.order}` : null,
+        u.action_name ? `action_name=${u.action_name}` : null,
+        u.hint ? `hint=${u.hint}` : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${u.name || '(unnamed)'}" — ${meta}`);
+      if (where) push(`Appears: ${where}`);
+      if (u.condition) push(`Condition: \`${u.condition}\``);
+      if (u.onclick) push(`onclick: \`${u.onclick}\``);
+      if (u.comments) push(`Comments: ${u.comments}`);
+      if (u.script) push(code(u.script));
+    }
+
+    // Field definitions (sys_dictionary). Tabular list, no fences.
+    const dictRows = (d.dict?.rows || []).slice()
+      .sort((a, b) => String(a.element || '').localeCompare(String(b.element || '')));
+    push('');
+    push(`## Field definitions (sys_dictionary) — ${dictRows.length}`);
+    if (d.dict?.missing) push('_(sys_dictionary not in this snapshot — fields are not enumerated.)_');
+    push('');
+    for (const f of dictRows) {
+      const parts = [
+        `element=\`${f.element || '?'}\``,
+        f.internal_type ? `type=${f.internal_type}` : null,
+        f.column_label ? `label="${f.column_label}"` : null,
+        isTrue(f.mandatory) ? 'mandatory=true' : null,
+        isTrue(f.read_only) ? 'read_only=true' : null,
+        f.default_value ? `default=\`${String(f.default_value).slice(0, 80)}\`` : null,
+        f.reference ? `reference=${f.reference}` : null,
+        f.choice_table ? `choice_table=${f.choice_table}` : null,
+        f.max_length ? `max_length=${f.max_length}` : null,
+      ].filter(Boolean).join(', ');
+      push(`- ${parts}`);
+    }
+
+    // sys_dictionary_override — only fields with at least one *_override flag
+    // true. Show only the columns that have a value (mandatory_override,
+    // read_only_override, default_value_override).
+    const overRows = ((d.dict?.overrides?.rows) || []).slice()
+      .sort((a, b) => String(a.element || '').localeCompare(String(b.element || '')));
+    push('');
+    push(`## Field overrides (sys_dictionary_override) — ${overRows.length}`);
+    if (overRows.length) push('');
+    for (const o of overRows) {
+      const parts = [`element=\`${o.element || '?'}\``];
+      if (isTrue(o.mandatory_override)) parts.push(`mandatory_override → ${o.mandatory ?? 'true'}`);
+      if (isTrue(o.read_only_override)) parts.push(`read_only_override → ${o.read_only ?? 'true'}`);
+      if (isTrue(o.default_value_override)) parts.push(`default_value_override → \`${String(o.default_value || '').slice(0, 80)}\``);
+      push(`- ${parts.join(', ')}`);
+    }
+
+    // sys_choice — group by element, list value → label per row.
+    const choiceRows = (d.choices?.rows || []);
+    const choicesByElement = new Map();
+    for (const c of choiceRows) {
+      const el = String(c.element || '(no element)');
+      if (!choicesByElement.has(el)) choicesByElement.set(el, []);
+      choicesByElement.get(el).push(c);
+    }
+    const choiceEls = [...choicesByElement.keys()].sort();
+    push('');
+    push(`## Choice values (sys_choice) — ${choiceRows.length} across ${choiceEls.length} field(s)`);
+    for (const el of choiceEls) {
+      const rows = choicesByElement.get(el).slice().sort((a, b) => {
+        const sa = Number(a.sequence ?? 9999);
+        const sb = Number(b.sequence ?? 9999);
+        if (sa !== sb) return sa - sb;
+        return String(a.label || '').localeCompare(String(b.label || ''));
+      });
+      push('');
+      push(`### \`${el}\``);
+      for (const c of rows) {
+        const inactive = isTrue(c.inactive) ? ' (inactive)' : '';
+        push(`- \`${c.value ?? ''}\` → ${c.label || '(no label)'}${inactive}`);
+      }
+    }
+
+    // System properties referenced by scan. The inspector resolved each
+    // scanned name against /api/sys_properties and dropped misses (likely
+    // OOTB platform properties not in the snapshot). Header notes the gap
+    // so the model knows the section is intentionally non-exhaustive.
+    const propRows = (d.props?.rows || []).slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    push('');
+    push(`## System properties referenced — ${propRows.length}`);
+    if (d.props?.scanned != null && d.props.scanned > propRows.length) {
+      push(`_(${d.props.scanned} property name(s) found in rule bodies; ${d.props.scanned - propRows.length} not present in this snapshot — assume OOTB defaults.)_`);
+    }
+    for (const p of propRows) {
+      push('');
+      const meta = [
+        p.type ? `type=${p.type}` : null,
+      ].filter(Boolean).join(', ');
+      push(`- \`${p.name}\` = \`${p.value ?? ''}\`${meta ? ` (${meta})` : ''}`);
+      if (p.description) push(`  ${p.description}`);
+    }
+
+    // Flows referenced by scan. One line per flow — we deliberately don't
+    // embed the flow JSON; it's huge and the model can reason from name +
+    // description for almost every diagnostic question.
+    const flowRows = (d.flows?.rows || []).slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    push('');
+    push(`## Flows referenced — ${flowRows.length}`);
+    if (d.flows?.scanned != null && d.flows.scanned > flowRows.length) {
+      push(`_(${d.flows.scanned} flow name(s) found in rule bodies; ${d.flows.scanned - flowRows.length} not present in this snapshot — assume OOTB.)_`);
+    }
+    for (const f of flowRows) {
+      push('');
+      const meta = [
+        f.internal_name ? `internal_name=\`${f.internal_name}\`` : null,
+        f.type ? `type=${f.type}` : null,
+        isTrue(f.active) ? 'active' : 'inactive',
+      ].filter(Boolean).join(', ');
+      push(`- "${f.name || '(unnamed)'}" — ${meta}`);
+      if (f.description) push(`  ${f.description}`);
+    }
+
     return lines.join('\n') + '\n';
   }
 
@@ -1750,13 +1974,25 @@ user-modified helpers inline.`}
     const [tab, setTab] = useState('br');
     const [d, setD] = useState({});
     // Track which table backs each tab so NotInSnapshot can be honest.
+    // sys_security_acl: the /api list filter is exact match, so we use q=
+    // and post-filter client-side to name === <name> | name.startsWith(<name>.).
+    // sys_dictionary + sys_dictionary_override share the 'dict' tab — both
+    // filter on `name` exact.
+    // props/flows are derived from rule script bodies, fetched after BR/CS/UIP
+    // tabs settle; no static filter.
     const TABS = useMemo(() => [
-      { id: 'br',   label: 'Business rules',     table: 'sys_script',           filters: { collection: name }, columns: 'br' },
-      { id: 'cs',   label: 'Client scripts',     table: 'sys_script_client',    filters: { table: name },      columns: 'cs' },
-      { id: 'uip',  label: 'UI policies',        table: 'sys_ui_policy',                                       columns: 'uip', special: 'uip' },
-      { id: 'uipa', label: 'UI policy actions',  table: 'sys_ui_policy_action', filters: { table: name },      columns: 'uipa' },
-      { id: 'dp',   label: 'Data policies',      table: 'sys_data_policy2',     filters: { model_table: name }, columns: 'dp' },
-      { id: 'dpr',  label: 'Data policy rules',  table: 'sys_data_policy_rule', filters: { table: name },      columns: 'dpr' },
+      { id: 'br',      label: 'Business rules',        table: 'sys_script',              filters: { collection: name }, columns: 'br' },
+      { id: 'cs',      label: 'Client scripts',        table: 'sys_script_client',       filters: { table: name },      columns: 'cs' },
+      { id: 'uip',     label: 'UI policies',           table: 'sys_ui_policy',                                          columns: 'uip', special: 'uip' },
+      { id: 'uipa',    label: 'UI policy actions',     table: 'sys_ui_policy_action',    filters: { table: name },      columns: 'uipa' },
+      { id: 'dp',      label: 'Data policies',         table: 'sys_data_policy2',        filters: { model_table: name }, columns: 'dp' },
+      { id: 'dpr',     label: 'Data policy rules',     table: 'sys_data_policy_rule',    filters: { table: name },      columns: 'dpr' },
+      { id: 'acls',    label: 'ACLs',                  table: 'sys_security_acl',                                       columns: 'acls', special: 'acls' },
+      { id: 'uiact',   label: 'UI Actions',            table: 'sys_ui_action',           filters: { table: name },      columns: 'uiact' },
+      { id: 'dict',    label: 'Dictionary',            table: 'sys_dictionary',                                         columns: 'dict',  special: 'dict' },
+      { id: 'choices', label: 'Choices',               table: 'sys_choice',              filters: { name },             columns: 'choices' },
+      { id: 'props',   label: 'Properties (referenced)', table: 'sys_properties',                                       columns: 'props', special: 'derived' },
+      { id: 'flows',   label: 'Flows (referenced)',    table: 'sys_hub_flow',                                           columns: 'flows', special: 'derived' },
     ], [name]);
 
     useEffect(() => {
@@ -1764,6 +2000,7 @@ user-modified helpers inline.`}
       setD({});
       window.AuditLog.push('view', `sn-table/${name}`, `Logic on ${name}`);
       for (const t of TABS) {
+        if (t.special === 'derived') continue;   // resolved after BR/CS/UIP settle, see effect below
         const set = (val) => { if (!cancel) setD(prev => ({ ...prev, [t.id]: val })); };
         if (t.special === 'uip') {
           // sys_ui_policy splits its target table across two columns
@@ -1779,6 +2016,42 @@ user-modified helpers inline.`}
             const rows = [...seen.values()];
             set({ rows, total: rows.length, missing: false });
           });
+        } else if (t.special === 'acls') {
+          // ACLs cover a hierarchy: name == <table>, name == <table>.<field>,
+          // name == <table>.<action>. The list endpoint only matches exact on
+          // `name`, so we use q= (which searches indexed columns including
+          // name) and post-filter to the table prefix. q is permissive — a
+          // table named "incident" will surface unrelated ACLs whose name
+          // contains "incident" too — so the post-filter below is required.
+          L.fetchTable('sys_security_acl', { limit: 500, q: name, order_by: 'name', dir: 'asc' })
+            .then(r => {
+              if (r.missing) { set(r); return; }
+              const prefix = name + '.';
+              const rows = (r.rows || []).filter(row => {
+                const n = String(flat(row.name) || '');
+                return n === name || n.startsWith(prefix);
+              });
+              set({ rows, total: rows.length, missing: false });
+            })
+            .catch(() => set({ rows: [], total: 0, missing: true }));
+        } else if (t.special === 'dict') {
+          // The Dictionary tab folds two tables together for display purposes.
+          // The base sys_dictionary rows describe each field; sys_dictionary_override
+          // rows tweak inherited definitions. They share the same `name` filter.
+          Promise.all([
+            L.fetchTable('sys_dictionary',          { limit: 1000, filters: { name }, order_by: 'element', dir: 'asc' }),
+            L.fetchTable('sys_dictionary_override', { limit: 500,  filters: { name }, order_by: 'element', dir: 'asc' }),
+          ]).then(([base, over]) => {
+            // missing means "table not in this snapshot". Overrides being
+            // missing is fine — a table can have a dictionary without overrides.
+            const dictMissing = !!base.missing;
+            set({
+              rows: base.rows || [],
+              total: (base.total ?? (base.rows || []).length),
+              missing: dictMissing,
+              overrides: { rows: over.rows || [], total: (over.total ?? (over.rows || []).length), missing: !!over.missing },
+            });
+          }).catch(() => set({ rows: [], total: 0, missing: true, overrides: { rows: [], total: 0, missing: true } }));
         } else {
           L.fetchTable(t.table, { limit: 500, filters: t.filters, order_by: 'name', dir: 'asc' })
             .then(set)
@@ -1787,6 +2060,86 @@ user-modified helpers inline.`}
       }
       return () => { cancel = true; };
     }, [TABS, name]);
+
+    // Derived tabs (props, flows) depend on the script bodies fetched above.
+    // Wait until BR + CS + UIP have all settled (rows array populated, even if
+    // empty), then scan their bodies for property / flow references and look
+    // each one up. The fetch is cached client-side via fetchTable so a re-render
+    // doesn't re-resolve.
+    useEffect(() => {
+      const brReady  = !!(d.br  && Array.isArray(d.br.rows));
+      const csReady  = !!(d.cs  && Array.isArray(d.cs.rows));
+      const uipReady = !!(d.uip && Array.isArray(d.uip.rows));
+      if (!brReady || !csReady || !uipReady) return;
+      let cancel = false;
+      const setProps = (v) => { if (!cancel) setD(prev => ({ ...prev, props: v })); };
+      const setFlows = (v) => { if (!cancel) setD(prev => ({ ...prev, flows: v })); };
+      // Collect every script body in scope on this table. Mirrors seedScriptsFor
+      // but inlined here because we want raw text streams — not the labeled
+      // shape the cascade walker uses.
+      const bodies = [];
+      for (const r of (d.br?.rows || []))  { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); if (r.filter_condition) bodies.push(String(r.filter_condition)); }
+      for (const r of (d.cs?.rows || []))  { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); }
+      for (const p of (d.uip?.rows || [])) { if (p.script_true) bodies.push(String(p.script_true)); if (p.script_false) bodies.push(String(p.script_false)); }
+
+      const propNames = new Set();
+      const flowNames = new Set();
+      for (const body of bodies) {
+        for (const n of L.scanForProperties(body)) propNames.add(n);
+        for (const n of L.scanForFlows(body))      flowNames.add(n);
+      }
+
+      // sys_properties: one fetch per scanned name (the API filter is exact
+      // on `name`). Properties not in the snapshot resolve to no rows; we
+      // record them as "scanned" so the prompt builder can list them as
+      // "(referenced but not captured)" if useful. Currently we just drop.
+      (async () => {
+        if (!propNames.size) { setProps({ rows: [], total: 0, missing: false, scanned: 0 }); return; }
+        try {
+          const results = await Promise.all([...propNames].map(n =>
+            L.fetchTable('sys_properties', { limit: 5, filters: { name: n } })
+              .then(r => (r.rows || [])[0] || null)
+              .catch(() => null)
+          ));
+          const rows = results.filter(Boolean);
+          // Any single-name lookup returning missing means the table itself
+          // isn't in the snapshot — treat the whole tab as missing.
+          // Detect by checking if every lookup failed and the API path is dead.
+          const probe = await L.fetchTable('sys_properties', { limit: 1 });
+          if (probe.missing) { setProps({ rows: [], total: 0, missing: true, scanned: propNames.size }); return; }
+          setProps({ rows, total: rows.length, missing: false, scanned: propNames.size });
+        } catch (_) {
+          setProps({ rows: [], total: 0, missing: true, scanned: propNames.size });
+        }
+      })();
+
+      // sys_hub_flow: each scanned name might match either `name` (display)
+      // or `internal_name` (API token). Try both for every name.
+      (async () => {
+        if (!flowNames.size) { setFlows({ rows: [], total: 0, missing: false, scanned: 0 }); return; }
+        try {
+          const probe = await L.fetchTable('sys_hub_flow', { limit: 1 });
+          if (probe.missing) { setFlows({ rows: [], total: 0, missing: true, scanned: flowNames.size }); return; }
+          const results = await Promise.all([...flowNames].map(async (n) => {
+            const [byName, byInt] = await Promise.all([
+              L.fetchTable('sys_hub_flow', { limit: 5, filters: { name: n } }).catch(() => ({ rows: [] })),
+              L.fetchTable('sys_hub_flow', { limit: 5, filters: { internal_name: n } }).catch(() => ({ rows: [] })),
+            ]);
+            return (byName.rows || [])[0] || (byInt.rows || [])[0] || null;
+          }));
+          // De-dupe by sys_id — a flow whose name == internal_name will
+          // appear in both lookups.
+          const seen = new Map();
+          for (const f of results) if (f && f.sys_id && !seen.has(f.sys_id)) seen.set(f.sys_id, f);
+          const rows = [...seen.values()];
+          setFlows({ rows, total: rows.length, missing: false, scanned: flowNames.size });
+        } catch (_) {
+          setFlows({ rows: [], total: 0, missing: true, scanned: flowNames.size });
+        }
+      })();
+
+      return () => { cancel = true; };
+    }, [d.br, d.cs, d.uip]);
 
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 
@@ -1819,12 +2172,18 @@ user-modified helpers inline.`}
           <div className="section">
             <InspectorTabs tabs={TABS} active={tab} onChange={setTab} totals={d} />
             <div style={{ paddingTop: 8 }}>
-              {tab === 'br'   && <InspectorRows r={r('br')}   columns="br"   table="sys_script" />}
-              {tab === 'cs'   && <InspectorRows r={r('cs')}   columns="cs"   table="sys_script_client" />}
-              {tab === 'uip'  && <InspectorRows r={r('uip')}  columns="uip"  table="sys_ui_policy" />}
-              {tab === 'uipa' && <InspectorRows r={r('uipa')} columns="uipa" table="sys_ui_policy_action" />}
-              {tab === 'dp'   && <InspectorRows r={r('dp')}   columns="dp"   table="sys_data_policy2" />}
-              {tab === 'dpr'  && <InspectorRows r={r('dpr')}  columns="dpr"  table="sys_data_policy_rule" />}
+              {tab === 'br'      && <InspectorRows r={r('br')}      columns="br"      table="sys_script" />}
+              {tab === 'cs'      && <InspectorRows r={r('cs')}      columns="cs"      table="sys_script_client" />}
+              {tab === 'uip'     && <InspectorRows r={r('uip')}     columns="uip"     table="sys_ui_policy" />}
+              {tab === 'uipa'    && <InspectorRows r={r('uipa')}    columns="uipa"    table="sys_ui_policy_action" />}
+              {tab === 'dp'      && <InspectorRows r={r('dp')}      columns="dp"      table="sys_data_policy2" />}
+              {tab === 'dpr'     && <InspectorRows r={r('dpr')}     columns="dpr"     table="sys_data_policy_rule" />}
+              {tab === 'acls'    && <InspectorRows r={r('acls')}    columns="acls"    table="sys_security_acl" />}
+              {tab === 'uiact'   && <InspectorRows r={r('uiact')}   columns="uiact"   table="sys_ui_action" />}
+              {tab === 'dict'    && <InspectorRows r={r('dict')}    columns="dict"    table="sys_dictionary" />}
+              {tab === 'choices' && <InspectorRows r={r('choices')} columns="choices" table="sys_choice" />}
+              {tab === 'props'   && <InspectorRows r={r('props')}   columns="props"   table="sys_properties" />}
+              {tab === 'flows'   && <InspectorRows r={r('flows')}   columns="flows"   table="sys_hub_flow" />}
             </div>
           </div>
 
@@ -2031,7 +2390,10 @@ user-modified helpers inline.`}
     const [menuOpen, setMenuOpen] = useState(false);
     const [opts, setOpts]         = useState({ resolveIncludes: false });
     const anchorRef               = React.useRef(null);
-    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr'].map(k => {
+    // props/flows are derived after BR/CS/UIP settle, so they finish last —
+    // including them in the readiness gate keeps the user from copying a
+    // partial prompt that's missing the references-by-scan sections.
+    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr', 'acls', 'uiact', 'dict', 'choices', 'props', 'flows'].map(k => {
       const e = d[k];
       return !!(e && Array.isArray(e.rows));
     });
@@ -2466,6 +2828,269 @@ user-modified helpers inline.`}
         </table>
       );
     }
+    if (columns === 'acls') {
+      // ACLs: name carries the dotted hierarchy (table, table.field, table.action).
+      // Highlight operation + a "scripted?" chip; truncate long conditions.
+      return (
+        <table className="dt">
+          <thead><tr>
+            <th>Name</th>
+            <th style={{ width: 90 }}>Operation</th>
+            <th style={{ width: 80 }}>Active</th>
+            <th style={{ width: 90 }}>Admin override</th>
+            <th>Condition / script</th>
+          </tr></thead>
+          <tbody>
+            {r.rows.map(row => {
+              const cond = flat(row.condition) || '';
+              const scr  = flat(row.script) || '';
+              return (
+                <tr key={row.sys_id}>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.name) || '—'}</td>
+                  <td>{flat(row.operation) ? <span style={chip}>{flat(row.operation)}</span> : <span className="muted">—</span>}</td>
+                  <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+                  <td>{isTrue(flat(row.admin_overrides)) ? <span className="chip blue">yes</span> : <span className="muted">—</span>}</td>
+                  <td style={{ maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 }}>
+                    {scr ? <span className="chip violet">scripted</span> : null}
+                    {cond ? <span className="mono" style={{ marginLeft: scr ? 6 : 0, color: 'var(--fg-3)' }}>{cond}</span> : (scr ? null : <span className="muted">—</span>)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      );
+    }
+    if (columns === 'uiact') {
+      // UI actions: where they appear (form button, list button, link, etc.)
+      // is encoded as multiple boolean columns. Render the most useful pair
+      // and let the chip palette do the rest.
+      return (
+        <table className="dt">
+          <thead><tr>
+            <th>Name</th>
+            <th style={{ width: 90 }}>Form</th>
+            <th style={{ width: 90 }}>List</th>
+            <th style={{ width: 80 }}>Order</th>
+            <th style={{ width: 80 }}>Active</th>
+            <th>Condition</th>
+          </tr></thead>
+          <tbody>
+            {r.rows.map(row => (
+              <tr key={row.sys_id}>
+                <td><NameWithDesc name={flat(row.name)} desc={flat(row.comments) || flat(row.hint)} /></td>
+                <td>{isTrue(flat(row.form_button)) || isTrue(flat(row.form_link)) || isTrue(flat(row.form_context_menu)) ? <span className="chip blue">yes</span> : <span className="muted">—</span>}</td>
+                <td>{isTrue(flat(row.list_button)) || isTrue(flat(row.list_choice)) || isTrue(flat(row.list_context_menu)) || isTrue(flat(row.list_banner_button)) ? <span className="chip blue">yes</span> : <span className="muted">—</span>}</td>
+                <td className="num mono">{flat(row.order) ?? '—'}</td>
+                <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+                <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-3)' }}>
+                  {flat(row.condition) || <span className="muted">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    if (columns === 'dict') {
+      // Two stacked sub-tables. Base sys_dictionary is the per-field source
+      // of truth; sys_dictionary_override layers tweaks on top (for child
+      // tables that change a parent column's mandatory / default / read_only).
+      const overrides = r.overrides || { rows: [], total: 0, missing: false };
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+              Field definitions <span className="mono" style={{ color: 'var(--fg-4)' }}>sys_dictionary</span>
+            </div>
+            <table className="dt">
+              <thead><tr>
+                <th style={{ width: 200 }}>Element</th>
+                <th>Label</th>
+                <th style={{ width: 130 }}>Type</th>
+                <th style={{ width: 90 }}>Mandatory</th>
+                <th style={{ width: 90 }}>Read-only</th>
+                <th>Reference / choice</th>
+              </tr></thead>
+              <tbody>
+                {r.rows.map(row => {
+                  const ref = flat(row.reference) || dv(row, 'reference');
+                  const ct  = flat(row.choice_table);
+                  return (
+                    <tr key={row.sys_id}>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.element) || '—'}</td>
+                      <td>{flat(row.column_label) || dv(row, 'column_label') || <span className="muted">—</span>}</td>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.internal_type) || dv(row, 'internal_type') || '—'}</td>
+                      <td>{isTrue(flat(row.mandatory)) ? <span className="chip amber">yes</span> : <span className="muted">—</span>}</td>
+                      <td>{isTrue(flat(row.read_only)) ? <span className="chip">yes</span> : <span className="muted">—</span>}</td>
+                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
+                        {ref ? <>→ {ref}</> : ct ? <>choice {ct}</> : <span className="muted">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+              Field overrides <span className="mono" style={{ color: 'var(--fg-4)' }}>sys_dictionary_override</span>
+              <span style={{ marginLeft: 8, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                {overrides.missing ? '(not in this snapshot)' : `(${overrides.rows.length})`}
+              </span>
+            </div>
+            {overrides.missing
+              ? <NotInSnapshot table="sys_dictionary_override" />
+              : !overrides.rows.length
+                ? <Empty text="No dictionary overrides on this table." />
+                : (
+                  <table className="dt">
+                    <thead><tr>
+                      <th style={{ width: 200 }}>Element</th>
+                      <th style={{ width: 110 }}>Mandatory</th>
+                      <th style={{ width: 110 }}>Read-only</th>
+                      <th>Default value</th>
+                    </tr></thead>
+                    <tbody>
+                      {overrides.rows.map(row => (
+                        <tr key={row.sys_id}>
+                          <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.element) || '—'}</td>
+                          <td>{isTrue(flat(row.mandatory_override)) ? <span className="chip amber">overrides</span> : <span className="muted">—</span>}</td>
+                          <td>{isTrue(flat(row.read_only_override)) ? <span className="chip">overrides</span> : <span className="muted">—</span>}</td>
+                          <td className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
+                            {flat(row.default_value_override) ? String(flat(row.default_value_override)) : <span className="muted">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )
+            }
+          </div>
+        </div>
+      );
+    }
+    if (columns === 'choices') {
+      // Group rows by element so the user sees one block per choice field.
+      // Within an element, sort by sequence then label so the rendered list
+      // mirrors the form-dropdown order.
+      const groups = new Map();
+      for (const row of r.rows) {
+        const el = flat(row.element) || '(no element)';
+        if (!groups.has(el)) groups.set(el, []);
+        groups.get(el).push(row);
+      }
+      const sortedEls = [...groups.keys()].sort();
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {sortedEls.map(el => {
+            const rows = groups.get(el).slice().sort((a, b) => {
+              const sa = Number(flat(a.sequence) ?? 9999);
+              const sb = Number(flat(b.sequence) ?? 9999);
+              if (sa !== sb) return sa - sb;
+              return String(flat(a.label) || '').localeCompare(String(flat(b.label) || ''));
+            });
+            return (
+              <div key={el}>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 4 }}>
+                  <span className="mono">{el}</span>
+                  <span style={{ color: 'var(--fg-4)', marginLeft: 6 }}>({rows.length})</span>
+                </div>
+                <table className="dt">
+                  <thead><tr>
+                    <th style={{ width: 200 }}>Value</th>
+                    <th>Label</th>
+                    <th style={{ width: 80 }} className="num">Sequence</th>
+                    <th style={{ width: 90 }}>Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map(row => (
+                      <tr key={row.sys_id}>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.value) || '—'}</td>
+                        <td>{flat(row.label) || <span className="muted">—</span>}</td>
+                        <td className="num mono">{flat(row.sequence) ?? '—'}</td>
+                        <td>{isTrue(flat(row.inactive)) ? <span className="chip">inactive</span> : <span className="chip green">active</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    if (columns === 'props') {
+      // sys_properties referenced by gs.getProperty('…') in any rule body.
+      // Empty rows + scanned > 0 means we found references in script bodies
+      // but none of the named properties resolved against the snapshot —
+      // most likely OOTB platform properties not in the export.
+      return (
+        <div>
+          {r.scanned != null && (
+            <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginBottom: 6 }}>
+              {r.scanned.toLocaleString()} property name{r.scanned === 1 ? '' : 's'} scanned from rule bodies; {r.rows.length} resolved against this snapshot.
+            </div>
+          )}
+          <table className="dt">
+            <thead><tr>
+              <th>Name</th>
+              <th>Value</th>
+              <th style={{ width: 100 }}>Type</th>
+              <th>Description</th>
+            </tr></thead>
+            <tbody>
+              {r.rows.map(row => (
+                <tr key={row.sys_id}>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.name) || '—'}</td>
+                  <td className="mono" style={{ fontSize: 11.5, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {flat(row.value) ?? <span className="muted">—</span>}
+                  </td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.type) || <span className="muted">—</span>}</td>
+                  <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 12 }}>
+                    {flat(row.description) || <span className="muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    if (columns === 'flows') {
+      // sys_hub_flow referenced by sn_fd.FlowAPI.* / hub.executeFlow / new SubflowExecutor.
+      return (
+        <div>
+          {r.scanned != null && (
+            <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginBottom: 6 }}>
+              {r.scanned.toLocaleString()} flow name{r.scanned === 1 ? '' : 's'} scanned from rule bodies; {r.rows.length} resolved against this snapshot.
+            </div>
+          )}
+          <table className="dt">
+            <thead><tr>
+              <th>Name</th>
+              <th>Internal name</th>
+              <th style={{ width: 100 }}>Type</th>
+              <th style={{ width: 80 }}>Active</th>
+              <th>Description</th>
+            </tr></thead>
+            <tbody>
+              {r.rows.map(row => (
+                <tr key={row.sys_id}>
+                  <td>{flat(row.name) || '—'}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.internal_name) || <span className="muted">—</span>}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.type) || <span className="muted">—</span>}</td>
+                  <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+                  <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 12 }}>
+                    {flat(row.description) || <span className="muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
     return <Empty text="Unknown view." />;
   }
 
@@ -2482,6 +3107,13 @@ user-modified helpers inline.`}
       sys_ui_policy_action: 'UI policy actions',
       sys_data_policy2: 'data policies',
       sys_data_policy_rule: 'data policy rules',
+      sys_security_acl: 'ACLs',
+      sys_ui_action: 'UI actions',
+      sys_dictionary: 'dictionary entries',
+      sys_dictionary_override: 'dictionary overrides',
+      sys_choice: 'choice values',
+      sys_properties: 'referenced system properties',
+      sys_hub_flow: 'referenced flows',
     };
     return m[t] || t;
   }

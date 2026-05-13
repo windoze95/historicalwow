@@ -185,6 +185,13 @@ REFERENCE_TABLES = {
     'sysauto_script',
     'sys_ui_policy', 'sys_ui_policy_action',
     'sys_data_policy2', 'sys_data_policy_rule',
+    # Server-side context — instance properties, UI actions, dictionary
+    # (field defs + per-table overrides), Flow Designer flows. Feeds the
+    # per-table inspector and the LLM-prompt builder; sys_dictionary is
+    # the big one (~300k rows) since it covers every field on every table.
+    'sys_properties', 'sys_ui_action',
+    'sys_dictionary', 'sys_dictionary_override',
+    'sys_hub_flow',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 
@@ -708,6 +715,13 @@ CACHE_5MIN = {
     'sysauto_script',
     'sys_ui_policy', 'sys_ui_policy_action',
     'sys_data_policy2', 'sys_data_policy_rule',
+    # Server-side context. sys_dictionary is ~300k rows but the per-table
+    # inspector queries it filtered by name=<table>, so a 5-min cache on
+    # the filtered response is fine; the unfiltered list-page is gated by
+    # `not q and limit > 200` upstream so we won't cache full dumps.
+    'sys_properties', 'sys_ui_action',
+    'sys_dictionary', 'sys_dictionary_override',
+    'sys_hub_flow',
 }
 
 

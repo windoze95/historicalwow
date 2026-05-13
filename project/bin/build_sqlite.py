@@ -438,6 +438,78 @@ SCHEMAS = {
         ('disabled',        lambda r: _v(r.get('disabled'))),
     ],
 
+    # Server-side context — instance properties, UI actions, dictionary,
+    # Flow Designer flows. Indexed columns are picked so the per-table
+    # inspector / LLM-prompt builder can answer "what fields does table X
+    # have, what overrides apply, what UI actions fire from its forms,
+    # what flows touch it, and what global properties tune its behavior?"
+    # without scanning raw envelopes. Big bodies (script, label_cache,
+    # element_attributes) intentionally NOT indexed — they live in raw.
+    'sys_properties': [
+        ('name',           lambda r: _v(r.get('name'))),
+        ('value',          lambda r: _v(r.get('value'))),
+        # `type` renders as a label (e.g. "True | False" vs raw "boolean")
+        # so capture display_value too — the inspector shows the label.
+        ('type',           lambda r: _dv(r.get('type'))),
+        ('description',    lambda r: _v(r.get('description'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+    ],
+    'sys_ui_action': [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('action_name', lambda r: _v(r.get('action_name'))),
+        ('table',       lambda r: _v(r.get('table'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('condition',   lambda r: _v(r.get('condition'))),
+        ('client',      lambda r: 1 if str(_v(r.get('client')) or 'false').lower() == 'true' else 0),
+        ('form_button', lambda r: 1 if str(_v(r.get('form_button')) or 'false').lower() == 'true' else 0),
+        ('list_button', lambda r: 1 if str(_v(r.get('list_button')) or 'false').lower() == 'true' else 0),
+        ('order',       lambda r: _v(r.get('order'))),
+    ],
+    # sys_dictionary is the field-definition catalog; `name` = table the
+    # field belongs to, `element` = field name. The per-table inspector
+    # queries name=<table> to enumerate every field on that table.
+    # `internal_type` renders as a label ("String", "Reference") so use
+    # _dv. mandatory/read_only/active stay as plain bool ints (matches
+    # other admin tables).
+    'sys_dictionary': [
+        ('name',          lambda r: _v(r.get('name'))),
+        ('element',       lambda r: _v(r.get('element'))),
+        ('internal_type', lambda r: _dv(r.get('internal_type'))),
+        ('column_label',  lambda r: _v(r.get('column_label'))),
+        ('mandatory',     lambda r: 1 if str(_v(r.get('mandatory')) or 'false').lower() == 'true' else 0),
+        ('default_value', lambda r: _v(r.get('default_value'))),
+        ('reference',     lambda r: _v(r.get('reference'))),
+        ('read_only',     lambda r: 1 if str(_v(r.get('read_only')) or 'false').lower() == 'true' else 0),
+        ('active',        lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # sys_dictionary_override: `name` is the override target table (e.g.
+    # incident overriding a task field), `base_table` is where the field
+    # was originally defined. *_override columns are tri-state strings
+    # (true/false/empty for "leave alone") — index as plain strings, NOT
+    # bool ints, so "unset" stays distinguishable from "false". Same
+    # pattern as catalog_ui_policy_action.mandatory.
+    'sys_dictionary_override': [
+        ('name',                   lambda r: _v(r.get('name'))),
+        ('element',                lambda r: _v(r.get('element'))),
+        ('base_table',             lambda r: _v(r.get('base_table'))),
+        ('mandatory_override',     lambda r: _v(r.get('mandatory_override'))),
+        ('read_only_override',     lambda r: _v(r.get('read_only_override'))),
+        ('default_value_override', lambda r: _v(r.get('default_value_override'))),
+    ],
+    # sys_hub_flow: Flow Designer flows. label_cache is huge JSON and
+    # never queried — stays in raw. `internal_name` is the script-safe
+    # identifier (e.g. "incident_resolved_notification"); `name` is the
+    # human label. `type` renders as a label ("Flow", "Subflow", "Action")
+    # so use _dv.
+    'sys_hub_flow': [
+        ('name',           lambda r: _v(r.get('name'))),
+        ('internal_name',  lambda r: _v(r.get('internal_name'))),
+        ('active',         lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('type',           lambda r: _dv(r.get('type'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+        ('description',    lambda r: _v(r.get('description'))),
+    ],
+
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific
     # additions on top so the list views can filter on what they care about.
     'alm_asset': [

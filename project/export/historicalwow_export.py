@@ -292,6 +292,16 @@ DEFAULT_TABLES = [
     'sys_ui_policy_action',
     'sys_data_policy2',
     'sys_data_policy_rule',
+    # Server-side context — instance properties, UI actions, dictionary
+    # (field definitions + per-table overrides), Flow Designer flows. Feeds
+    # the per-table inspector and the LLM-prompt builder so the model can
+    # reason about a table's fields, behaviors, and toggles without needing
+    # the live instance.
+    'sys_properties',
+    'sys_ui_action',
+    'sys_dictionary',
+    'sys_dictionary_override',
+    'sys_hub_flow',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',

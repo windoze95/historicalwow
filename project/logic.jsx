@@ -1400,9 +1400,171 @@
   // policies (model_table = name), and data policy rules (table = name).
   // Each tab gets a count + counter chip; tabs whose backing table isn't
   // in the snapshot render NotInSnapshot.
+  // Build a structured markdown prompt of every active rule on a table.
+  // Designed to be pasted into an LLM with the instruction at the top —
+  // gives the model a single document to reason about table behavior
+  // from. Inactive rules are excluded (per the "Active table logic"
+  // request); each script is included in full so the model can spot
+  // cross-rule interactions. Order matches ServiceNow's runtime priority
+  // where the field is populated (lower `order` runs first).
+  //
+  // UI policies pair with their actions (joined by sys_ui_policy_action.
+  // ui_policy = policy.sys_id), and data policies pair with their rules
+  // (sys_data_policy_rule.sys_data_policy = policy.sys_id), so the model
+  // sees what each policy actually changes — not just that it exists.
+  function buildLogicPrompt(tableName, d) {
+    const activeRows = (env) => (env?.rows || [])
+      .filter(r => isTrue(r.active) || r.active == null);
+    const byOrder = (a, b) => {
+      const ao = Number(a.order || a.priority || 9999);
+      const bo = Number(b.order || b.priority || 9999);
+      if (ao !== bo) return ao - bo;
+      return String(a.name || a.short_description || '').localeCompare(String(b.name || b.short_description || ''));
+    };
+    const code = (s) => '```javascript\n' + (s == null ? '' : String(s)) + '\n```';
+    const fenceText = (s) => '```\n' + (s == null ? '' : String(s)) + '\n```';
+
+    const br = activeRows(d.br).slice().sort(byOrder);
+    const cs = activeRows(d.cs).slice().sort(byOrder);
+    const uip = activeRows(d.uip).slice().sort(byOrder);
+    const uipa = (d.uipa?.rows || []);                              // actions can be inactive on an active policy; include all
+    const dp = activeRows(d.dp).slice().sort(byOrder);
+    const dpr = (d.dpr?.rows || []);
+
+    const actionsByPolicy = new Map();
+    for (const a of uipa) {
+      const pid = a.ui_policy;
+      if (!pid) continue;
+      if (!actionsByPolicy.has(pid)) actionsByPolicy.set(pid, []);
+      actionsByPolicy.get(pid).push(a);
+    }
+    const rulesByPolicy = new Map();
+    for (const r of dpr) {
+      const pid = r.sys_data_policy;
+      if (!pid) continue;
+      if (!rulesByPolicy.has(pid)) rulesByPolicy.set(pid, []);
+      rulesByPolicy.get(pid).push(r);
+    }
+
+    const lines = [];
+    const push = (s) => lines.push(s == null ? '' : String(s));
+
+    push(`You are a senior ServiceNow architect. Below is every active piece of server-side and client-side logic that runs against the table \`${tableName}\` on a real ServiceNow instance, extracted from a read-only snapshot of the production system.
+
+Please carefully read and reason about every rule below — execution order, conditions, and interactions between rules matter. Then reply with a plain-English explanation covering:
+
+1. **What the table represents** — the entity it models and the workflows it supports, inferred from the logic running against it.
+2. **Per-field behavior** — for each field that any rule touches, describe what changes its value, what hides/shows it, what makes it mandatory or read-only, and under which conditions.
+3. **Cross-rule interactions** — non-obvious places where rules combine, supersede, or fight each other (a UI policy hiding what a business rule populates, an async rule racing a before rule, etc.).
+4. **Risks and oddities** — rules that look like dead code, conditions that can never fire, debug logging left in place, conflicts between data policies and business rules.
+
+Be specific. Cite rule names. If you cannot tell from the script alone what a rule does (e.g. it calls a script include not included here), say so explicitly.
+
+---
+
+## Table
+
+\`${tableName}\`
+
+---
+
+## Business rules — ${br.length} active`);
+
+    for (const r of br) {
+      push('');
+      const meta = [
+        `order=${r.order ?? r.priority ?? '?'}`,
+        r.when ? `when=${r.when}` : null,
+        r.action_insert === 'true' || r.action_insert === 1 ? 'on_insert' : null,
+        r.action_update === 'true' || r.action_update === 1 ? 'on_update' : null,
+        r.action_delete === 'true' || r.action_delete === 1 ? 'on_delete' : null,
+        r.action_query  === 'true' || r.action_query  === 1 ? 'on_query'  : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${r.name || '(unnamed)'}" — ${meta}`);
+      if (r.condition)        push(`Condition: \`${r.condition}\``);
+      if (r.filter_condition) push(`Filter (encoded query): \`${r.filter_condition}\``);
+      if (r.role_conditions)  push(`Role gate: \`${r.role_conditions}\``);
+      if (r.description)      push(`Description: ${r.description}`);
+      push(code(r.script || ''));
+    }
+
+    push('');
+    push(`## Client scripts — ${cs.length} active`);
+    for (const r of cs) {
+      push('');
+      const meta = [
+        r.type ? `type=${r.type}` : null,
+        r.ui_type ? `ui_type=${r.ui_type}` : null,
+        r.field ? `field=${r.field}` : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${r.name || '(unnamed)'}" — ${meta}`);
+      if (r.condition)   push(`Condition: \`${r.condition}\``);
+      if (r.description) push(`Description: ${r.description}`);
+      push(code(r.script || ''));
+    }
+
+    push('');
+    push(`## UI policies — ${uip.length} active`);
+    for (const p of uip) {
+      push('');
+      const meta = [
+        p.order != null ? `order=${p.order}` : null,
+        p.run_scripts === 1 || p.run_scripts === '1' || p.run_scripts === 'true' ? 'run_scripts=true' : null,
+        p.reverse_if_false === 1 || p.reverse_if_false === '1' || p.reverse_if_false === 'true' ? 'reverse_if_false=true' : null,
+        p.on_load === 1 || p.on_load === '1' || p.on_load === 'true' ? 'on_load=true' : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${p.short_description || '(no description)'}" — ${meta}`);
+      if (p.conditions) push(`Conditions (encoded query): \`${p.conditions}\``);
+      const acts = actionsByPolicy.get(p.sys_id) || [];
+      if (acts.length) {
+        push('');
+        push('Actions:');
+        for (const a of acts) {
+          const triplet = [
+            a.field || '?',
+            `visible=${a.visible ?? 'ignore'}`,
+            `mandatory=${a.mandatory ?? 'ignore'}`,
+            `disabled=${a.disabled ?? 'ignore'}`,
+          ].join(', ');
+          push(`- ${triplet}`);
+        }
+      }
+      if (p.script_true) {
+        push('');
+        push('Script when condition true:');
+        push(code(p.script_true));
+      }
+      if (p.script_false) {
+        push('');
+        push('Script when condition false:');
+        push(code(p.script_false));
+      }
+    }
+
+    push('');
+    push(`## Data policies — ${dp.length} active`);
+    for (const p of dp) {
+      push('');
+      push(`### "${p.short_description || '(no description)'}"`);
+      if (p.conditions) push(`Conditions: \`${p.conditions}\``);
+      if (p.description) push(`Description: ${p.description}`);
+      const rules = rulesByPolicy.get(p.sys_id) || [];
+      if (rules.length) {
+        push('');
+        push('Rules:');
+        for (const r of rules) {
+          push(`- field=\`${r.field || '?'}\`: mandatory=${r.mandatory ?? 'ignore'}, disabled=${r.disabled ?? 'ignore'}`);
+        }
+      }
+    }
+
+    return lines.join('\n') + '\n';
+  }
+
   window.SnTableInspectorPage = function SnTableInspectorPage({ name }) {
     const [tab, setTab] = useState('br');
     const [d, setD] = useState({});
+    const [copied, setCopied] = useState(false);
     // Track which table backs each tab so NotInSnapshot can be honest.
     const TABS = useMemo(() => [
       { id: 'br',   label: 'Business rules',     table: 'sys_script',           filters: { collection: name }, columns: 'br' },
@@ -1466,6 +1628,7 @@
               <span style={chip}>{r('cs').total ?? 0} client scripts</span>
               <span style={chip}>{r('uip').total ?? 0} UI policies</span>
               <span style={chip}>{r('dp').total ?? 0} data policies</span>
+              <CopyLlmPromptButton name={name} d={d} copied={copied} setCopied={setCopied} />
             </div>
           </div>
 
@@ -1486,6 +1649,65 @@
       </div>
     );
   };
+
+  // "Copy LLM prompt" — assembles a markdown prompt of every active rule
+  // currently loaded into the inspector and writes it to the clipboard.
+  // Disabled until at least the BR/CS/UIP/DP tabs have settled, so the
+  // user doesn't paste a partial snapshot into the model and miss half
+  // the table's behavior.
+  function CopyLlmPromptButton({ name, d, copied, setCopied }) {
+    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr'].map(k => {
+      const e = d[k];
+      // ready when fetch settled (rows array present, not loading)
+      return !!(e && Array.isArray(e.rows));
+    });
+    const ready = readiness.every(Boolean);
+    const prompt = useMemo(() => ready ? buildLogicPrompt(name, d) : '', [ready, name, d]);
+    const kb = prompt ? Math.round(prompt.length / 1024) : 0;
+    const onClick = async () => {
+      if (!ready || !prompt) return;
+      try {
+        await navigator.clipboard.writeText(prompt);
+      } catch (_) {
+        // Fallback for browsers without async clipboard API
+        const ta = document.createElement('textarea');
+        ta.value = prompt;
+        ta.style.position = 'fixed'; ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (__) {}
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2200);
+    };
+    return (
+      <button onClick={onClick} disabled={!ready}
+        title={ready
+          ? `Copy a structured prompt of every active rule on ${name}. Paste into ChatGPT / Claude / Gemini and it'll explain the table's behavior in plain English.`
+          : 'Waiting for all tabs to load…'}
+        style={{
+          marginLeft: 'auto',
+          padding: '4px 10px',
+          fontSize: 11.5,
+          height: 24,
+          borderRadius: 12,
+          background: copied ? 'var(--accent-bg)' : 'var(--bg-elev)',
+          border: '1px solid ' + (copied ? 'var(--accent-border)' : 'var(--border-2)'),
+          color: copied ? 'var(--accent-fg)' : 'var(--fg-2)',
+          cursor: ready ? 'pointer' : 'not-allowed',
+          opacity: ready ? 1 : 0.6,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}>
+        <window.Icon name={copied ? 'check' : 'download'} size={11} />
+        {copied
+          ? 'Copied'
+          : ready
+            ? <>Copy LLM prompt <span className="mono" style={{ color: 'var(--fg-4)' }}>{kb} KB</span></>
+            : 'Loading…'}
+      </button>
+    );
+  }
 
   function InspectorTabs({ tabs, active, onChange, totals }) {
     return (

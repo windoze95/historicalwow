@@ -62,10 +62,40 @@
 
   // Script-include name index. Loaded lazily on first record view that
   // needs it, then cached for the rest of the session. Each entry:
-  // { sys_id, name, api_name, all_names: [strings to match] }. all_names
-  // is the de-duped list we run word-boundary regex against, so a single
-  // include with name "ScheduleEntry" + api_name "global.ScheduleEntry"
-  // produces both forms once.
+  // { sys_id, name, api_name, all_names: [...], _pattern: RegExp }.
+  // _pattern is a single combined alternation across every name × every
+  // call-shape variant we care about, pre-compiled so the hot scan loop
+  // does one regex test per include rather than rebuilding a regex per
+  // (name × body) pair.
+  //
+  // The earlier word-boundary scan matched on any mention of an
+  // include's name — including comments, string literals, error
+  // messages, and identifiers that happened to coincide. Once a
+  // false-positive include landed in the cascade, its own body named
+  // dozens more helpers in passing, and the recursive walk dragged
+  // them all in. Call-shape patterns make a match mean "we believe
+  // this rule actually calls this include" rather than "this name
+  // appeared somewhere in the script text", so the cascade follows
+  // the real dependency graph instead of the dictionary of common
+  // identifiers.
+  const CALL_SHAPE_BUILDERS = [
+    (e) => 'new\\s+' + e + '\\s*\\(',
+    (e) => '\\b' + e + '\\.[A-Za-z_$][\\w$]*\\s*\\(',
+    (e) => '\\b' + e + '\\.prototype\\b',
+    (e) => '\\bextends\\s+' + e + '\\b',
+    (e) => '\\bextendsObject\\s*\\(\\s*' + e + '\\b',
+    (e) => "gs\\.include\\(\\s*['\"]" + e + "['\"]\\s*\\)",
+  ];
+  function compileCallShapePattern(names) {
+    const parts = [];
+    for (const n of names) {
+      if (!n || n.length < 3) continue;
+      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (const build of CALL_SHAPE_BUILDERS) parts.push(build(esc));
+    }
+    if (!parts.length) return null;
+    return new RegExp(parts.join('|'));
+  }
   let _includeIndex = null;
   function getIncludeIndex() {
     if (_includeIndex) return _includeIndex;
@@ -85,7 +115,14 @@
           const tail = api.split('.').pop();
           if (tail) names.add(tail);
         }
-        return { sys_id: sid, name, api_name: api, all_names: [...names] };
+        const all_names = [...names];
+        return {
+          sys_id: sid,
+          name,
+          api_name: api,
+          all_names,
+          _pattern: compileCallShapePattern(all_names),
+        };
       });
     }).catch(() => []);
     return _includeIndex;
@@ -135,21 +172,17 @@
   }
 
   // Scan an arbitrary script body for include references. Returns the
-  // sys_include row objects (deduped) whose name or api_name appears as
-  // a whole word in `text`. Word-boundary regex prevents false positives
-  // like "Schedule" inside "ScheduleEntry".
+  // sys_include row objects (deduped) whose pre-compiled call-shape
+  // pattern matches `text`. See compileCallShapePattern for the kinds
+  // of usage we recognize — constructor invocations, dotted method
+  // calls, prototype extension, class/object extension, gs.include().
   function scanForIncludes(text, includes) {
     if (!text || !includes || !includes.length) return [];
     const hits = new Map();
     for (const inc of includes) {
-      for (const n of inc.all_names) {
-        if (!n || n.length < 3) continue;  // skip very short names; too noisy
-        const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = new RegExp('\\b' + esc + '\\b');
-        if (re.test(text)) {
-          hits.set(inc.sys_id, inc);
-          break;
-        }
+      if (!inc._pattern) continue;
+      if (inc._pattern.test(text)) {
+        hits.set(inc.sys_id, inc);
       }
     }
     return [...hits.values()];

@@ -89,12 +89,49 @@
   // gs.include / GlideAjax string literal). Bare mentions in comments
   // or unrelated identifiers don't qualify, which keeps the recursive
   // cascade from following the dictionary of common identifiers.
-  const CALL_SHAPE_BUILDERS = [
+  // Names that match a JS or platform built-in we can never tell
+  // apart from an override. If a customer has a script include named
+  // `JSON`, every `JSON.parse(...)` in every body still resolves to
+  // the native built-in at runtime — and the cascade scanner can't
+  // distinguish. Treating those calls as references to the include
+  // (which they technically are at the language level, sometimes)
+  // sucks the entire dependency graph through a single high-traffic
+  // node. Skip these names from the index entirely.
+  //
+  // Platform built-ins (GlideRecord, GlideSystem, GlideAjax, …) are
+  // not script includes anyway — they live in Java — so no real
+  // include should be named after them. Including them in the
+  // blocklist is belt-and-suspenders in case a snapshot happens to
+  // carry an override.
+  const BUILTIN_NAME_BLOCKLIST = new Set([
+    // ES + DOM globals
+    'Array','ArrayBuffer','BigInt','Boolean','Date','Error','EvalError',
+    'Function','Infinity','JSON','Map','Math','NaN','Number','Object',
+    'Promise','Proxy','RangeError','ReferenceError','Reflect','RegExp',
+    'Set','String','Symbol','SyntaxError','TypeError','URIError','WeakMap',
+    'WeakSet','console','document','globalThis','navigator','undefined',
+    'window',
+    // ServiceNow platform classes commonly seen as identifiers
+    'GlideAggregate','GlideAjax','GlideDate','GlideDateTime','GlideDuration',
+    'GlideElement','GlideForm','GlideList','GlideRecord','GlideScheduleDateTime',
+    'GlideScopedEvaluator','GlideSystem','GlideTime','GlideUser','GlideURI',
+    'gs','g_form','g_user','g_scratchpad',
+  ]);
+  // Two builder groups so blocklisted names only contribute the
+  // unambiguous string-literal forms. `gs.include('JSON')` and
+  // `new GlideAjax('JSON')` are obvious references to a customer
+  // include named JSON — the include name is in a quoted string,
+  // can't be confused with the native built-in. Identifier-context
+  // forms (`new JSON(`, `JSON.method(`, etc.) collide with the
+  // native built-in and would over-pull.
+  const IDENTIFIER_BUILDERS = [
     (e) => 'new\\s+' + e + '\\s*\\(',
     (e) => '\\b' + e + '\\.[A-Za-z_$][\\w$]*\\s*\\(',
     (e) => '\\b' + e + '\\.prototype\\b',
     (e) => '\\bextends\\s+' + e + '\\b',
     (e) => '\\bextendsObject\\s*\\(\\s*' + e + '\\b',
+  ];
+  const STRING_LITERAL_BUILDERS = [
     (e) => "gs\\.include\\(\\s*['\"]" + e + "['\"]\\s*\\)",
     (e) => "new\\s+GlideAjax\\s*\\(\\s*['\"]" + e + "['\"]",
   ];
@@ -106,7 +143,10 @@
     for (const n of allNames) {
       if (!n || n.length < 3) continue;
       const e = escRegex(n);
-      for (const build of CALL_SHAPE_BUILDERS) parts.push(build(e));
+      const builders = BUILTIN_NAME_BLOCKLIST.has(n)
+        ? STRING_LITERAL_BUILDERS
+        : [...IDENTIFIER_BUILDERS, ...STRING_LITERAL_BUILDERS];
+      for (const build of builders) parts.push(build(e));
     }
     if (!parts.length) return null;
     try { return new RegExp(parts.join('|')); }
@@ -146,6 +186,13 @@
           const tail = api.split('.').pop();
           if (tail) names.add(tail);
         }
+        // Note: we keep blocklisted bare names in all_names. The
+        // coarse pass still adds them as candidates, but the strict
+        // pattern compiled by buildStrictPattern restricts those
+        // names to string-literal call-shapes (gs.include('JSON'),
+        // new GlideAjax('JSON')) — so an unambiguous reference still
+        // resolves, while bare JSON.parse(...) doesn't drag the
+        // override include into the cascade.
         return {
           sys_id: sid, name, api_name: api, all_names: [...names],
           _pattern: undefined,   // lazy-compiled in scanForIncludes

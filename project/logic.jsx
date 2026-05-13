@@ -1901,7 +1901,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     const build = async () => {
       if (!ready || !basePrompt || building) return;
       setMenuOpen(false);
-      setBuilding(true); setError(null);
+      setBuilding(true);
       let cascadeError = null;
       try {
         let tail = '';
@@ -1959,9 +1959,6 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
                 </>
               : 'Loading…'}
         </button>
-        {error && (
-          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--c-red)' }}>build failed: {error}</span>
-        )}
         {menuOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 4px)', right: 0,

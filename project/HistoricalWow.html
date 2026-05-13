@@ -5366,6 +5366,30 @@ Object.assign(window, {
     }
   }
 
+  // Page through every row of /api/<table> matching opts (no fixed cap on
+  // top of `hardCap`). Used by panels that need full-snapshot aggregates —
+  // the truncated `limit=N` form silently drops rows beyond N, which made
+  // the "Most-used producers" panel and "Created Records" tab undercount
+  // for high-volume templates. hardCap is a sanity stop so a runaway
+  // query (or a misconfigured table) can't burn unbounded memory.
+  async function fetchAllRows(table, opts = {}, hardCap = 50_000) {
+    const pageSize = Math.min(opts.limit || 5000, 5000);
+    let rows = [];
+    let total = null;
+    let offset = 0;
+    while (offset < hardCap) {
+      const r = await fetchTable(table, { ...opts, limit: pageSize, offset });
+      if (r.missing) return { rows: [], total: 0, missing: true };
+      if (total === null) total = r.total || 0;
+      rows = rows.concat(r.rows);
+      if (r.rows.length < pageSize) break;     // last page
+      if (rows.length >= total) break;          // got everything
+      offset += pageSize;
+    }
+    const capped = rows.length < (total || 0);
+    return { rows, total: total || rows.length, missing: false, capped };
+  }
+
   // ---- Item kind classification -----------------------------------------
   // Maps sys_class_name to a friendly category the UI can chip + filter by.
   // 'producer' covers any producer-shaped subclass — those don't create
@@ -5394,9 +5418,22 @@ Object.assign(window, {
       const r = await fetchTable('sc_cat_item', { limit: 5000, order_by: 'name', dir: 'asc' });
       return r.rows;
     }),
+    // Every standard-change `change_request` in the snapshot, paged from
+    // /api/change_request?type=standard. Cached on first call so the
+    // dashboard doesn't re-page on every render. Live snapshot has ~2,174
+    // standards out of ~14,974 total change_requests.
+    fetchAllStandardChanges: () => fetchCached('all_std_changes', () =>
+      fetchAllRows('change_request', {
+        filters: { type: 'standard' },
+        order_by: 'sys_updated_on', dir: 'desc',
+      }),
+      120_000,
+    ),
     // For Standard Change templates: producer.name -> all proposal versions
     // -> all change_request rows that reference any of those proposal sys_ids.
-    // Returns { proposals: [...], changes: [...], total: N }.
+    // Pages through every change_request — high-volume templates have 600+
+    // rows, so the previous limit=200 silently truncated. Returns
+    // { proposals, changes, total, capped }.
     fetchProducerCreatedRecords: async (producerName) => {
       if (!producerName) return { proposals: [], changes: [], total: 0 };
       const propRes = await fetchTable('std_change_proposal', {
@@ -5404,26 +5441,22 @@ Object.assign(window, {
       });
       if (propRes.missing) return { proposals: [], changes: [], total: 0, missing: true };
       const proposals = propRes.rows;
-      // Fan out one query per proposal sys_id (typically 1-3 versions per template).
+      // Fan out one paged query per proposal sys_id (1-3 versions / template).
       const changeBuckets = await Promise.all(proposals.map(p =>
-        fetchTable('change_request', {
-          limit: 200,
+        fetchAllRows('change_request', {
           filters: { std_change_producer_version: p.sys_id },
           order_by: 'sys_updated_on', dir: 'desc',
         })
       ));
       const all = [];
+      let total = 0, capped = false;
       for (let i = 0; i < changeBuckets.length; i++) {
-        for (const r of changeBuckets[i].rows) {
-          all.push({ ...r, _proposal: proposals[i] });
-        }
+        for (const r of changeBuckets[i].rows) all.push({ ...r, _proposal: proposals[i] });
+        total += changeBuckets[i].total || 0;
+        if (changeBuckets[i].capped) capped = true;
       }
       all.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
-      return {
-        proposals,
-        changes: all,
-        total: changeBuckets.reduce((s, b) => s + (b.total || 0), 0),
-      };
+      return { proposals, changes: all, total, capped };
     },
     fetchItem: (sys_id) => data.fetchRecord('sc_cat_item', sys_id),
     fetchVariablesFor: (sys_id) => fetchTable('item_option_new', {
@@ -5590,13 +5623,12 @@ Object.assign(window, {
       data.fetchTaskList('sc_req_item', { limit: 2000, order_by: 'sys_updated_on', dir: 'desc' })
         .then(r => { if (!cancel) { setRitms(r.rows || []); setRitmTotal(r.total || 0); } })
         .catch(() => { if (!cancel) { setRitms([]); setRitmTotal(0); } });
-      // Standard change templates create change_requests, not RITMs. Pull
-      // the standard ones to compute "Most-used record producers".
-      data.fetchTaskList('change_request', {
-        limit: 5000, filters: { type: 'standard' },
-        order_by: 'sys_updated_on', dir: 'desc',
-      })
-        .then(r => { if (!cancel) setStdChanges(r.rows || []); })
+      // Standard change templates create change_requests, not RITMs. Page
+      // through every one in the snapshot (not just the most recent N) so
+      // the "Most-used record producers" counts reflect actual snapshot
+      // history, not whatever happened in the last few months.
+      C.fetchAllStandardChanges()
+        .then(r => { if (!cancel) setStdChanges(r.rows); })
         .catch(() => { if (!cancel) setStdChanges([]); });
       return () => { cancel = true; };
     }, []);
@@ -6474,7 +6506,13 @@ Object.assign(window, {
         </table>
         {created.changes.length > 100 && (
           <div style={{ padding: '10px 0', textAlign: 'center', color: 'var(--fg-4)', fontSize: 11.5 }}>
-            Showing first 100 of {created.changes.length}. Total in snapshot: {created.total.toLocaleString()}.
+            Showing first 100 of {created.changes.length.toLocaleString()} loaded.
+            {created.total > created.changes.length && (
+              <> Snapshot total: {created.total.toLocaleString()}.</>
+            )}
+            {created.capped && (
+              <> Hit the page-through cap; some older rows may not be loaded.</>
+            )}
           </div>
         )}
       </div>

@@ -6198,6 +6198,34 @@ Object.assign(window, {
   // gs.include / GlideAjax string literal). Bare mentions in comments
   // or unrelated identifiers don't qualify, which keeps the recursive
   // cascade from following the dictionary of common identifiers.
+  // Names that match a JS or platform built-in we can never tell
+  // apart from an override. If a customer has a script include named
+  // `JSON`, every `JSON.parse(...)` in every body still resolves to
+  // the native built-in at runtime — and the cascade scanner can't
+  // distinguish. Treating those calls as references to the include
+  // (which they technically are at the language level, sometimes)
+  // sucks the entire dependency graph through a single high-traffic
+  // node. Skip these names from the index entirely.
+  //
+  // Platform built-ins (GlideRecord, GlideSystem, GlideAjax, …) are
+  // not script includes anyway — they live in Java — so no real
+  // include should be named after them. Including them in the
+  // blocklist is belt-and-suspenders in case a snapshot happens to
+  // carry an override.
+  const BUILTIN_NAME_BLOCKLIST = new Set([
+    // ES + DOM globals
+    'Array','ArrayBuffer','BigInt','Boolean','Date','Error','EvalError',
+    'Function','Infinity','JSON','Map','Math','NaN','Number','Object',
+    'Promise','Proxy','RangeError','ReferenceError','Reflect','RegExp',
+    'Set','String','Symbol','SyntaxError','TypeError','URIError','WeakMap',
+    'WeakSet','console','document','globalThis','navigator','undefined',
+    'window',
+    // ServiceNow platform classes commonly seen as identifiers
+    'GlideAggregate','GlideAjax','GlideDate','GlideDateTime','GlideDuration',
+    'GlideElement','GlideForm','GlideList','GlideRecord','GlideScheduleDateTime',
+    'GlideScopedEvaluator','GlideSystem','GlideTime','GlideUser','GlideURI',
+    'gs','g_form','g_user','g_scratchpad',
+  ]);
   const CALL_SHAPE_BUILDERS = [
     (e) => 'new\\s+' + e + '\\s*\\(',
     (e) => '\\b' + e + '\\.[A-Za-z_$][\\w$]*\\s*\\(',
@@ -6254,6 +6282,14 @@ Object.assign(window, {
           names.add(api);
           const tail = api.split('.').pop();
           if (tail) names.add(tail);
+        }
+        // Drop blocklisted bare names; keep the namespaced api_name
+        // form so a `global.JSON.parse(...)` call (when explicitly
+        // qualified) can still resolve, while bare `JSON.parse(...)`
+        // — which is the dominant case — doesn't drag the override
+        // include into the cascade.
+        for (const n of [...names]) {
+          if (BUILTIN_NAME_BLOCKLIST.has(n)) names.delete(n);
         }
         return {
           sys_id: sid, name, api_name: api, all_names: [...names],

@@ -1564,7 +1564,6 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
   window.SnTableInspectorPage = function SnTableInspectorPage({ name }) {
     const [tab, setTab] = useState('br');
     const [d, setD] = useState({});
-    const [copied, setCopied] = useState(false);
     // Track which table backs each tab so NotInSnapshot can be honest.
     const TABS = useMemo(() => [
       { id: 'br',   label: 'Business rules',     table: 'sys_script',           filters: { collection: name }, columns: 'br' },
@@ -1628,7 +1627,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
               <span style={chip}>{r('cs').total ?? 0} client scripts</span>
               <span style={chip}>{r('uip').total ?? 0} UI policies</span>
               <span style={chip}>{r('dp').total ?? 0} data policies</span>
-              <CopyLlmPromptButton name={name} d={d} copied={copied} setCopied={setCopied} />
+              <CopyLlmPromptButton name={name} d={d} />
             </div>
           </div>
 
@@ -1809,8 +1808,29 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     return out;
   }
 
-  function CopyLlmPromptButton({ name, d, copied, setCopied }) {
+  function CopyLlmPromptButton({ name, d }) {
+    // Why a modal instead of writing directly to the clipboard:
+    //
+    //   - The viewer is served over http://<vm>:8080, which isn't a
+    //     "secure context", so modern browsers leave navigator.clipboard
+    //     undefined — writeText throws synchronously.
+    //   - The legacy fallback (document.execCommand('copy')) only works
+    //     inside an active user-gesture stack. We need to `await` async
+    //     fetches of every transitively-referenced script include
+    //     before the prompt is ready; once we cross an `await` the
+    //     gesture is gone and execCommand fails silently. Net result of
+    //     the old code: user clicks, button flashes "Copied", clipboard
+    //     untouched, user still has whatever they had before.
+    //
+    // A modal sidesteps both: we build the prompt asynchronously, drop
+    // it into a pre-selected readonly textarea, and let the user copy
+    // with Cmd+C / Ctrl+C OR a Copy button whose own click is a fresh
+    // gesture. The textarea-is-already-selected path is the bulletproof
+    // floor — works on http, on locked-down corp browsers, even with
+    // both clipboard APIs disabled by policy.
     const [building, setBuilding] = useState(false);
+    const [error, setError]       = useState(null);
+    const [modal, setModal]       = useState(null);
     const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr'].map(k => {
       const e = d[k];
       return !!(e && Array.isArray(e.rows));
@@ -1820,57 +1840,152 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     const baseKb = basePrompt ? Math.round(basePrompt.length / 1024) : 0;
     const onClick = async () => {
       if (!ready || !basePrompt || building) return;
-      setBuilding(true);
+      setBuilding(true); setError(null);
       try {
         const seeds = seedScriptsFor(d);
-        const cascaded = await gatherCascadedIncludes(seeds);
-        const tail = renderIncludesSection(cascaded, basePrompt.length);
-        const full = basePrompt + tail;
+        let tail = '';
+        let cascadeNote = '';
         try {
-          await navigator.clipboard.writeText(full);
-        } catch (_) {
-          // Locked-down browser fallback
-          const ta = document.createElement('textarea');
-          ta.value = full;
-          ta.style.position = 'fixed'; ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.select();
-          try { document.execCommand('copy'); } catch (__) {}
-          document.body.removeChild(ta);
+          const cascaded = await gatherCascadedIncludes(seeds);
+          tail = renderIncludesSection(cascaded, basePrompt.length);
+        } catch (e) {
+          cascadeNote =
+            '\n\n<!-- Cascade failed (' + (e && e.message ? e.message : 'unknown error') +
+            '); only base table logic above. Open the browser console for details. -->\n';
+          if (typeof console !== 'undefined') console.error('cascade failed:', e);
         }
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2400);
+        setModal({ text: basePrompt + tail + cascadeNote });
+      } catch (e) {
+        setError(e && e.message ? e.message : String(e));
       } finally {
         setBuilding(false);
       }
     };
     return (
-      <button onClick={onClick} disabled={!ready || building}
-        title={ready
-          ? `Copy a structured prompt of every active rule on ${name}, plus the bodies of every script include those rules transitively call. Paste into ChatGPT / Claude / Gemini for a plain-English explanation.`
-          : 'Waiting for all tabs to load…'}
-        style={{
-          marginLeft: 'auto',
-          padding: '4px 10px',
-          fontSize: 11.5,
-          height: 24,
-          borderRadius: 12,
-          background: copied ? 'var(--accent-bg)' : 'var(--bg-elev)',
-          border: '1px solid ' + (copied ? 'var(--accent-border)' : 'var(--border-2)'),
-          color: copied ? 'var(--accent-fg)' : 'var(--fg-2)',
-          cursor: ready && !building ? 'pointer' : 'not-allowed',
-          opacity: ready ? 1 : 0.6,
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-        }}>
-        <window.Icon name={copied ? 'check' : building ? 'refresh' : 'download'} size={11} />
-        {copied
-          ? 'Copied'
-          : building
+      <>
+        <button onClick={onClick} disabled={!ready || building}
+          title={ready
+            ? `Build a structured prompt of every active rule on ${name}, plus the bodies of every script include those rules transitively call. Opens a modal you can copy from.`
+            : 'Waiting for all tabs to load…'}
+          style={{
+            marginLeft: 'auto',
+            padding: '4px 10px',
+            fontSize: 11.5,
+            height: 24,
+            borderRadius: 12,
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--border-2)',
+            color: 'var(--fg-2)',
+            cursor: ready && !building ? 'pointer' : 'not-allowed',
+            opacity: ready ? 1 : 0.6,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          <window.Icon name={building ? 'refresh' : 'download'} size={11} />
+          {building
             ? 'Resolving includes…'
             : ready
-              ? <>Copy LLM prompt <span className="mono" style={{ color: 'var(--fg-4)' }}>{baseKb} KB +</span></>
+              ? <>Build LLM prompt <span className="mono" style={{ color: 'var(--fg-4)' }}>{baseKb} KB +</span></>
               : 'Loading…'}
-      </button>
+        </button>
+        {error && (
+          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--c-red)' }}>build failed: {error}</span>
+        )}
+        {modal && <PromptModal text={modal.text} table={name} onClose={() => setModal(null)} />}
+      </>
+    );
+  }
+
+  // The textarea is auto-selected on mount so Ctrl/Cmd+C works the
+  // instant the modal opens — that's the floor that works regardless
+  // of clipboard-API availability. The Copy button on top tries the
+  // async clipboard API first (works on https / localhost), then
+  // execCommand inside its own fresh user-gesture (works on http for
+  // most browsers as long as policy hasn't disabled it), then leaves
+  // the textarea selected and lets the user copy manually.
+  function PromptModal({ text, table, onClose }) {
+    const taRef = React.useRef(null);
+    const [copied, setCopied] = useState(false);
+    const [howCopied, setHowCopied] = useState('');
+    useEffect(() => {
+      // Defer selection so the focus race against the modal mount
+      // settles in the right order.
+      const t = setTimeout(() => {
+        if (taRef.current) { taRef.current.focus(); taRef.current.select(); }
+      }, 30);
+      return () => clearTimeout(t);
+    }, []);
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+    const flash = (label) => {
+      setCopied(true); setHowCopied(label);
+      setTimeout(() => { setCopied(false); setHowCopied(''); }, 2400);
+    };
+    const doCopy = () => {
+      if (taRef.current) { taRef.current.focus(); taRef.current.select(); }
+      // Prefer the modern API when available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => flash('clipboard API'))
+          .catch(() => {
+            try {
+              if (document.execCommand('copy')) flash('execCommand');
+            } catch (_) { /* selection still set — user can ctrl+c */ }
+          });
+        return;
+      }
+      try {
+        if (document.execCommand('copy')) flash('execCommand');
+      } catch (_) { /* selection still set — user can ctrl+c */ }
+    };
+    const kb = Math.round(text.length / 1024);
+    return (
+      <div onClick={onClose} style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+        zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: 'var(--bg)', border: '1px solid var(--border-2)', borderRadius: 12,
+          boxShadow: 'var(--shadow-lg)', padding: 16,
+          width: 'min(960px, 94vw)', height: 'min(720px, 88vh)',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <window.Icon name="download" size={16} />
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
+              LLM prompt — <span className="mono">{table}</span>
+            </h3>
+            <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{kb} KB</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--fg-4)' }}>
+              Textarea is pre-selected — <span className="mono">⌘C</span> / <span className="mono">Ctrl+C</span> works
+            </span>
+          </div>
+          <textarea ref={taRef} readOnly value={text}
+            spellCheck={false} autoCapitalize="off"
+            style={{
+              flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11.5,
+              padding: 12, background: 'var(--bg-2)', color: 'var(--fg-2)',
+              border: '1px solid var(--border)', borderRadius: 6, resize: 'none',
+              whiteSpace: 'pre', overflow: 'auto', tabSize: 2,
+            }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>
+              {copied ? `Copied via ${howCopied}.` : 'Paste into ChatGPT / Claude / Gemini.'}
+            </span>
+            <button onClick={onClose} className="toggle"
+              style={{ marginLeft: 'auto', padding: '6px 14px' }}>
+              Close
+            </button>
+            <button onClick={doCopy} className={'toggle' + (copied ? ' on' : '')}
+              style={{ padding: '6px 14px' }}>
+              <window.Icon name={copied ? 'check' : 'download'} size={11} />
+              {copied ? 'Copied' : 'Copy to clipboard'}
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 

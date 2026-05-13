@@ -253,6 +253,20 @@ DEFAULT_TABLES = [
     'sc_item_option_mtom',
     'question',
     'question_choice',
+    # Catalog admin metadata — the related lists shown on a sc_cat_item
+    # form (Variable Sets, Catalog UI Policies, Catalog Client Scripts,
+    # Available For, Not Available For, Catalogs, Categories). Without
+    # these the viewer's catalog item record can only show variables.
+    'sc_catalog',
+    'sc_category',
+    'catalog_ui_policy',
+    'catalog_ui_policy_action',
+    'catalog_script_client',
+    'user_criteria',
+    'sc_cat_item_user_criteria_mtom',
+    'sc_cat_item_user_criteria_no_mtom',
+    'io_set',
+    'io_set_item',
     # Asset records (alm_* family).
     *ASSET_TABLES,
     # Software inventory (Discovery / SAM-light).

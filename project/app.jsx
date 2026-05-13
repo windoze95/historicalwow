@@ -259,7 +259,7 @@ function Sidebar({ route }) {
     navItem('/changes',         'change',   'Change requests',  'change_request'),
     { sep: 'Service catalog' },
     { id: '/service-catalog', icon: 'star',  label: 'Catalog overview' },
-    { id: '/catalog-items',   icon: 'book',  label: 'Catalog items', count: window.HistoricalWowCatalog?.sc_cat_item.length || 0 },
+    { id: '/catalog-items',   icon: 'book',  label: 'Catalog items', count: data.manifest.tables.find(t => t.table === 'sc_cat_item')?.source_rows },
     navItem('/requests',        'folder',   'Requests',         'sc_request'),
     navItem('/requested-items', 'file',     'Requested items',  'sc_req_item'),
     navItem('/catalog-tasks',   'check',    'Catalog tasks',    'sc_task'),

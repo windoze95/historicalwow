@@ -6276,6 +6276,22 @@ Object.assign(window, {
     }
     return out;
   }
+  // Out-of-box ServiceNow includes are authored by a small set of
+  // platform users (admin, maint, glide.maint, the now.* system users
+  // for Discovery / patterns / etc.). They're the bulk of every
+  // instance and the cascade has no reason to walk them — the
+  // customer-meaningful logic is in the includes a real human has
+  // touched. An include is "user-touched" iff at least one of
+  // sys_created_by / sys_updated_by is a real user; pure-system
+  // includes are dropped from the index entirely.
+  function isSystemAuthor(u) {
+    if (!u) return true;
+    const v = String(u).toLowerCase();
+    return v === 'admin' || v === 'system' || v === 'maint' || v === 'guest'
+        || v.startsWith('glide.')   // glide.maint, glide.installer
+        || v.startsWith('now.')     // now.discovery_infra, now.patterns, now.cpg, …
+        || v.startsWith('system.');
+  }
   let _includeIndex = null;
   let _scanCtx = null;
   function getIncludeIndex() {
@@ -6284,7 +6300,10 @@ Object.assign(window, {
       order_by: 'name', dir: 'asc',
     }).then(r => {
       if (r.missing) { _scanCtx = { coarseBuckets: [], nameMap: new Map() }; return []; }
-      const list = r.rows.map(row => {
+      const userTouched = r.rows.filter(row =>
+        !isSystemAuthor(row.sys_created_by) || !isSystemAuthor(row.sys_updated_by)
+      );
+      const list = userTouched.map(row => {
         const sid = row.sys_id;
         const name = String(row.name || '').trim();
         const api  = String(row.api_name || '').trim();
@@ -7672,7 +7691,7 @@ Object.assign(window, {
   // ui_policy = policy.sys_id), and data policies pair with their rules
   // (sys_data_policy_rule.sys_data_policy = policy.sys_id), so the model
   // sees what each policy actually changes — not just that it exists.
-  function buildLogicPrompt(tableName, d) {
+  function buildLogicPrompt(tableName, d, cascadeEnabled) {
     const activeRows = (env) => (env?.rows || [])
       .filter(r => isTrue(r.active) || r.active == null);
     const byOrder = (a, b) => {
@@ -7718,7 +7737,22 @@ Please carefully read and reason about every rule below — execution order, con
 3. **Cross-rule interactions** — non-obvious places where rules combine, supersede, or fight each other (a UI policy hiding what a business rule populates, an async rule racing a before rule, etc.).
 4. **Risks and oddities** — rules that look like dead code, conditions that can never fire, debug logging left in place, conflicts between data policies and business rules.
 
-Be specific. Cite rule names. If you cannot tell from the script alone what a rule does (e.g. it calls a script include not included here), say so explicitly.
+Be specific. Cite rule names.
+
+${cascadeEnabled
+  ? `**About external helpers.** If a rule references a script include or
+utility class that isn't reproduced below, treat it as an unmodified
+out-of-box ServiceNow utility and reason about it from your knowledge
+of the platform — assume default behavior, do not flag it as
+missing. The "Referenced script includes" section below is already
+filtered to includes a real human user has authored or modified;
+anything outside that set is by definition stock platform code.`
+  : `**About external helpers.** No script-include bodies were appended to
+this prompt — the cascade option was off when it was built. If a rule
+references a helper that you can't identify from name alone (custom
+include vs. stock OOTB utility), say so explicitly rather than
+guessing. Re-build with "Resolve script includes" enabled to get the
+user-modified helpers inline.`}
 
 ---
 
@@ -7995,10 +8029,32 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
   // the size budget mid-section, emit a truncation marker that names
   // the includes that were skipped so the LLM can be honest about
   // what it's missing.
+  // Static guidance the model needs to read the cascade correctly:
+  // we only walk into includes a real human has authored or modified,
+  // so anything *not* listed below is OOTB ServiceNow code that the
+  // model can rely on its training knowledge to reason about. Without
+  // this note the model wastes effort hedging on every unfamiliar
+  // helper name.
+  const CASCADE_HEADER_NOTE = (
+    '\n## Referenced script includes\n' +
+    '\n_Cascade is filtered to script includes a real user has authored or' +
+    ' modified — anything created **and** last-updated by a platform account' +
+    ' (admin, maint, glide.\\*, now.\\*, system) is excluded. If a script below' +
+    ' references a helper that **isn\'t** in this section, treat it as a stock' +
+    ' out-of-box ServiceNow utility and reason about it from your knowledge of' +
+    ' the platform — assume default behavior, do not flag it as missing._\n'
+  );
+
   function renderIncludesSection(cascaded, alreadyUsed) {
-    if (!cascaded.length) return '\n## Referenced script includes — 0 (transitive)\n';
+    if (!cascaded.length) {
+      return CASCADE_HEADER_NOTE +
+        '\n_None of the rules above call into a user-modified script include._\n';
+    }
     const fence = (s) => '```javascript\n' + (s == null ? '' : String(s)) + '\n```';
-    const parts = [`\n## Referenced script includes — ${cascaded.length} (transitive, depth-sorted)\n`];
+    const parts = [
+      CASCADE_HEADER_NOTE,
+      `\n${cascaded.length} include(s) included below, depth-sorted.\n`,
+    ];
     let used = alreadyUsed;
     let truncatedAt = -1;
     for (let i = 0; i < cascaded.length; i++) {
@@ -8089,7 +8145,10 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
       return !!(e && Array.isArray(e.rows));
     });
     const ready = readiness.every(Boolean);
-    const basePrompt = useMemo(() => ready ? buildLogicPrompt(name, d) : '', [ready, name, d]);
+    const basePrompt = useMemo(
+      () => ready ? buildLogicPrompt(name, d, opts.resolveIncludes) : '',
+      [ready, name, d, opts.resolveIncludes],
+    );
     const baseKb = basePrompt ? Math.round(basePrompt.length / 1024) : 0;
 
     useEffect(() => {

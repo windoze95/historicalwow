@@ -265,8 +265,16 @@ DEFAULT_TABLES = [
     'user_criteria',
     'sc_cat_item_user_criteria_mtom',
     'sc_cat_item_user_criteria_no_mtom',
-    'io_set',
+    # The "Variable Set" table is `item_option_new_set` on this instance
+    # (the OOTB API name `io_set` returns HTTP 400). The m2m link table
+    # `io_set_item` joins it to sc_cat_item.
+    'item_option_new_set',
     'io_set_item',
+    # Topics — definitions only. The cat_item↔topic m2m table varies by
+    # plugin (Employee Center / Now Assist taxonomy) and isn't present on
+    # this instance, so the "Assigned Topics" tab stays empty until that
+    # link table is identified per-instance.
+    'topic',
     # Asset records (alm_* family).
     *ASSET_TABLES,
     # Software inventory (Discovery / SAM-light).

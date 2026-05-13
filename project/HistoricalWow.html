@@ -5398,7 +5398,7 @@ Object.assign(window, {
     fetchUserCriterion: (sys_id) => fetchCached('uc_' + sys_id,
       () => data.fetchRecord('user_criteria', sys_id).catch(() => null)),
     fetchVariableSet: (sys_id) => fetchCached('vset_' + sys_id,
-      () => data.fetchRecord('io_set', sys_id).catch(() => null)),
+      () => data.fetchRecord('item_option_new_set', sys_id).catch(() => null)),
     fetchCatalog: (sys_id) => fetchCached('catalog_' + sys_id,
       () => data.fetchRecord('sc_catalog', sys_id).catch(() => null)),
     fetchCategory: (sys_id) => fetchCached('category_' + sys_id,
@@ -5500,7 +5500,7 @@ Object.assign(window, {
         'sc_cat_item', 'item_option_new', 'sc_catalog', 'sc_category',
         'catalog_ui_policy', 'catalog_script_client',
         'user_criteria', 'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
-        'io_set', 'io_set_item',
+        'item_option_new_set', 'io_set_item',
       ].map(t => C.fetchTotalCount(t).then(r => [t, r]))).then(pairs => {
         if (!cancel) {
           const m = {};

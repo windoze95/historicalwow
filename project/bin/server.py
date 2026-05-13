@@ -170,7 +170,7 @@ REFERENCE_TABLES = {
     'catalog_script_client',
     'user_criteria',
     'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
-    'io_set', 'io_set_item',
+    'item_option_new_set', 'io_set_item', 'topic',
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
     'cmdb_ci_spkg', 'cmdb_software_instance',
@@ -679,7 +679,7 @@ CACHE_5MIN = {
     'catalog_script_client',
     'user_criteria',
     'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
-    'io_set', 'io_set_item',
+    'item_option_new_set', 'io_set_item', 'topic',
     'item_option_new', 'question', 'question_choice',
 }
 

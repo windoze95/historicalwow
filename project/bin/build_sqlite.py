@@ -310,7 +310,11 @@ SCHEMAS = {
         ('sc_cat_item',   lambda r: _v(r.get('sc_cat_item'))),
         ('user_criteria', lambda r: _v(r.get('user_criteria'))),
     ],
-    'io_set':              [
+    # Variable Set table — `item_option_new_set` on this instance
+    # (`io_set` is the alias on some platform versions; only one name will
+    # be returned by the API. The exporter pulls item_option_new_set; the
+    # SCHEMAS entry indexes the same columns).
+    'item_option_new_set': [
         ('internal_name', lambda r: _v(r.get('internal_name'))),
         ('title',         lambda r: _v(r.get('title'))),
         ('description',   lambda r: _v(r.get('description'))),
@@ -321,6 +325,11 @@ SCHEMAS = {
         ('sc_cat_item',  lambda r: _v(r.get('sc_cat_item'))),
         ('variable_set', lambda r: _v(r.get('variable_set'))),
         ('order',        lambda r: _v(r.get('order'))),
+    ],
+    'topic':               [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('description', lambda r: _v(r.get('description'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
     ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific

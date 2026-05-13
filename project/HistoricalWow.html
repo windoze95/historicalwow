@@ -6200,6 +6200,49 @@ Object.assign(window, {
     return _includeIndex;
   }
 
+  // Reverse index: include sys_id → list of scripts that reference it,
+  // built by paging every business rule / client script / scheduled job
+  // and running the same word-boundary scan that record pages use.
+  // Required because `/api/<table>?q=` only searches indexed columns
+  // (number / short_description / name / value), and we deliberately
+  // don't index the `script` body — counts via `q=` would be 0 or hit
+  // unrelated name matches. Lazy + session-cached: first include record
+  // pays ~3 paged fetches and a regex scan, subsequent renders read
+  // from the Map. Scripts are GC'd table-by-table so peak memory is
+  // bounded to one table's body footprint at a time.
+  let _reverseIncludeIndex = null;
+  function getReverseIncludeIndex() {
+    if (_reverseIncludeIndex) return _reverseIncludeIndex;
+    _reverseIncludeIndex = (async () => {
+      const includes = await getIncludeIndex();
+      const out = { byId: new Map(), missing: {} };
+      for (const inc of includes) out.byId.set(inc.sys_id, []);
+      const sources = [
+        { table: 'sys_script',        label: 'business rule', url: '/business-rules' },
+        { table: 'sys_script_client', label: 'client script', url: '/client-scripts' },
+        { table: 'sysauto_script',    label: 'scheduled job', url: '/scheduled-jobs' },
+      ];
+      for (const s of sources) {
+        const r = await fetchAllRows(s.table, { order_by: 'sys_id', dir: 'asc' });
+        if (r.missing) { out.missing[s.table] = true; continue; }
+        for (const row of r.rows) {
+          const body = row.script ? String(row.script) : '';
+          if (!body) continue;
+          const hits = scanForIncludes(body, includes);
+          for (const inc of hits) {
+            out.byId.get(inc.sys_id).push({
+              table: s.table, label: s.label, url: s.url,
+              sys_id: row.sys_id,
+              name: row.name || '(unnamed)',
+            });
+          }
+        }
+      }
+      return out;
+    })();
+    return _reverseIncludeIndex;
+  }
+
   // Scan an arbitrary script body for include references. Returns the
   // sys_include row objects (deduped) whose name or api_name appears as
   // a whole word in `text`. Word-boundary regex prevents false positives
@@ -6225,6 +6268,7 @@ Object.assign(window, {
     fetchTable,
     fetchAllRows,
     getIncludeIndex,
+    getReverseIncludeIndex,
     scanForIncludes,
     fetchRecord: (table, sys_id) => data.fetchRecord(table, sys_id),
     fetchTotalCount: (table) => fetchCached('count_' + table, async () => {
@@ -7054,31 +7098,18 @@ Object.assign(window, {
         if (!r) { setRec(false); return; }
         setRec(r);
         window.AuditLog.push('view', `sys_script_include/${flat(r.name) || sys_id.slice(0, 8)}`, flat(r.name) || '');
-        // Count of BR / CS that reference this include's name or api_name.
-        // We do a `q=` search server-side (covers name / api_name / etc.
-        // depending on the table) and then verify the match client-side
-        // with a word-boundary regex so we don't get false hits.
-        const names = [flat(r.name), flat(r.api_name)].filter(Boolean).map(String);
-        const tail = (flat(r.api_name) || '').split('.').pop();
-        if (tail && tail !== flat(r.api_name)) names.push(tail);
-        if (!names.length) { setReferenced({ br: 0, cs: 0, sj: 0 }); return; }
-        const probe = (table) => Promise.all(names.map(n =>
-          L.fetchTable(table, { q: n, limit: 1 }).catch(() => ({ rows: [], total: 0, missing: true }))
-        )).then(rs => {
-          if (rs.some(x => x.missing)) return { missing: true, total: 0 };
-          // Server `q` LIKE is a superset; we still report the totals here
-          // as an upper bound. Exact occurrence-count requires scanning
-          // the script bodies, which the BR/CS record pages do already.
-          return { total: Math.max(...rs.map(x => x.total)), missing: false };
-        });
-        Promise.all([
-          probe('sys_script'),
-          probe('sys_script_client'),
-          probe('sysauto_script'),
-        ]).then(([br, cs, sj]) => {
+        // Exact-reference list via the session-cached reverse index. The
+        // index pages every BR / CS / SJ once per session, scans bodies
+        // with the word-boundary regex, and persists the result. First
+        // include view pays the build; subsequent views read from memory.
+        L.getReverseIncludeIndex().then(idx => {
           if (cancel) return;
-          setReferenced({ br, cs, sj });
-        });
+          const refs = idx.byId.get(sys_id) || [];
+          setReferenced({
+            refs,
+            missing: idx.missing,
+          });
+        }).catch(() => { if (!cancel) setReferenced({ refs: [], missing: {} }); });
       }).catch(() => { if (!cancel) setRec(false); });
       return () => { cancel = true; };
     }, [sys_id]);
@@ -7148,30 +7179,74 @@ Object.assign(window, {
         <div className="right">
           <div className="section" style={{ padding: '12px 14px' }}>
             <h3 style={{ marginBottom: 8 }}>Referenced by</h3>
-            {referenced == null ? <Loading /> : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {[
-                  ['Business rules',  referenced.br, '/business-rules'],
-                  ['Client scripts',  referenced.cs, '/client-scripts'],
-                  ['Scheduled jobs',  referenced.sj, '/scheduled-jobs'],
-                ].map(([k, v, url]) => (
-                  <div key={k} onClick={() => v && !v.missing && url && window.navigate(url)}
-                       style={{
-                         background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px',
-                         cursor: v && !v.missing && v.total ? 'pointer' : 'default',
-                       }}>
-                    <div style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{k}</div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
-                      {v?.missing ? '—' : (v?.total ?? 0).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
+            {referenced == null ? (
+              <div style={{ color: 'var(--fg-4)', fontSize: 12, lineHeight: 1.55 }}>
+                <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />
+                Scanning script bodies (one-time per session)…
               </div>
-            )}
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--fg-4)', lineHeight: 1.55 }}>
-              Counts are an upper bound from server-side <span className="mono">LIKE</span> search.
-              Open an individual record to see the exact word-boundary match.
-            </div>
+            ) : (() => {
+              const byTable = { sys_script: [], sys_script_client: [], sysauto_script: [] };
+              for (const r of referenced.refs) byTable[r.table].push(r);
+              const tiles = [
+                ['Business rules',  'sys_script',        '/business-rules'],
+                ['Client scripts',  'sys_script_client', '/client-scripts'],
+                ['Scheduled jobs',  'sysauto_script',    '/scheduled-jobs'],
+              ];
+              return (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                    {tiles.map(([k, t]) => {
+                      const miss = referenced.missing && referenced.missing[t];
+                      return (
+                        <div key={t} style={{
+                          background: 'var(--bg-elev)', border: '1px solid var(--border)',
+                          borderRadius: 6, padding: '6px 8px',
+                        }}>
+                          <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>{k}</div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
+                            {miss ? '—' : byTable[t].length.toLocaleString()}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {referenced.refs.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      {tiles.map(([k, t, url]) => byTable[t].length > 0 && (
+                        <div key={t} style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>
+                            {k}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {byTable[t].slice(0, 30).map(r => (
+                              <div key={r.sys_id}
+                                   onClick={() => window.navigate(`${url}/${r.sys_id}`)}
+                                   style={{
+                                     padding: '4px 8px', cursor: 'pointer',
+                                     borderRadius: 4, fontSize: 12,
+                                     background: 'var(--bg-elev)', border: '1px solid var(--border)',
+                                   }}>
+                                {r.name}
+                              </div>
+                            ))}
+                            {byTable[t].length > 30 && (
+                              <div style={{ fontSize: 11, color: 'var(--fg-4)', textAlign: 'center', padding: '4px 0' }}>
+                                + {byTable[t].length - 30} more
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {referenced.refs.length === 0 && (
+                    <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic' }}>
+                      No scripts in the snapshot reference this include.
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>

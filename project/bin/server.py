@@ -379,13 +379,21 @@ def list_table(handler, table, params):
         if text_cols:
             where.append('(' + ' OR '.join(f'"{c}" LIKE ?' for c in text_cols) + ')')
             args.extend([like] * len(text_cols))
-    # Exact-match field filters: any other ?key=value treated as col=value
+    # Exact-match field filters: any other ?key=value treated as col=value.
+    # Many boolean-shaped columns are extracted as 1/0 by build_sqlite (the
+    # `1 if str(_v(r.get('active'))) ... == 'true' else 0` pattern) but the
+    # UI carries them around as the ServiceNow display value 'true'/'false'.
+    # Coerce so `?active=true` matches stored 1 — otherwise toggles like
+    # "active only" silently return zero rows across every list page.
     RESERVED = {'limit', 'offset', 'q', 'order_by', 'dir', 'slim'}
+    BOOL_COERCE = {'true': '1', 'false': '0'}
     for k, vs in params.items():
         if k in RESERVED or k not in cols:
             continue
+        val = vs[0] if vs else ''
+        val = BOOL_COERCE.get(val.lower(), val)
         where.append(f'"{k}" = ?')
-        args.append(vs[0] if vs else '')
+        args.append(val)
 
     # HR gate: hide incidents assigned to the HR group when the request
     # isn't unlocked. Only `incident` is gated — same table the user asked

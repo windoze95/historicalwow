@@ -292,6 +292,17 @@ DEFAULT_TABLES = [
     'sys_ui_policy_action',
     'sys_data_policy2',
     'sys_data_policy_rule',
+    # Server-side context — instance properties, UI actions, dictionary
+    # (field definitions + per-table overrides), Flow Designer flows. Feeds
+    # the per-table inspector and the LLM-prompt builder so the model can
+    # reason about a table's fields, behaviors, and toggles without needing
+    # the live instance.
+    'sys_properties',
+    'sys_ui_action',
+    'sys_dictionary',
+    'sys_dictionary_override',
+    'sys_hub_flow',
+    'sys_security_acl',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',
@@ -683,6 +694,17 @@ def export_table_full(table):
                 raise
 
             rows = payload.get('result', [])
+            # Same defensive filter as the delta path (see fetch_pages_offset
+            # above): ServiceNow can return `result` as a string (error body,
+            # HTML that snuck through) or a list with a stray non-dict item,
+            # and a downstream _extract_delta(field(row, …)) on those crashes
+            # the whole export — we'd lose the rest of the table even though
+            # the rows we already have on disk are fine.
+            if not isinstance(rows, list):
+                log.warning('  %s: unexpected result shape %s — stopping page',
+                            table, type(rows).__name__)
+                break
+            rows = [r for r in rows if isinstance(r, dict)]
             if not rows:
                 break
 
@@ -941,6 +963,17 @@ def _fetch_shard(table, prefix):
                 raise
 
             rows = payload.get('result', [])
+            # Same defensive filter as the delta path (see fetch_pages_offset
+            # above): ServiceNow can return `result` as a string (error body,
+            # HTML that snuck through) or a list with a stray non-dict item,
+            # and a downstream _extract_delta(field(row, …)) on those crashes
+            # the whole export — we'd lose the rest of the table even though
+            # the rows we already have on disk are fine.
+            if not isinstance(rows, list):
+                log.warning('  %s: unexpected result shape %s — stopping page',
+                            table, type(rows).__name__)
+                break
+            rows = [r for r in rows if isinstance(r, dict)]
             if not rows:
                 break
 

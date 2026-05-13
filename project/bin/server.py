@@ -163,6 +163,14 @@ REFERENCE_TABLES = {
     'task_ci', 'task_sla', 'sysapproval_approver',
     'sc_cat_item', 'item_option_new', 'sc_item_option', 'sc_item_option_mtom',
     'question', 'question_choice',
+    # Catalog admin metadata — drives the related-list tabs on a sc_cat_item
+    # record view. Pulled by the exporter; ingested by build_sqlite.py.
+    'sc_catalog', 'sc_category',
+    'catalog_ui_policy', 'catalog_ui_policy_action',
+    'catalog_script_client',
+    'user_criteria',
+    'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
+    'item_option_new_set', 'io_set_item', 'topic',
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
     'cmdb_ci_spkg', 'cmdb_software_instance',
@@ -665,6 +673,14 @@ CACHE_5MIN = {
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
     'task_ci', 'task_sla', 'sysapproval_approver',
+    # Catalog admin metadata is small and changes rarely — fine to cache.
+    'sc_cat_item', 'sc_catalog', 'sc_category',
+    'catalog_ui_policy', 'catalog_ui_policy_action',
+    'catalog_script_client',
+    'user_criteria',
+    'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
+    'item_option_new_set', 'io_set_item', 'topic',
+    'item_option_new', 'question', 'question_choice',
 }
 
 

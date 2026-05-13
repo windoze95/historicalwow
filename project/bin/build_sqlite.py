@@ -249,6 +249,88 @@ SCHEMAS = {
         ('value',    lambda r: _v(r.get('value'))),
         ('order',    lambda r: _v(r.get('order'))),
     ],
+    # Catalog admin metadata. Indexed columns are picked to support the
+    # joins the viewer's catalog record view needs:
+    #   sc_cat_item.sys_id ↔ catalog_ui_policy.cat_item
+    #   sc_cat_item.sys_id ↔ catalog_script_client.cat_item
+    #   sc_cat_item.sys_id ↔ sc_cat_item_user_criteria_mtom.sc_cat_item
+    #   sc_cat_item.sys_id ↔ io_set_item.sc_cat_item
+    #   sc_category.sys_id ↔ sc_cat_item.category
+    #   sc_catalog.sys_id  ↔ sc_cat_item.sc_catalogs
+    'sc_catalog':          [
+        ('title',       lambda r: _v(r.get('title'))),
+        ('description', lambda r: _v(r.get('description'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    'sc_category':         [
+        ('title',       lambda r: _v(r.get('title'))),
+        ('description', lambda r: _v(r.get('description'))),
+        ('sc_catalog',  lambda r: _v(r.get('sc_catalog'))),
+        ('parent',      lambda r: _v(r.get('parent'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    'catalog_ui_policy':   [
+        ('cat_item',          lambda r: _v(r.get('catalog_item'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('on_load',           lambda r: 1 if str(_v(r.get('on_load')) or 'false').lower() == 'true' else 0),
+        ('reverse_if_false',  lambda r: 1 if str(_v(r.get('reverse_if_false')) or 'false').lower() == 'true' else 0),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('applies_to',        lambda r: _v(r.get('applies_to'))),
+        ('order',             lambda r: _v(r.get('order'))),
+    ],
+    'catalog_ui_policy_action': [
+        ('ui_policy',     lambda r: _v(r.get('ui_policy'))),
+        ('cat_item',      lambda r: _v(r.get('catalog_item'))),
+        ('variable',      lambda r: _v(r.get('variable'))),
+        ('mandatory',     lambda r: _v(r.get('mandatory'))),
+        ('visible',       lambda r: _v(r.get('visible'))),
+        ('disabled',      lambda r: _v(r.get('disabled'))),
+        ('cleared',       lambda r: _v(r.get('cleared'))),
+    ],
+    'catalog_script_client': [
+        ('cat_item',          lambda r: _v(r.get('cat_item'))),
+        ('name',              lambda r: _v(r.get('name'))),
+        ('type',              lambda r: _v(r.get('type'))),
+        ('cat_variable',      lambda r: _v(r.get('cat_variable'))),
+        ('ui_type',           lambda r: _v(r.get('ui_type'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('applies_to',        lambda r: _v(r.get('applies_to'))),
+    ],
+    'user_criteria':       [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('description', lambda r: _v(r.get('description'))),
+        ('advanced',    lambda r: 1 if str(_v(r.get('advanced')) or 'false').lower() == 'true' else 0),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    'sc_cat_item_user_criteria_mtom':    [
+        ('sc_cat_item',   lambda r: _v(r.get('sc_cat_item'))),
+        ('user_criteria', lambda r: _v(r.get('user_criteria'))),
+    ],
+    'sc_cat_item_user_criteria_no_mtom': [
+        ('sc_cat_item',   lambda r: _v(r.get('sc_cat_item'))),
+        ('user_criteria', lambda r: _v(r.get('user_criteria'))),
+    ],
+    # Variable Set table — `item_option_new_set` on this instance
+    # (`io_set` is the alias on some platform versions; only one name will
+    # be returned by the API. The exporter pulls item_option_new_set; the
+    # SCHEMAS entry indexes the same columns).
+    'item_option_new_set': [
+        ('internal_name', lambda r: _v(r.get('internal_name'))),
+        ('title',         lambda r: _v(r.get('title'))),
+        ('description',   lambda r: _v(r.get('description'))),
+        ('layout',        lambda r: _v(r.get('layout'))),
+        ('active',        lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    'io_set_item':         [
+        ('sc_cat_item',  lambda r: _v(r.get('sc_cat_item'))),
+        ('variable_set', lambda r: _v(r.get('variable_set'))),
+        ('order',        lambda r: _v(r.get('order'))),
+    ],
+    'topic':               [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('description', lambda r: _v(r.get('description'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific
     # additions on top so the list views can filter on what they care about.

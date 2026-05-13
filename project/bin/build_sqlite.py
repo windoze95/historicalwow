@@ -102,12 +102,20 @@ SC_TASK_COLS = TASK_INDEXED_COLS + [
     ('request_item', lambda r: _v(r.get('request_item'))),
     ('request',      lambda r: _v(r.get('request'))),
 ]
+# change_request carries a reference to its std_change_proposal. Indexing it
+# lets the catalog UI ask "which changes were created from this Standard
+# Change template?" via /api/change_request?std_change_producer_version=<sid>.
+CHANGE_REQUEST_COLS = TASK_INDEXED_COLS + [
+    ('std_change_producer_version', lambda r: _v(r.get('std_change_producer_version'))),
+    ('chg_model',                   lambda r: _v(r.get('chg_model'))),
+    ('type',                        lambda r: _v(r.get('type'))),
+]
 
 SCHEMAS = {
     # Task descendants — the viewer's biggest lookup target. All share the same
     # base task fields, so use the same indexed-column set.
     'incident':            TASK_INDEXED_COLS,
-    'change_request':      TASK_INDEXED_COLS,
+    'change_request':      CHANGE_REQUEST_COLS,
     'problem':             TASK_INDEXED_COLS,
     'problem_task':        TASK_INDEXED_COLS,
     'sc_request':          TASK_INDEXED_COLS,
@@ -330,6 +338,24 @@ SCHEMAS = {
         ('name',        lambda r: _v(r.get('name'))),
         ('description', lambda r: _v(r.get('description'))),
         ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # Standard-change proposal: the bridge from change_request back to a
+    # std_change_record_producer. change_request.std_change_producer_version
+    # = std_change_proposal.sys_id; std_change_proposal.template_name =
+    # sc_cat_item.name (for std_change_record_producer rows). The catalog
+    # record view joins through here to compute "changes created from this
+    # template".
+    'std_change_proposal': [
+        ('number',           lambda r: _v(r.get('number'))),
+        ('template_name',    lambda r: _v(r.get('template_name'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('proposal_type',    lambda r: _v(r.get('proposal_type'))),
+        ('state',            lambda r: _v(r.get('state'))),
+        ('catalog',          lambda r: _v(r.get('catalog'))),
+        ('category',         lambda r: _v(r.get('category'))),
+        ('opened_at',        lambda r: _v(r.get('opened_at')) or _v(r.get('sys_created_on'))),
+        ('sys_created_on',   lambda r: _v(r.get('sys_created_on'))),
+        ('sys_updated_on',   lambda r: _v(r.get('sys_updated_on'))),
     ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific

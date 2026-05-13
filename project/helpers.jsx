@@ -20,6 +20,7 @@ window.URL_TO_TABLE = {
   requests:          'sc_request',
   'requested-items': 'sc_req_item',
   'catalog-tasks':   'sc_task',
+  'catalog-items':   'sc_cat_item',
   'group-approvals': 'sysapproval_group',
   'asset-tasks':     'asset_task',
   hardware:          'alm_hardware',
@@ -48,7 +49,12 @@ function parseHash() {
   // /<friendly>/:sys_id          -> { view: 'record', table, sys_id }
   // /tasks/<sntable>             -> { view: 'list', table }   (fallback for tables without a friendly slug)
   // /tasks/<sntable>/:sys_id     -> { view: 'record', table, sys_id }
+  // /service-catalog             -> { view: 'service_catalog_home' }
   if (parts.length === 0) return { view: 'home' };
+
+  if (parts[0] === 'service-catalog') {
+    return { view: 'service_catalog_home' };
+  }
 
   if (parts[0] === 'tasks') {
     if (parts.length === 1) return { view: 'home' };

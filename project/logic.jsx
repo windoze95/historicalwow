@@ -182,13 +182,20 @@
   // pattern matches `text`. See compileCallShapePattern for the kinds
   // of usage we recognize — constructor invocations, dotted method
   // calls, prototype extension, class/object extension, gs.include().
+  // Individual tests are isolated: a single pathological pattern can't
+  // poison the whole scan (the cascade tests thousands of patterns per
+  // body and dropping one is better than failing the whole prompt).
   function scanForIncludes(text, includes) {
     if (!text || !includes || !includes.length) return [];
     const hits = new Map();
     for (const inc of includes) {
       if (!inc._pattern) continue;
-      if (inc._pattern.test(text)) {
-        hits.set(inc.sys_id, inc);
+      try {
+        if (inc._pattern.test(text)) {
+          hits.set(inc.sys_id, inc);
+        }
+      } catch (_) {
+        // Per-include failure — skip and keep scanning.
       }
     }
     return [...hits.values()];
@@ -1859,7 +1866,6 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     // shenanigans (http context + post-await gesture loss) by
     // pre-selecting a readonly textarea — see PromptModal below.
     const [building, setBuilding] = useState(false);
-    const [error, setError]       = useState(null);
     const [modal, setModal]       = useState(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const [opts, setOpts]         = useState({ resolveIncludes: false });
@@ -1895,25 +1901,27 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     const build = async () => {
       if (!ready || !basePrompt || building) return;
       setMenuOpen(false);
-      setBuilding(true); setError(null);
+      setBuilding(true);
+      let cascadeError = null;
       try {
         let tail = '';
-        let cascadeNote = '';
         if (opts.resolveIncludes) {
           try {
             const seeds = seedScriptsFor(d);
             const cascaded = await gatherCascadedIncludes(seeds);
             tail = renderIncludesSection(cascaded, basePrompt.length);
           } catch (e) {
-            cascadeNote =
-              '\n\n<!-- Cascade failed (' + (e && e.message ? e.message : 'unknown error') +
-              '); only base table logic above. Open the browser console for details. -->\n';
+            cascadeError = e;
             if (typeof console !== 'undefined') console.error('cascade failed:', e);
           }
         }
-        setModal({ text: basePrompt + tail + cascadeNote });
+        setModal({ text: basePrompt + tail, cascadeError });
       } catch (e) {
-        setError(e && e.message ? e.message : String(e));
+        // Outer build failure (very rare — state update or string concat).
+        // Surface as a modal banner so the user can copy the message rather
+        // than seeing a tiny "build failed" sliver beside the button.
+        if (typeof console !== 'undefined') console.error('prompt build failed:', e);
+        setModal({ text: basePrompt || '(no base prompt)', cascadeError: cascadeError || e });
       } finally {
         setBuilding(false);
       }
@@ -1951,9 +1959,6 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
                 </>
               : 'Loading…'}
         </button>
-        {error && (
-          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--c-red)' }}>build failed: {error}</span>
-        )}
         {menuOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 4px)', right: 0,
@@ -1995,7 +2000,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
             </div>
           </div>
         )}
-        {modal && <PromptModal text={modal.text} table={name} onClose={() => setModal(null)} />}
+        {modal && <PromptModal text={modal.text} table={name} cascadeError={modal.cascadeError} onClose={() => setModal(null)} />}
       </span>
     );
   }
@@ -2007,7 +2012,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
   // execCommand inside its own fresh user-gesture (works on http for
   // most browsers as long as policy hasn't disabled it), then leaves
   // the textarea selected and lets the user copy manually.
-  function PromptModal({ text, table, onClose }) {
+  function PromptModal({ text, table, cascadeError, onClose }) {
     const taRef = React.useRef(null);
     const [copied, setCopied] = useState(false);
     const [howCopied, setHowCopied] = useState('');
@@ -2067,6 +2072,26 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
               Textarea is pre-selected — <span className="mono">⌘C</span> / <span className="mono">Ctrl+C</span> works
             </span>
           </div>
+          {cascadeError && (
+            <div style={{
+              background: 'var(--c-red-bg)', border: '1px solid var(--c-red-border)',
+              color: 'var(--c-red)', borderRadius: 6, padding: '8px 12px',
+              fontSize: 12, display: 'flex', alignItems: 'flex-start', gap: 8,
+            }}>
+              <window.Icon name="info" size={13} />
+              <div style={{ flex: 1, lineHeight: 1.5 }}>
+                <strong style={{ fontWeight: 600 }}>Script-include cascade failed.</strong>{' '}
+                The prompt below is the base table logic only — referenced
+                includes were not appended.
+                <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-red)', wordBreak: 'break-word' }}>
+                  {cascadeError && cascadeError.message ? cascadeError.message : String(cascadeError)}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--fg-4)' }}>
+                  Full stack in browser console (F12 → Console).
+                </div>
+              </div>
+            </div>
+          )}
           <textarea ref={taRef} readOnly value={text}
             spellCheck={false} autoCapitalize="off"
             style={{

@@ -963,9 +963,12 @@
   }
 
   function UIPoliciesTab({ r, actions }) {
-    if (r.loading) return <Loading />;
-    if (r.missing) return <NotInSnapshot table="catalog_ui_policy" />;
-    if (!r.rows.length) return <Empty text="No UI policies defined." />;
+    // Compute the actions index unconditionally — the hooks-order rule
+    // requires every render to call the same hooks in the same order, so
+    // useMemo has to run before any conditional return. (Otherwise the
+    // first "loading" render uses 0 hooks and the post-fetch render adds
+    // one, blanking the tab with "Rendered more hooks than during the
+    // previous render".)
     const actionsByPolicy = useMemo(() => {
       const m = new Map();
       for (const a of (actions?.rows || [])) {
@@ -976,6 +979,10 @@
       }
       return m;
     }, [actions]);
+
+    if (r.loading) return <Loading />;
+    if (r.missing) return <NotInSnapshot table="catalog_ui_policy" />;
+    if (!r.rows.length) return <Empty text="No UI policies defined." />;
 
     return (
       <table className="dt">

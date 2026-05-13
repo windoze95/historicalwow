@@ -85,6 +85,12 @@
     (e) => '\\bextends\\s+' + e + '\\b',
     (e) => '\\bextendsObject\\s*\\(\\s*' + e + '\\b',
     (e) => "gs\\.include\\(\\s*['\"]" + e + "['\"]\\s*\\)",
+    // Client-side calls into client_callable script includes go through
+    // GlideAjax with the include's name as a string literal — that
+    // shape isn't a direct constructor or dotted call on the include
+    // itself, so without this builder client dependencies would
+    // disappear from the cascade and the referenced-by list.
+    (e) => "new\\s+GlideAjax\\s*\\(\\s*['\"]" + e + "['\"]",
   ];
   function compileCallShapePattern(names) {
     const parts = [];

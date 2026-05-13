@@ -142,7 +142,7 @@ function App() {
           {route.view === 'service_catalog_home' && <window.CatalogOverviewPage />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
           {route.view === 'list' && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
-          {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'record' && route.table !== 'sc_cat_item' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}

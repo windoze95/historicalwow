@@ -349,7 +349,7 @@
     if (it.billable) {
       linkSet(it.name, 'Cost-Center Approval Block');
     }
-    if (it.__display_catalog === 'HR Service Center' || it.__display_category === 'HR — Confidential') {
+    if (it.__display_sc_catalogs === 'HR Service Center' || it.__display_category === 'HR — Confidential') {
       linkSet(it.name, 'HR Confidentiality Notice');
     }
   }
@@ -479,7 +479,7 @@
   }
   // Defaults: every item is available to "All US employees", except HR/restricted.
   for (const it of sc_cat_item) {
-    if (it.__display_catalog === 'HR Service Center') {
+    if (it.__display_sc_catalogs === 'HR Service Center') {
       ucLink(sc_cat_item_user_criteria_mtom, it.name, 'HR Business Partners');
     } else {
       ucLink(sc_cat_item_user_criteria_mtom, it.name, 'All US employees');
@@ -635,7 +635,7 @@
     if (it.name === 'New VM (production)')    linkTopic(it.name, topicSeed[7]);
     if (it.__display_category === 'Onboarding') linkTopic(it.name, topicSeed[8]);
     if (it.__display_category === 'Store Operations') linkTopic(it.name, topicSeed[9]);
-    if (it.__display_catalog === 'HR Service Center') linkTopic(it.name, topicSeed[10]);
+    if (it.__display_sc_catalogs === 'HR Service Center') linkTopic(it.name, topicSeed[10]);
   }
 
   // ---- Synthetic usage signals ------------------------------------------
@@ -1182,14 +1182,30 @@
   };
 
   // ---- Catalog item record ---------------------------------------------
-  window.CatalogItemRecordPage = function CatalogItemRecordPage({ sys_id }) {
+  // Real exported sc_cat_item records (213 in the live snapshot) won't be
+  // in our synthetic catalog dataset. CatalogParentLink in record.jsx
+  // navigates to /catalog-items/<real_sys_id> from any RITM's "Catalog
+  // item" field, so we'd otherwise dead-end on "not in snapshot." This
+  // outer wrapper is hookless so we can dispatch on the existence check
+  // without violating the rules of hooks across renders: real exports
+  // hand off to the generic RecordPage (which fetches /api/sc_cat_item
+  // and renders description / identification / journal / history /
+  // attachments), and mock items get the rich tabbed view below.
+  window.CatalogItemRecordPage = function CatalogItemRecordPage({ sys_id, showRaw }) {
+    const it = C.findItem(sys_id);
+    if (!it) {
+      return <window.RecordPage table="sc_cat_item" sys_id={sys_id} showRaw={showRaw} />;
+    }
+    return <CatalogItemMockRecord sys_id={sys_id} it={it} />;
+  };
+
+  function CatalogItemMockRecord({ sys_id, it }) {
     const [tab, setTab] = useState('variables');
     const [realRitms, setRealRitms] = useState(null);
     const data = window.HistoricalWowData;
-    const it = C.findItem(sys_id);
 
     useEffect(() => {
-      if (it) window.AuditLog.push('view', `sc_cat_item/${it.name}`, it.name);
+      window.AuditLog.push('view', `sc_cat_item/${it.name}`, it.name);
       let cancel = false;
       // Find real RITMs that point at this item — if the export has them.
       data.fetchTaskList('sc_req_item', { limit: 25, filters: { cat_item: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
@@ -1197,8 +1213,6 @@
         .catch(() => { if (!cancel) setRealRitms([]); });
       return () => { cancel = true; };
     }, [sys_id]);
-
-    if (!it) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Catalog item not in snapshot.</div>;
 
     const vars = C.variablesFor(sys_id);
     const vsets = C.variableSetsFor(sys_id);

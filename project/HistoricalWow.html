@@ -7788,7 +7788,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
     while (queue.length) {
       const { body, depth } = queue.shift();
       if (!body) continue;
-      const hits = scanForIncludes(body, includes);
+      const hits = L.scanForIncludes(body, includes);
       for (const inc of hits) {
         if (collected.has(inc.sys_id)) continue;   // already gathered
         collected.set(inc.sys_id, { stub: inc, depth: depth + 1, record: null });
@@ -7813,7 +7813,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
         if (!c || !c.record) continue;
         const body = (c.record.script && c.record.script.value) || c.record.script || '';
         if (!body) continue;
-        const hits = scanForIncludes(String(body), includes);
+        const hits = L.scanForIncludes(String(body), includes);
         for (const inc of hits) {
           if (collected.has(inc.sys_id)) continue;
           collected.set(inc.sys_id, { stub: inc, depth: c.depth + 1, record: null });

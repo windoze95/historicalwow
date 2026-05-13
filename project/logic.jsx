@@ -167,6 +167,22 @@
     }
     return out;
   }
+  // Out-of-box ServiceNow includes are authored by a small set of
+  // platform users (admin, maint, glide.maint, the now.* system users
+  // for Discovery / patterns / etc.). They're the bulk of every
+  // instance and the cascade has no reason to walk them — the
+  // customer-meaningful logic is in the includes a real human has
+  // touched. An include is "user-touched" iff at least one of
+  // sys_created_by / sys_updated_by is a real user; pure-system
+  // includes are dropped from the index entirely.
+  function isSystemAuthor(u) {
+    if (!u) return true;
+    const v = String(u).toLowerCase();
+    return v === 'admin' || v === 'system' || v === 'maint' || v === 'guest'
+        || v.startsWith('glide.')   // glide.maint, glide.installer
+        || v.startsWith('now.')     // now.discovery_infra, now.patterns, now.cpg, …
+        || v.startsWith('system.');
+  }
   let _includeIndex = null;
   let _scanCtx = null;
   function getIncludeIndex() {
@@ -175,7 +191,10 @@
       order_by: 'name', dir: 'asc',
     }).then(r => {
       if (r.missing) { _scanCtx = { coarseBuckets: [], nameMap: new Map() }; return []; }
-      const list = r.rows.map(row => {
+      const userTouched = r.rows.filter(row =>
+        !isSystemAuthor(row.sys_created_by) || !isSystemAuthor(row.sys_updated_by)
+      );
+      const list = userTouched.map(row => {
         const sid = row.sys_id;
         const name = String(row.name || '').trim();
         const api  = String(row.api_name || '').trim();

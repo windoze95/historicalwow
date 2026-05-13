@@ -5366,13 +5366,65 @@ Object.assign(window, {
     }
   }
 
+  // ---- Item kind classification -----------------------------------------
+  // Maps sys_class_name to a friendly category the UI can chip + filter by.
+  // 'producer' covers any producer-shaped subclass — those don't create
+  // RITMs (they spawn records in target tables) so the dashboard's RITM
+  // overlay under-counts them, and the record view shows a "Created
+  // records" tab instead of the usual variables-driven flow.
+  const KIND_BY_CLASS = {
+    'sc_cat_item':                    { kind: 'item',     label: 'Item' },
+    'pc_software_cat_item':           { kind: 'software', label: 'Software' },
+    'sc_cat_item_content':            { kind: 'content',  label: 'Content' },
+    'sc_cat_item_producer':           { kind: 'producer', label: 'Record Producer' },
+    'std_change_record_producer':     { kind: 'std_chg',  label: 'Std Change Template' },
+    'sc_cat_item_composite_producer': { kind: 'composite', label: 'Composite Producer' },
+  };
+  function kindOf(it) {
+    const cls = (it && it.sys_class_name && (it.sys_class_name.value || it.sys_class_name)) || 'sc_cat_item';
+    return KIND_BY_CLASS[cls] || { kind: 'other', label: String(cls).replace(/_/g, ' ') };
+  }
+  const PRODUCER_KINDS = new Set(['producer', 'std_chg', 'composite']);
+
   // ---- Public catalog API ----------------------------------------------
   const C = {
+    KIND_BY_CLASS, PRODUCER_KINDS, kindOf,
     // Pull every sc_cat_item (213 in the live snapshot). Sorted by name.
     fetchAllItems: () => fetchCached('all_items', async () => {
       const r = await fetchTable('sc_cat_item', { limit: 5000, order_by: 'name', dir: 'asc' });
       return r.rows;
     }),
+    // For Standard Change templates: producer.name -> all proposal versions
+    // -> all change_request rows that reference any of those proposal sys_ids.
+    // Returns { proposals: [...], changes: [...], total: N }.
+    fetchProducerCreatedRecords: async (producerName) => {
+      if (!producerName) return { proposals: [], changes: [], total: 0 };
+      const propRes = await fetchTable('std_change_proposal', {
+        limit: 50, filters: { template_name: producerName }, order_by: 'sys_updated_on', dir: 'desc',
+      });
+      if (propRes.missing) return { proposals: [], changes: [], total: 0, missing: true };
+      const proposals = propRes.rows;
+      // Fan out one query per proposal sys_id (typically 1-3 versions per template).
+      const changeBuckets = await Promise.all(proposals.map(p =>
+        fetchTable('change_request', {
+          limit: 200,
+          filters: { std_change_producer_version: p.sys_id },
+          order_by: 'sys_updated_on', dir: 'desc',
+        })
+      ));
+      const all = [];
+      for (let i = 0; i < changeBuckets.length; i++) {
+        for (const r of changeBuckets[i].rows) {
+          all.push({ ...r, _proposal: proposals[i] });
+        }
+      }
+      all.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
+      return {
+        proposals,
+        changes: all,
+        total: changeBuckets.reduce((s, b) => s + (b.total || 0), 0),
+      };
+    },
     fetchItem: (sys_id) => data.fetchRecord('sc_cat_item', sys_id),
     fetchVariablesFor: (sys_id) => fetchTable('item_option_new', {
       limit: 500, filters: { cat_item: sys_id }, order_by: 'order', dir: 'asc',
@@ -5445,6 +5497,30 @@ Object.assign(window, {
   const dv = (r, k) => r['__display_' + k] || flat(r[k]);
   const isTrue = (v) => v === true || v === 'true' || v === 1 || v === '1';
 
+  // Color for the kind chip. Std change templates get the change/blue, plain
+  // producers get violet (distinct from item green), composites get amber.
+  const KIND_CHIP = {
+    item:      { bg: 'var(--bg-3)',         border: 'var(--border)',          fg: 'var(--fg-2)' },
+    software:  { bg: 'var(--bg-3)',         border: 'var(--border)',          fg: 'var(--fg-2)' },
+    content:   { bg: 'var(--bg-3)',         border: 'var(--border)',          fg: 'var(--fg-2)' },
+    producer:  { bg: 'var(--c-violet-bg)',  border: 'var(--c-violet-border)', fg: 'var(--c-violet)' },
+    std_chg:   { bg: 'var(--c-blue-bg)',    border: 'var(--c-blue-border)',   fg: 'var(--c-blue)' },
+    composite: { bg: 'var(--c-amber-bg)',   border: 'var(--c-amber-border)',  fg: 'var(--c-amber)' },
+    other:     { bg: 'var(--bg-3)',         border: 'var(--border)',          fg: 'var(--fg-2)' },
+  };
+  function KindChip({ it }) {
+    const k = C.kindOf(it);
+    const s = KIND_CHIP[k.kind] || KIND_CHIP.other;
+    return <span style={{ ...chip, background: s.bg, borderColor: s.border, color: s.fg }}>{k.label}</span>;
+  }
+  // Strip the trailing " - N" version suffix from the std change producer
+  // version display so we can group RITM-/change-counts by template name.
+  // Display format on change_request.std_change_producer_version is, e.g.,
+  // "BAU 091 - Renew SAP JAVA Standard SSL certificate - 2".
+  function stripVersionSuffix(s) {
+    return String(s || '').replace(/\s+-\s+\d+$/, '');
+  }
+
   // ---- Loading + Empty + ErrorState helpers ----------------------------
   function Loading({ label = 'loading…' }) {
     return (
@@ -5487,6 +5563,7 @@ Object.assign(window, {
     const [counts, setCounts] = useState(null);  // { table: { total, missing } }
     const [ritms, setRitms]   = useState(null);  // recent RITMs for usage overlay
     const [ritmTotal, setRitmTotal] = useState(0);
+    const [stdChanges, setStdChanges] = useState(null);  // recent Standard CRs
 
     useEffect(() => {
       window.AuditLog.push('view', 'service-catalog', 'Service catalog overview');
@@ -5501,6 +5578,7 @@ Object.assign(window, {
         'catalog_ui_policy', 'catalog_script_client',
         'user_criteria', 'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
         'item_option_new_set', 'io_set_item',
+        'std_change_proposal',
       ].map(t => C.fetchTotalCount(t).then(r => [t, r]))).then(pairs => {
         if (!cancel) {
           const m = {};
@@ -5512,8 +5590,34 @@ Object.assign(window, {
       data.fetchTaskList('sc_req_item', { limit: 2000, order_by: 'sys_updated_on', dir: 'desc' })
         .then(r => { if (!cancel) { setRitms(r.rows || []); setRitmTotal(r.total || 0); } })
         .catch(() => { if (!cancel) { setRitms([]); setRitmTotal(0); } });
+      // Standard change templates create change_requests, not RITMs. Pull
+      // the standard ones to compute "Most-used record producers".
+      data.fetchTaskList('change_request', {
+        limit: 5000, filters: { type: 'standard' },
+        order_by: 'sys_updated_on', dir: 'desc',
+      })
+        .then(r => { if (!cancel) setStdChanges(r.rows || []); })
+        .catch(() => { if (!cancel) setStdChanges([]); });
       return () => { cancel = true; };
     }, []);
+
+    // Most-used record producers, ranked by # of change_requests created
+    // from the template. Display values on change_request.std_change_producer_version
+    // include " - N" version suffix; strip it to get the producer name.
+    const topProducers = useMemo(() => {
+      if (!items || !stdChanges) return null;
+      const itemsByName = new Map();
+      for (const it of items) itemsByName.set(String(it.name || ''), it);
+      const counts = new Map();
+      for (const cr of stdChanges) {
+        const tmpl = stripVersionSuffix(dv(cr, 'std_change_producer_version'));
+        if (!tmpl) continue;
+        if (!counts.has(tmpl)) counts.set(tmpl, { name: tmpl, total: 0, item: itemsByName.get(tmpl) || null });
+        counts.get(tmpl).total += 1;
+      }
+      return [...counts.values()].sort((a, b) => b.total - a.total).slice(0, 12);
+    }, [items, stdChanges]);
+    const stdChgPctOfWindow = stdChanges ? Math.round((stdChanges.length / Math.max(1, stdChanges.length)) * 100) : 0;
 
     // Aggregate per-cat_item RITM counts and outcomes from the real RITMs.
     const usageByCatItem = useMemo(() => {
@@ -5746,6 +5850,55 @@ Object.assign(window, {
           </div>
         </div>
 
+        {/* Most-used record producers (Standard Change templates).
+            These create change_request rows, not RITMs, so they're invisible
+            to the "Most-used items" panel above — surface them separately. */}
+        <div style={{ marginTop: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: 0 }}>
+              Most-used record producers
+              <span className="mono" style={{ color: 'var(--fg-4)', marginLeft: 8 }}>
+                from {stdChanges == null ? '…' : stdChanges.length.toLocaleString()} standard changes
+              </span>
+            </h2>
+            <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>
+              counts join change_request → std_change_proposal → std_change_record_producer
+            </span>
+          </div>
+          <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            {topProducers == null ? <Loading /> : topProducers.length === 0 ? (
+              <div style={{ padding: 24, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>
+                No standard changes in the snapshot reference catalog producers.
+              </div>
+            ) : (
+              <table className="dt" style={{ width: '100%' }}>
+                <thead><tr>
+                  <th>Standard Change template</th>
+                  <th style={{ width: 120 }} className="num">Changes created</th>
+                  <th style={{ width: 200 }}>Catalog item</th>
+                </tr></thead>
+                <tbody>
+                  {topProducers.map(p => (
+                    <tr key={p.name}
+                        onClick={() => p.item && window.navigate(`/catalog-items/${p.item.sys_id}`)}
+                        style={{ cursor: p.item ? 'pointer' : 'default' }}>
+                      <td>
+                        <strong style={{ fontWeight: 500 }}>{p.name}</strong>
+                      </td>
+                      <td className="num mono">{p.total.toLocaleString()}</td>
+                      <td>
+                        {p.item
+                          ? <span style={{ ...chip, background: KIND_CHIP.std_chg.bg, borderColor: KIND_CHIP.std_chg.border, color: KIND_CHIP.std_chg.fg }}>Open template →</span>
+                          : <span style={{ color: 'var(--fg-4)', fontSize: 11.5, fontStyle: 'italic' }}>(no matching sc_cat_item)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
         <div style={{ marginTop: 28 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
             <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: 0 }}>
@@ -5775,6 +5928,7 @@ Object.assign(window, {
                     {it.short_description || '—'}
                   </div>
                   <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-4)' }}>
+                    <KindChip it={it} />
                     <span style={chip}>{dv(it, 'category') || 'no category'}</span>
                     <span className="mono" style={{ marginLeft: 'auto' }}>{u ? u.rows.length.toLocaleString() : 0} RITMs</span>
                   </div>
@@ -5827,6 +5981,7 @@ Object.assign(window, {
     const [q, setQ] = useState('');
     const [catalog, setCatalog] = useState('');
     const [category, setCategory] = useState('');
+    const [kind, setKind] = useState('');  // empty = all kinds
     const [activeOnly, setActiveOnly] = useState(false);
 
     useEffect(() => {
@@ -5844,6 +5999,20 @@ Object.assign(window, {
       if (!items) return [];
       return [...new Set(items.map(i => dv(i, 'category')).filter(Boolean))].sort();
     }, [items]);
+    // Counts per kind (drives the dropdown labels so you can see
+    // how many of each type exist without filtering first).
+    const kindCounts = useMemo(() => {
+      const m = new Map();
+      for (const i of (items || [])) {
+        const k = C.kindOf(i);
+        const key = k.kind + '|' + k.label;
+        m.set(key, (m.get(key) || 0) + 1);
+      }
+      return [...m.entries()].map(([k, n]) => {
+        const [kind, label] = k.split('|');
+        return { kind, label, count: n };
+      }).sort((a, b) => b.count - a.count);
+    }, [items]);
 
     const filtered = useMemo(() => {
       if (!items) return [];
@@ -5851,12 +6020,13 @@ Object.assign(window, {
       return items.filter(i => {
         if (catalog && dv(i, 'sc_catalogs') !== catalog) return false;
         if (category && dv(i, 'category') !== category) return false;
+        if (kind && C.kindOf(i).kind !== kind) return false;
         if (activeOnly && !isTrue(dv(i, 'active'))) return false;
         if (!ql) return true;
         return [i.name, i.short_description, dv(i, 'category'), dv(i, 'sc_catalogs'), flat(i.sys_class_name)]
           .some(s => (s || '').toLowerCase().includes(ql));
       });
-    }, [items, q, catalog, category, activeOnly]);
+    }, [items, q, catalog, category, kind, activeOnly]);
 
     return (
       <div>
@@ -5867,6 +6037,13 @@ Object.assign(window, {
             {items && <> · {filtered.length.toLocaleString()} matching</>}
           </div>
           <div className="toolbar">
+            <select value={kind} onChange={e => setKind(e.target.value)}
+              style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, color: 'var(--fg)', outline: 'none' }}>
+              <option value="">All types ({items ? items.length : '…'})</option>
+              {kindCounts.map(k => (
+                <option key={k.kind} value={k.kind}>{k.label} ({k.count})</option>
+              ))}
+            </select>
             <select value={catalog} onChange={e => setCatalog(e.target.value)}
               style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, color: 'var(--fg)', outline: 'none' }}>
               <option value="">All catalogs</option>
@@ -5889,9 +6066,9 @@ Object.assign(window, {
         <table className="dt">
           <thead><tr>
             <th>Name</th>
+            <th style={{ width: 170 }}>Type</th>
             <th style={{ width: 200 }}>Category</th>
             <th style={{ width: 200 }}>Catalog</th>
-            <th style={{ width: 120 }}>Type</th>
             <th style={{ width: 100 }} className="num">Status</th>
           </tr></thead>
           <tbody>
@@ -5909,9 +6086,9 @@ Object.assign(window, {
                     {it.short_description || '—'}
                   </div>
                 </td>
+                <td><KindChip it={it} /></td>
                 <td>{dv(it, 'category') || <span style={{ color: 'var(--fg-4)' }}>—</span>}</td>
                 <td>{dv(it, 'sc_catalogs') || <span style={{ color: 'var(--fg-4)' }}>—</span>}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{flat(it.sys_class_name) || 'sc_cat_item'}</td>
                 <td>
                   {isTrue(dv(it, 'active'))
                     ? <span className="chip green">active</span>
@@ -5933,15 +6110,29 @@ Object.assign(window, {
     const [tab, setTab] = useState('variables');
     const [related, setRelated] = useState({});  // tab id → { rows, total, missing }
     const [usage, setUsage] = useState(null);
+    const [created, setCreated] = useState(null);  // producer-created records
 
     useEffect(() => {
       let cancel = false;
-      setRec(null); setRelated({}); setUsage(null);
+      setRec(null); setRelated({}); setUsage(null); setCreated(null);
       C.fetchItem(sys_id).then(r => {
         if (cancel) return;
         if (!r) { setRec(false); return; }
         setRec(r);
         window.AuditLog.push('view', `sc_cat_item/${flat(r.name) || sys_id.slice(0, 8)}`, flat(r.name) || '');
+        // For Standard Change templates, follow producer → proposal → change.
+        // For other producer subtypes, target table varies and isn't always
+        // recoverable from the envelope, so we only run the join for std_chg.
+        const k = C.kindOf(r);
+        if (k.kind === 'std_chg') {
+          C.fetchProducerCreatedRecords(flat(r.name))
+            .then(cr => { if (!cancel) setCreated(cr); })
+            .catch(() => { if (!cancel) setCreated({ proposals: [], changes: [], total: 0, missing: true }); });
+        } else if (C.PRODUCER_KINDS.has(k.kind)) {
+          // Other producers: surface a "Created records" tab but explain why
+          // we can't enumerate the spawned records.
+          setCreated({ proposals: [], changes: [], total: 0, unknownTarget: true });
+        }
       }).catch(e => {
         if (cancel) return;
         if (e && /403/.test(e.message || '')) setRec({ __hr_locked: true, sys_id });
@@ -5989,7 +6180,19 @@ Object.assign(window, {
     // Each tab row uses the related[<key>] envelope; missing=true marks
     // tabs whose backing table isn't pulled by the exporter yet.
     const r = (key) => related[key] || { rows: [], total: 0, missing: false, loading: true };
+    const itemKind = C.kindOf(rec);
+    const isProducer = C.PRODUCER_KINDS.has(itemKind.kind);
     const tabs = [
+      // For producer items, lead with "Created records" since variables
+      // typically aren't relevant to record producers (the producer's
+      // template defines the spawned record's fields directly).
+      ...(isProducer ? [{
+        id: 'created',
+        label: itemKind.kind === 'std_chg' ? 'Changes Created' : 'Created Records',
+        r: created == null
+          ? { loading: true, total: 0 }
+          : { total: created.total ?? created.changes.length, missing: created.missing, unknownTarget: created.unknownTarget },
+      }] : []),
       { id: 'variables',  label: 'Variables',                 r: r('variables') },
       { id: 'vsets',      label: 'Variable Sets',             r: r('vsets') },
       { id: 'policies',   label: 'Catalog UI Policies',       r: r('policies') },
@@ -6003,6 +6206,11 @@ Object.assign(window, {
       { id: 'relitems',   label: 'Related Catalog Items',     r: { rows: [], total: 0, missing: true, table: 'sc_cat_item_related_items' } },
       { id: 'topics',     label: 'Assigned Topics',           r: { rows: [], total: 0, missing: true, table: 'topic_item' } },
     ];
+    // When the active tab disappears (e.g. user nav-changes from a producer
+    // item to a regular item and back), default to the first tab so we
+    // don't render nothing.
+    const visibleIds = new Set(tabs.map(t => t.id));
+    const activeTab = visibleIds.has(tab) ? tab : tabs[0].id;
 
     return (
       <div className="record">
@@ -6021,9 +6229,9 @@ Object.assign(window, {
             </h1>
             <div className="title-row">
               {active ? <span className="chip green">active</span> : <span className="chip">inactive</span>}
+              <KindChip it={rec} />
               <span style={chip}>{cat}</span>
               <span style={chip}>{cata}</span>
-              <span style={chip}>{type}</span>
               {dv(rec, 'delivery_time') && <><span className="dot">·</span><span>delivery {dv(rec, 'delivery_time')}</span></>}
               {flat(rec.price) && <><span className="dot">·</span><span>{flat(rec.price)}{flat(rec.recurring_price) ? ' / ' + flat(rec.recurring_price) : ''}</span></>}
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
@@ -6059,20 +6267,21 @@ Object.assign(window, {
           </div>
 
           <div className="section">
-            <CatalogTabs tabs={tabs} active={tab} onChange={setTab} />
+            <CatalogTabs tabs={tabs} active={activeTab} onChange={setTab} />
             <div style={{ paddingTop: 8 }}>
-              {tab === 'variables'  && <VariablesTab r={r('variables')} />}
-              {tab === 'vsets'      && <VariableSetsTab r={r('vsets')} />}
-              {tab === 'policies'   && <UIPoliciesTab r={r('policies')} actions={r('actions')} />}
-              {tab === 'scripts'    && <ClientScriptsTab r={r('scripts')} />}
-              {tab === 'available'  && <UserCriteriaTab r={r('available')} kind="allow" />}
-              {tab === 'notavail'   && <UserCriteriaTab r={r('notavail')} kind="deny" />}
-              {tab === 'categories' && <CategoriesTab name={cat} sys_id={flat(rec.category)} />}
-              {tab === 'catalogs'   && <CatalogsTab name={cata} sys_id={flat(rec.sc_catalogs)} />}
-              {tab === 'lookups'    && <NotInSnapshot table="sc_cat_item_data_lookup_definitions" />}
-              {tab === 'articles'   && <NotInSnapshot table="m2m_kb_to_sc_cat_item" />}
-              {tab === 'relitems'   && <NotInSnapshot table="sc_cat_item_related_items" />}
-              {tab === 'topics'     && <NotInSnapshot table="topic_item" />}
+              {activeTab === 'created'    && <CreatedRecordsTab created={created} kind={itemKind.kind} />}
+              {activeTab === 'variables'  && <VariablesTab r={r('variables')} />}
+              {activeTab === 'vsets'      && <VariableSetsTab r={r('vsets')} />}
+              {activeTab === 'policies'   && <UIPoliciesTab r={r('policies')} actions={r('actions')} />}
+              {activeTab === 'scripts'    && <ClientScriptsTab r={r('scripts')} />}
+              {activeTab === 'available'  && <UserCriteriaTab r={r('available')} kind="allow" />}
+              {activeTab === 'notavail'   && <UserCriteriaTab r={r('notavail')} kind="deny" />}
+              {activeTab === 'categories' && <CategoriesTab name={cat} sys_id={flat(rec.category)} />}
+              {activeTab === 'catalogs'   && <CatalogsTab name={cata} sys_id={flat(rec.sc_catalogs)} />}
+              {activeTab === 'lookups'    && <NotInSnapshot table="sc_cat_item_data_lookup_definitions" />}
+              {activeTab === 'articles'   && <NotInSnapshot table="m2m_kb_to_sc_cat_item" />}
+              {activeTab === 'relitems'   && <NotInSnapshot table="sc_cat_item_related_items" />}
+              {activeTab === 'topics'     && <NotInSnapshot table="topic_item" />}
             </div>
           </div>
 
@@ -6207,6 +6416,69 @@ Object.assign(window, {
     const n = parseInt(t, 10);
     if (!isNaN(n) && VAR_TYPE_LABEL[n]) return VAR_TYPE_LABEL[n];
     return rec.__display_type || t;
+  }
+
+  // ---- Created Records (producer-spawned) ------------------------------
+  // For std change templates: shows the change_request rows that came out
+  // of the template (joined via std_change_proposal). For other producer
+  // subtypes the target table isn't recoverable from the envelope, so we
+  // explain the mapping and link to ServiceNow's std change usage shape.
+  function CreatedRecordsTab({ created, kind }) {
+    if (created == null) return <Loading label="Joining change_request → std_change_proposal…" />;
+    if (created.unknownTarget) {
+      return (
+        <Empty
+          icon="info"
+          text="This producer's target table isn't recorded in the envelope."
+          hint="Generic Record Producers can spawn into incident, change_request, problem, rm_defect, etc. The target is set by a server-side script on order, so the spawned record doesn't carry a back-reference to the producer. To enumerate created records, scan the target table's source / origin field per producer."
+        />
+      );
+    }
+    if (created.missing) return <NotInSnapshot table="std_change_proposal" />;
+    if (!created.changes.length) return <Empty text="No change_requests have been created from this template (yet)." />;
+
+    const showProposals = (created.proposals || []).length > 1;
+    return (
+      <div>
+        {showProposals && (
+          <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--accent-bg)', border: '1px solid var(--accent-border)', borderRadius: 6, fontSize: 12, color: 'var(--accent-fg)' }}>
+            This template has {created.proposals.length} versions.{' '}
+            Counts below combine all of them.
+          </div>
+        )}
+        <table className="dt">
+          <thead><tr>
+            <th style={{ width: 130 }}>Number</th>
+            <th>Short description</th>
+            <th style={{ width: 120 }}>State</th>
+            <th style={{ width: 130 }}>Assignment group</th>
+            <th style={{ width: 110 }} className="num">Updated</th>
+          </tr></thead>
+          <tbody>
+            {created.changes.slice(0, 100).map(cr => {
+              const stDec = window.decodeChoice('change_request', 'state', flat(cr.state));
+              const stCls = window.stateChipClass('change_request', flat(cr.state));
+              return (
+                <tr key={cr.sys_id} onClick={() => window.navigate(window.recordUrl('change_request', cr.sys_id))}>
+                  <td className="num">{flat(cr.number)}</td>
+                  <td><span className="truncate">{flat(cr.short_description) || '—'}</span></td>
+                  <td>{flat(cr.state)
+                    ? <span className={`chip ${stCls}`}>{stDec.label || flat(cr.state)}</span>
+                    : <span className="muted">—</span>}</td>
+                  <td className="muted" style={{ fontSize: 11.5 }}>{dv(cr, 'assignment_group') || '—'}</td>
+                  <td className="num muted" title={flat(cr.sys_updated_on)}>{window.fmtRelative(flat(cr.sys_updated_on))}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {created.changes.length > 100 && (
+          <div style={{ padding: '10px 0', textAlign: 'center', color: 'var(--fg-4)', fontSize: 11.5 }}>
+            Showing first 100 of {created.changes.length}. Total in snapshot: {created.total.toLocaleString()}.
+          </div>
+        )}
+      </div>
+    );
   }
 
   function VariablesTab({ r }) {

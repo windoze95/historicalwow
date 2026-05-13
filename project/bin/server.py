@@ -171,6 +171,9 @@ REFERENCE_TABLES = {
     'user_criteria',
     'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
     'item_option_new_set', 'io_set_item', 'topic',
+    # std_change_proposal bridges change_request back to a
+    # std_change_record_producer via template_name = sc_cat_item.name.
+    'std_change_proposal',
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
     'cmdb_ci_spkg', 'cmdb_software_instance',
@@ -680,6 +683,7 @@ CACHE_5MIN = {
     'user_criteria',
     'sc_cat_item_user_criteria_mtom', 'sc_cat_item_user_criteria_no_mtom',
     'item_option_new_set', 'io_set_item', 'topic',
+    'std_change_proposal',
     'item_option_new', 'question', 'question_choice',
 }
 

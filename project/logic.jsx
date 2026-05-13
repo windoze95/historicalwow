@@ -1475,10 +1475,10 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
       const meta = [
         `order=${r.order ?? r.priority ?? '?'}`,
         r.when ? `when=${r.when}` : null,
-        r.action_insert === 'true' || r.action_insert === 1 ? 'on_insert' : null,
-        r.action_update === 'true' || r.action_update === 1 ? 'on_update' : null,
-        r.action_delete === 'true' || r.action_delete === 1 ? 'on_delete' : null,
-        r.action_query  === 'true' || r.action_query  === 1 ? 'on_query'  : null,
+        isTrue(r.action_insert) ? 'on_insert' : null,
+        isTrue(r.action_update) ? 'on_update' : null,
+        isTrue(r.action_delete) ? 'on_delete' : null,
+        isTrue(r.action_query)  ? 'on_query'  : null,
       ].filter(Boolean).join(', ');
       push(`### "${r.name || '(unnamed)'}" — ${meta}`);
       if (r.condition)        push(`Condition: \`${r.condition}\``);
@@ -1495,7 +1495,7 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
       const meta = [
         r.type ? `type=${r.type}` : null,
         r.ui_type ? `ui_type=${r.ui_type}` : null,
-        r.field ? `field=${r.field}` : null,
+        r.field_name ? `field=${r.field_name}` : null,
       ].filter(Boolean).join(', ');
       push(`### "${r.name || '(unnamed)'}" — ${meta}`);
       if (r.condition)   push(`Condition: \`${r.condition}\``);
@@ -1509,9 +1509,9 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
       push('');
       const meta = [
         p.order != null ? `order=${p.order}` : null,
-        p.run_scripts === 1 || p.run_scripts === '1' || p.run_scripts === 'true' ? 'run_scripts=true' : null,
-        p.reverse_if_false === 1 || p.reverse_if_false === '1' || p.reverse_if_false === 'true' ? 'reverse_if_false=true' : null,
-        p.on_load === 1 || p.on_load === '1' || p.on_load === 'true' ? 'on_load=true' : null,
+        isTrue(p.run_scripts)      ? 'run_scripts=true'      : null,
+        isTrue(p.reverse_if_false) ? 'reverse_if_false=true' : null,
+        isTrue(p.on_load)          ? 'on_load=true'          : null,
       ].filter(Boolean).join(', ');
       push(`### "${p.short_description || '(no description)'}" — ${meta}`);
       if (p.conditions) push(`Conditions (encoded query): \`${p.conditions}\``);

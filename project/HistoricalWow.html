@@ -7888,18 +7888,32 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
 
   // Collect every script body in scope on the current table so the
   // cascade walker can scan them. Returns [{ label, body }].
+  //
+  // Includes the rule body but also the advanced `condition` and
+  // `filter_condition` fields: ServiceNow lets a rule put JavaScript
+  // there (`new MyUtil().shouldRun(current)`) to decide whether to
+  // fire, and prior versions of this builder copied those strings into
+  // the prompt without cascading the includes they referenced. The
+  // word-boundary scanner is happy to run against encoded-query
+  // syntax too — those just won't match any include names.
   function seedScriptsFor(d) {
     const out = [];
     const active = (env) => (env?.rows || []).filter(r => isTrue(r.active) || r.active == null);
+    const push = (label, body) => {
+      if (body) out.push({ label, body: String(body) });
+    };
     for (const r of active(d.br)) {
-      if (r.script) out.push({ label: `BR/${r.name}`, body: String(r.script) });
+      push(`BR/${r.name}`,            r.script);
+      push(`BR/${r.name}/condition`,  r.condition);
+      push(`BR/${r.name}/filter`,     r.filter_condition);
     }
     for (const r of active(d.cs)) {
-      if (r.script) out.push({ label: `CS/${r.name}`, body: String(r.script) });
+      push(`CS/${r.name}`,           r.script);
+      push(`CS/${r.name}/condition`, r.condition);
     }
     for (const p of active(d.uip)) {
-      if (p.script_true)  out.push({ label: `UIP/${p.short_description}/true`,  body: String(p.script_true) });
-      if (p.script_false) out.push({ label: `UIP/${p.short_description}/false`, body: String(p.script_false) });
+      push(`UIP/${p.short_description}/true`,  p.script_true);
+      push(`UIP/${p.short_description}/false`, p.script_false);
     }
     return out;
   }

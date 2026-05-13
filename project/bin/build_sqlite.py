@@ -509,6 +509,18 @@ SCHEMAS = {
         ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
         ('description',    lambda r: _v(r.get('description'))),
     ],
+    # ACLs. `name` is "table" or "table.field" or "table.action_xyz" — the
+    # per-table inspector queries q=<table> and post-filters client-side
+    # to that pattern, since the /api filter is exact-match.
+    'sys_security_acl': [
+        ('name',            lambda r: _v(r.get('name'))),
+        ('operation',       lambda r: _v(r.get('operation'))),
+        ('type',            lambda r: _dv(r.get('type'))),
+        ('active',          lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('admin_overrides', lambda r: 1 if str(_v(r.get('admin_overrides')) or 'false').lower() == 'true' else 0),
+        ('decision_type',   lambda r: _v(r.get('decision_type'))),
+        ('sys_class_name',  lambda r: _v(r.get('sys_class_name'))),
+    ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific
     # additions on top so the list views can filter on what they care about.

@@ -192,6 +192,7 @@ REFERENCE_TABLES = {
     'sys_properties', 'sys_ui_action',
     'sys_dictionary', 'sys_dictionary_override',
     'sys_hub_flow',
+    'sys_security_acl',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 
@@ -722,6 +723,7 @@ CACHE_5MIN = {
     'sys_properties', 'sys_ui_action',
     'sys_dictionary', 'sys_dictionary_override',
     'sys_hub_flow',
+    'sys_security_acl',
 }
 
 

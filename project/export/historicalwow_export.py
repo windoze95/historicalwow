@@ -302,6 +302,7 @@ DEFAULT_TABLES = [
     'sys_dictionary',
     'sys_dictionary_override',
     'sys_hub_flow',
+    'sys_security_acl',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',

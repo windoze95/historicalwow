@@ -70,6 +70,7 @@ function App() {
   useEffect(() => {
     if (route.view === 'list') window.AuditLog.push('list', route.table, '');
     if (route.view === 'home') window.AuditLog.push('view', 'home', 'Snapshot landing');
+    if (route.view === 'service_catalog_home') window.AuditLog.push('view', 'service-catalog', 'Service catalog overview');
   }, [route.view, route.table]);
 
   if (!data.loadStatus.ready) {
@@ -138,8 +139,11 @@ function App() {
         <Sidebar route={route} />
         <main className="main">
           {route.view === 'home' && <window.HomePage openPalette={() => setPaletteOpen(true)} />}
-          {route.view === 'list' && <window.ListPage table={route.table} />}
-          {route.view === 'record' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
+          {route.view === 'service_catalog_home' && <window.CatalogOverviewPage />}
+          {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
+          {route.view === 'list' && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
+          {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table !== 'sc_cat_item' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_ci' && <window.CIRefPage sys_id={route.sys_id} />}
@@ -254,6 +258,8 @@ function Sidebar({ route }) {
     { sep: 'Changes' },
     navItem('/changes',         'change',   'Change requests',  'change_request'),
     { sep: 'Service catalog' },
+    { id: '/service-catalog', icon: 'star',  label: 'Catalog overview' },
+    { id: '/catalog-items',   icon: 'book',  label: 'Catalog items', count: window.HistoricalWowCatalog?.sc_cat_item.length || 0 },
     navItem('/requests',        'folder',   'Requests',         'sc_request'),
     navItem('/requested-items', 'file',     'Requested items',  'sc_req_item'),
     navItem('/catalog-tasks',   'check',    'Catalog tasks',    'sc_task'),
@@ -277,10 +283,12 @@ function Sidebar({ route }) {
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
     if (id === '/') return route.view === 'home';
+    if (id === '/service-catalog') return route.view === 'service_catalog_home';
     const map = {
       '/incidents': 'incident', '/changes': 'change_request',
       '/problems': 'problem', '/requests': 'sc_request',
       '/requested-items': 'sc_req_item', '/catalog-tasks': 'sc_task',
+      '/catalog-items': 'sc_cat_item',
       '/group-approvals': 'sysapproval_group', '/asset-tasks': 'asset_task',
       '/hardware': 'alm_hardware', '/licenses': 'alm_license',
       '/consumables': 'alm_consumable', '/facilities': 'alm_facility',

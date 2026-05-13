@@ -6226,12 +6226,21 @@ Object.assign(window, {
     'GlideScopedEvaluator','GlideSystem','GlideTime','GlideUser','GlideURI',
     'gs','g_form','g_user','g_scratchpad',
   ]);
-  const CALL_SHAPE_BUILDERS = [
+  // Two builder groups so blocklisted names only contribute the
+  // unambiguous string-literal forms. `gs.include('JSON')` and
+  // `new GlideAjax('JSON')` are obvious references to a customer
+  // include named JSON — the include name is in a quoted string,
+  // can't be confused with the native built-in. Identifier-context
+  // forms (`new JSON(`, `JSON.method(`, etc.) collide with the
+  // native built-in and would over-pull.
+  const IDENTIFIER_BUILDERS = [
     (e) => 'new\\s+' + e + '\\s*\\(',
     (e) => '\\b' + e + '\\.[A-Za-z_$][\\w$]*\\s*\\(',
     (e) => '\\b' + e + '\\.prototype\\b',
     (e) => '\\bextends\\s+' + e + '\\b',
     (e) => '\\bextendsObject\\s*\\(\\s*' + e + '\\b',
+  ];
+  const STRING_LITERAL_BUILDERS = [
     (e) => "gs\\.include\\(\\s*['\"]" + e + "['\"]\\s*\\)",
     (e) => "new\\s+GlideAjax\\s*\\(\\s*['\"]" + e + "['\"]",
   ];
@@ -6243,7 +6252,10 @@ Object.assign(window, {
     for (const n of allNames) {
       if (!n || n.length < 3) continue;
       const e = escRegex(n);
-      for (const build of CALL_SHAPE_BUILDERS) parts.push(build(e));
+      const builders = BUILTIN_NAME_BLOCKLIST.has(n)
+        ? STRING_LITERAL_BUILDERS
+        : [...IDENTIFIER_BUILDERS, ...STRING_LITERAL_BUILDERS];
+      for (const build of builders) parts.push(build(e));
     }
     if (!parts.length) return null;
     try { return new RegExp(parts.join('|')); }
@@ -6283,14 +6295,13 @@ Object.assign(window, {
           const tail = api.split('.').pop();
           if (tail) names.add(tail);
         }
-        // Drop blocklisted bare names; keep the namespaced api_name
-        // form so a `global.JSON.parse(...)` call (when explicitly
-        // qualified) can still resolve, while bare `JSON.parse(...)`
-        // — which is the dominant case — doesn't drag the override
-        // include into the cascade.
-        for (const n of [...names]) {
-          if (BUILTIN_NAME_BLOCKLIST.has(n)) names.delete(n);
-        }
+        // Note: we keep blocklisted bare names in all_names. The
+        // coarse pass still adds them as candidates, but the strict
+        // pattern compiled by buildStrictPattern restricts those
+        // names to string-literal call-shapes (gs.include('JSON'),
+        // new GlideAjax('JSON')) — so an unambiguous reference still
+        // resolves, while bare JSON.parse(...) doesn't drag the
+        // override include into the cascade.
         return {
           sys_id: sid, name, api_name: api, all_names: [...names],
           _pattern: undefined,   // lazy-compiled in scanForIncludes

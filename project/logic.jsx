@@ -1655,36 +1655,185 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
   // Disabled until at least the BR/CS/UIP/DP tabs have settled, so the
   // user doesn't paste a partial snapshot into the model and miss half
   // the table's behavior.
+  // Total prompt-size cap. Anything past this is dropped with an
+  // explicit truncation marker — most LLMs accept multi-hundred-KB
+  // pastes, but very deep call graphs (Script Include A calls B calls C…)
+  // can balloon when the table has many BRs. 600 KB ≈ 150K tokens, safe
+  // for Claude / GPT-4o / Gemini 1.5 context windows.
+  const PROMPT_BUDGET_BYTES = 600 * 1024;
+
+  // Walk script bodies → directly-referenced sys_script_includes →
+  // bodies of those includes → further includes they reference, etc.
+  // Returns ordered, deduped, depth-1-first list of include records,
+  // each as { sys_id, name, api_name, description, script, depth,
+  // referrers: Set<sys_id_of_caller> }. Cycles are broken by the seen
+  // set so a self-referential include doesn't loop forever.
+  async function gatherCascadedIncludes(seedScripts) {
+    const includes = await L.getIncludeIndex();
+    if (!includes.length) return [];
+    const collected = new Map();   // sys_id → { record, depth, referrers }
+    const queue = [];              // [{ from_label, body, depth }]
+    for (const seed of seedScripts) {
+      queue.push({ body: seed.body, from_label: seed.label, depth: 0 });
+    }
+    while (queue.length) {
+      const { body, depth } = queue.shift();
+      if (!body) continue;
+      const hits = scanForIncludes(body, includes);
+      for (const inc of hits) {
+        if (collected.has(inc.sys_id)) continue;   // already gathered
+        collected.set(inc.sys_id, { stub: inc, depth: depth + 1, record: null });
+      }
+    }
+    // Fetch the bodies of all gathered includes in parallel.
+    const ids = [...collected.keys()];
+    const records = await Promise.all(ids.map(sid =>
+      data.fetchRecord('sys_script_include', sid).catch(() => null)
+    ));
+    for (let i = 0; i < ids.length; i++) {
+      const c = collected.get(ids[i]);
+      c.record = records[i];
+    }
+    // Now do the cascade rounds. Each round scans the bodies of the
+    // includes we just fetched and adds any new transitive includes.
+    let frontier = ids.slice();
+    while (frontier.length) {
+      const next = [];
+      for (const sid of frontier) {
+        const c = collected.get(sid);
+        if (!c || !c.record) continue;
+        const body = (c.record.script && c.record.script.value) || c.record.script || '';
+        if (!body) continue;
+        const hits = scanForIncludes(String(body), includes);
+        for (const inc of hits) {
+          if (collected.has(inc.sys_id)) continue;
+          collected.set(inc.sys_id, { stub: inc, depth: c.depth + 1, record: null });
+          next.push(inc.sys_id);
+        }
+      }
+      if (!next.length) break;
+      const recs = await Promise.all(next.map(sid =>
+        data.fetchRecord('sys_script_include', sid).catch(() => null)
+      ));
+      for (let i = 0; i < next.length; i++) {
+        collected.get(next[i]).record = recs[i];
+      }
+      frontier = next;
+    }
+    // Sort by depth ascending (closest references first), then by name.
+    return [...collected.values()]
+      .filter(c => c.record)
+      .sort((a, b) => {
+        if (a.depth !== b.depth) return a.depth - b.depth;
+        const an = (a.record.name && a.record.name.value) || a.record.name || '';
+        const bn = (b.record.name && b.record.name.value) || b.record.name || '';
+        return String(an).localeCompare(String(bn));
+      });
+  }
+
+  // Format the cascaded includes as a markdown section to append to
+  // the base prompt. Each include is fenced as JavaScript. If we hit
+  // the size budget mid-section, emit a truncation marker that names
+  // the includes that were skipped so the LLM can be honest about
+  // what it's missing.
+  function renderIncludesSection(cascaded, alreadyUsed) {
+    if (!cascaded.length) return '\n## Referenced script includes — 0 (transitive)\n';
+    const fence = (s) => '```javascript\n' + (s == null ? '' : String(s)) + '\n```';
+    const parts = [`\n## Referenced script includes — ${cascaded.length} (transitive, depth-sorted)\n`];
+    let used = alreadyUsed;
+    let truncatedAt = -1;
+    for (let i = 0; i < cascaded.length; i++) {
+      const c = cascaded[i];
+      const rec = c.record;
+      const get = (k) => (rec[k] && rec[k].value !== undefined) ? rec[k].value : rec[k];
+      const name = get('name') || '(unnamed)';
+      const api = get('api_name') || '';
+      const desc = get('description') || '';
+      const script = get('script') || '';
+      const block =
+        `\n### "${name}"${api ? ` · \`${api}\`` : ''} — depth ${c.depth}\n` +
+        (desc ? `Description: ${desc}\n` : '') +
+        fence(script) + '\n';
+      if (used + block.length > PROMPT_BUDGET_BYTES) {
+        truncatedAt = i;
+        break;
+      }
+      parts.push(block);
+      used += block.length;
+    }
+    if (truncatedAt >= 0) {
+      const remaining = cascaded.slice(truncatedAt);
+      const names = remaining.slice(0, 25).map(c => {
+        const rec = c.record;
+        const get = (k) => (rec[k] && rec[k].value !== undefined) ? rec[k].value : rec[k];
+        return `${get('name')} (depth ${c.depth})`;
+      }).join(', ');
+      parts.push(
+        `\n<!-- TRUNCATED: ${remaining.length} more script include(s) omitted to keep ` +
+        `the prompt under ${Math.round(PROMPT_BUDGET_BYTES/1024)} KB. ` +
+        `Omitted: ${names}${remaining.length > 25 ? ', …' : ''} -->\n`
+      );
+    }
+    return parts.join('');
+  }
+
+  // Collect every script body in scope on the current table so the
+  // cascade walker can scan them. Returns [{ label, body }].
+  function seedScriptsFor(d) {
+    const out = [];
+    const active = (env) => (env?.rows || []).filter(r => isTrue(r.active) || r.active == null);
+    for (const r of active(d.br)) {
+      if (r.script) out.push({ label: `BR/${r.name}`, body: String(r.script) });
+    }
+    for (const r of active(d.cs)) {
+      if (r.script) out.push({ label: `CS/${r.name}`, body: String(r.script) });
+    }
+    for (const p of active(d.uip)) {
+      if (p.script_true)  out.push({ label: `UIP/${p.short_description}/true`,  body: String(p.script_true) });
+      if (p.script_false) out.push({ label: `UIP/${p.short_description}/false`, body: String(p.script_false) });
+    }
+    return out;
+  }
+
   function CopyLlmPromptButton({ name, d, copied, setCopied }) {
+    const [building, setBuilding] = useState(false);
     const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr'].map(k => {
       const e = d[k];
-      // ready when fetch settled (rows array present, not loading)
       return !!(e && Array.isArray(e.rows));
     });
     const ready = readiness.every(Boolean);
-    const prompt = useMemo(() => ready ? buildLogicPrompt(name, d) : '', [ready, name, d]);
-    const kb = prompt ? Math.round(prompt.length / 1024) : 0;
+    const basePrompt = useMemo(() => ready ? buildLogicPrompt(name, d) : '', [ready, name, d]);
+    const baseKb = basePrompt ? Math.round(basePrompt.length / 1024) : 0;
     const onClick = async () => {
-      if (!ready || !prompt) return;
+      if (!ready || !basePrompt || building) return;
+      setBuilding(true);
       try {
-        await navigator.clipboard.writeText(prompt);
-      } catch (_) {
-        // Fallback for browsers without async clipboard API
-        const ta = document.createElement('textarea');
-        ta.value = prompt;
-        ta.style.position = 'fixed'; ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); } catch (__) {}
-        document.body.removeChild(ta);
+        const seeds = seedScriptsFor(d);
+        const cascaded = await gatherCascadedIncludes(seeds);
+        const tail = renderIncludesSection(cascaded, basePrompt.length);
+        const full = basePrompt + tail;
+        try {
+          await navigator.clipboard.writeText(full);
+        } catch (_) {
+          // Locked-down browser fallback
+          const ta = document.createElement('textarea');
+          ta.value = full;
+          ta.style.position = 'fixed'; ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch (__) {}
+          document.body.removeChild(ta);
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2400);
+      } finally {
+        setBuilding(false);
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
     };
     return (
-      <button onClick={onClick} disabled={!ready}
+      <button onClick={onClick} disabled={!ready || building}
         title={ready
-          ? `Copy a structured prompt of every active rule on ${name}. Paste into ChatGPT / Claude / Gemini and it'll explain the table's behavior in plain English.`
+          ? `Copy a structured prompt of every active rule on ${name}, plus the bodies of every script include those rules transitively call. Paste into ChatGPT / Claude / Gemini for a plain-English explanation.`
           : 'Waiting for all tabs to load…'}
         style={{
           marginLeft: 'auto',
@@ -1695,16 +1844,18 @@ Be specific. Cite rule names. If you cannot tell from the script alone what a ru
           background: copied ? 'var(--accent-bg)' : 'var(--bg-elev)',
           border: '1px solid ' + (copied ? 'var(--accent-border)' : 'var(--border-2)'),
           color: copied ? 'var(--accent-fg)' : 'var(--fg-2)',
-          cursor: ready ? 'pointer' : 'not-allowed',
+          cursor: ready && !building ? 'pointer' : 'not-allowed',
           opacity: ready ? 1 : 0.6,
           display: 'inline-flex', alignItems: 'center', gap: 6,
         }}>
-        <window.Icon name={copied ? 'check' : 'download'} size={11} />
+        <window.Icon name={copied ? 'check' : building ? 'refresh' : 'download'} size={11} />
         {copied
           ? 'Copied'
-          : ready
-            ? <>Copy LLM prompt <span className="mono" style={{ color: 'var(--fg-4)' }}>{kb} KB</span></>
-            : 'Loading…'}
+          : building
+            ? 'Resolving includes…'
+            : ready
+              ? <>Copy LLM prompt <span className="mono" style={{ color: 'var(--fg-4)' }}>{baseKb} KB +</span></>
+              : 'Loading…'}
       </button>
     );
   }

@@ -545,6 +545,8 @@ a { color: inherit; text-decoration: none; }
 }
 .record .left, .record .right { overflow-y: auto; min-height: 0; }
 .record .left { border-right: 1px solid var(--border); }
+.record.single { grid-template-columns: minmax(0, 1fr); }
+.record.single .left { border-right: none; }
 
 .record-header {
   padding: 22px 28px 18px;
@@ -7502,7 +7504,7 @@ Object.assign(window, {
     const next = anchor ? nextRunAfter(rec, anchor) : null;
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">
@@ -7610,7 +7612,7 @@ Object.assign(window, {
     const targetTable = tableField ? flat(rec[tableField]) : null;
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">
@@ -8253,7 +8255,7 @@ flagging the omission.
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">

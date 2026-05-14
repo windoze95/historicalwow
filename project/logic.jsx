@@ -1393,7 +1393,7 @@
     const next = anchor ? nextRunAfter(rec, anchor) : null;
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">
@@ -1501,7 +1501,7 @@
     const targetTable = tableField ? flat(rec[tableField]) : null;
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">
@@ -2144,7 +2144,7 @@ flagging the omission.
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 
     return (
-      <div className="record">
+      <div className="record single">
         <div className="left">
           <div className="record-header">
             <div className="crumbs">

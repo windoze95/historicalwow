@@ -535,6 +535,8 @@ a { color: inherit; text-decoration: none; }
 }
 .record .left, .record .right { overflow-y: auto; min-height: 0; }
 .record .left { border-right: 1px solid var(--border); }
+.record.single { grid-template-columns: minmax(0, 1fr); }
+.record.single .left { border-right: none; }
 
 .record-header {
   padding: 22px 28px 18px;

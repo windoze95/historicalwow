@@ -8253,7 +8253,7 @@ flagging the omission.
       })();
 
       return () => { cancel = true; };
-    }, [d.br, d.cs, d.uip]);
+    }, [d.br, d.cs, d.uip, d.acls, d.uiact]);
 
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 

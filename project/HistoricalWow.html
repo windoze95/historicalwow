@@ -7929,13 +7929,8 @@ flagging the omission.
       push(`### "${a.name || '(unnamed)'}" — ${meta}`);
       if (cond) push(`Condition: \`${cond}\``);
       if (scr) {
-        // First ~30 lines is enough to see the gist of any access-decision
-        // helper; full bodies blow up the prompt and rarely add insight.
-        const lines30 = scr.split('\n').slice(0, 30).join('\n');
         push('');
-        push(code(lines30));
-        const total = scr.split('\n').length;
-        if (total > 30) push(`(script truncated — ${total - 30} more line(s))`);
+        push(code(scr));
       }
     }
 

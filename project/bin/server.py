@@ -250,10 +250,12 @@ def _send_static(handler, path, content_type=None):
             '.css':  'text/css; charset=utf-8',
             '.js':   'application/javascript; charset=utf-8',
             '.json': 'application/json; charset=utf-8',
+            '.yaml': 'application/yaml; charset=utf-8',
             '.png':  'image/png',
             '.jpg':  'image/jpeg',
             '.jpeg': 'image/jpeg',
             '.svg':  'image/svg+xml',
+            '.ico':  'image/x-icon',
             '.pdf':  'application/pdf',
             '.txt':  'text/plain; charset=utf-8',
             '.log':  'text/plain; charset=utf-8',
@@ -880,6 +882,26 @@ class Handler(BaseHTTPRequestHandler):
                         return _send_error(self, HTTPStatus.FORBIDDEN, 'hr_locked')
             return _send_static(self, target)
 
+        # Interactive docs and OpenAPI spec. Public — these routes sit in
+        # front of the HR gate. The spec *describes* HR-gated endpoints but
+        # holds no row data; try-it-out from /docs still goes through the
+        # gate on every individual request.
+        if path in ('/docs', '/docs/'):
+            return _send_static(self, APP_DIR / 'docs' / 'swagger-ui' / 'index.html')
+        if path in ('/openapi.yaml', '/openapi-schemas.yaml'):
+            return _send_static(self, APP_DIR / 'docs' / path.lstrip('/'),
+                                content_type='application/yaml; charset=utf-8')
+        m = re.match(r'^/docs/([\w.\-]+\.(?:css|js|png|ico|html|map))$', path)
+        if m:
+            asset = APP_DIR / 'docs' / 'swagger-ui' / m.group(1)
+            # Defense in depth alongside the allow-listed extension regex —
+            # same shape as the /data/attachments/ guard above.
+            try:
+                asset.resolve().relative_to((APP_DIR / 'docs' / 'swagger-ui').resolve())
+            except ValueError:
+                return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
+            return _send_static(self, asset)
+
         # API
         if path == '/api/manifest':
             return get_manifest(self)
@@ -931,6 +953,11 @@ def main():
     if not STATIC_HTML.is_file():
         log.error('HistoricalWow.html missing at %s', STATIC_HTML)
         sys.exit(1)
+    openapi_yaml = APP_DIR / 'docs' / 'openapi.yaml'
+    swagger_index = APP_DIR / 'docs' / 'swagger-ui' / 'index.html'
+    if not openapi_yaml.is_file() or not swagger_index.is_file():
+        log.warning('docs assets missing at %s — /docs and /openapi.yaml will 404',
+                    APP_DIR / 'docs')
 
     log.info('starting on :%d  app=%s  data=%s  db=%s',
              PORT, APP_DIR, DATA_DIR, 'present' if DB_PATH.is_file() else 'MISSING')

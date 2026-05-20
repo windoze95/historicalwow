@@ -24,10 +24,19 @@ RUN apk add --no-cache wget && \
 COPY project/HistoricalWow.html /app/HistoricalWow.html
 COPY project/bin/server.py      /app/bin/server.py
 
+# API docs: OpenAPI spec, narrative guide, table catalog, and the vendored
+# Swagger UI assets that /docs serves. The runtime image needs these so the
+# /docs and /openapi.yaml routes in server.py have something to return.
+COPY docs/                      /app/docs/
+
 # Symlink so the viewer is reachable as the directory root.
 RUN ln -sf /app/HistoricalWow.html /app/index.html && \
     test -s /app/HistoricalWow.html && \
-    test -s /app/bin/server.py
+    test -s /app/bin/server.py && \
+    test -s /app/docs/openapi.yaml && \
+    test -s /app/docs/openapi-schemas.yaml && \
+    test -s /app/docs/swagger-ui/index.html && \
+    test -s /app/docs/swagger-ui/swagger-ui-bundle.js
 
 EXPOSE 80
 

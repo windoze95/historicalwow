@@ -851,19 +851,29 @@ class Handler(BaseHTTPRequestHandler):
         # Attachment file bodies. URL shape: /data/attachments/<shard>/<attach_sys_id>/<filename>
         if path.startswith('/data/attachments/'):
             rel = path[len('/data/'):]
+            parts = rel.split('/')
+            # Reject path-traversal / empty segments before deriving any
+            # value from the URL. Without this, a request like
+            # /data/attachments/<x>/<x>/q/../../<hr_shard>/<hr_id>/<file>
+            # would resolve via Path.resolve() to the HR file while the
+            # HR-gate check below would read <x> as parts[2] and let it
+            # through. Resolving first then re-deriving parts is an
+            # alternative; rejecting traversal up front is simpler and
+            # also blocks symlink-chasing attacks.
+            if any(p in ('', '.', '..') for p in parts):
+                return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
             target = (DATA_DIR / rel).resolve()
-            # Path traversal guard
+            # Defense in depth: even with no traversal segments, confirm
+            # the resolved path is under DATA_DIR.
             try:
                 target.relative_to(DATA_DIR)
             except ValueError:
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
-            # HR gate. The shard ([0]=attachments, [1]=shard, [2]=attach_sys_id)
-            # lets us look up the sys_attachment row and refuse if its parent
-            # incident is HR-assigned. Without this check, anyone who knows
-            # an attachment's sys_id can download HR file bodies — the
-            # metadata listing is gated but the static path was open.
+            # HR gate. URL parts: [0]=attachments, [1]=shard, [2]=attach_sys_id.
+            # Without this, anyone who knows an attachment's sys_id can
+            # download HR file bodies — the metadata listing is gated but
+            # the static path was open.
             if hr_gate_enabled() and not is_hr_unlocked(self):
-                parts = rel.split('/')
                 if len(parts) >= 3 and parts[0] == 'attachments':
                     attach_sys_id = parts[2]
                     if _attachment_is_hr(attach_sys_id):

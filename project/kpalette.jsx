@@ -111,7 +111,11 @@ window.KPalette = function KPalette({ open, onClose }) {
     }
     if (cis.length)   groups.push({ group: 'Configuration items', items: cis });
     return groups;
-  }, [debouncedQ, taskMatches]);
+    // Background lookups (sys_user_lookup, cmdb_ci_lookup) get a fresh
+    // reference on arrival, so depending on them re-runs the memo once
+    // they land — otherwise a query typed before they load shows empty
+    // sections until the user edits the input.
+  }, [debouncedQ, taskMatches, data.sys_user_lookup, data.cmdb_ci_lookup, data.sys_user_group]);
 
   const flat = React.useMemo(() => results.flatMap(g => g.items), [results]);
 

@@ -10,7 +10,9 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**/*.md'
+      # Doc-only edits still trigger a rebuild — the deployed image bundles
+      # docs/* (openapi.yaml, tables.md, API.md, swagger-ui assets), so a
+      # README or API.md change needs a fresh image to reach prod.
       - 'project/data/**'
       - '.gitignore'
   workflow_dispatch: {}
@@ -26,6 +28,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install doc-verify deps
+        run: python3 -m pip install --quiet openapi-spec-validator
+
+      - name: Verify docs in sync with SCHEMAS and openapi.yaml is valid
+        run: make verify-docs
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3

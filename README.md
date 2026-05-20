@@ -68,6 +68,20 @@ the per-table NDJSON files and hydrates `window.HistoricalWowData`. Every
 record lookup, journal entry, audit history, and attachment metadata
 resolves locally; only attachment file bodies hit the host filesystem.
 
+## API documentation
+
+The same image that serves the viewer also serves a JSON API and an
+interactive doc site. Integration teams should start at:
+
+- **Narrative integration guide**: [`docs/API.md`](docs/API.md)
+- **OpenAPI 3.0 spec**: [`docs/openapi.yaml`](docs/openapi.yaml) + [`docs/openapi-schemas.yaml`](docs/openapi-schemas.yaml) (auto-generated)
+- **Per-table column catalog**: [`docs/tables.md`](docs/tables.md) (auto-generated)
+- **ServiceNow glossary**: [`docs/glossary.md`](docs/glossary.md)
+- **Interactive docs (running instance)**: `https://<host>/docs` — Swagger UI rendering of the live spec
+
+The per-table catalog regenerates from `project/bin/build_sqlite.py`'s
+`SCHEMAS` dict via `make docs`. CI verifies it stays in sync.
+
 ## Quick start
 
 ### 1. Run the exporter (once, on a machine with ServiceNow access)

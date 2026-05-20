@@ -66,11 +66,27 @@ window.KPalette = function KPalette({ open, onClose }) {
       });
     }
 
-    // Eager tables — local synchronous filter (sys_user, cmdb_ci_lookup).
-    const users = data.sys_user.filter((u) =>
-      (u.name || '').toLowerCase().includes(ql) ||
-      (u.user_name || '').toLowerCase().includes(ql)
-    ).slice(0, 6).map(u => ({ kind: 'user', sys_id: u.sys_id, label: u.name, sub: u.title }));
+    // Assignment groups — eager (sys_user_group, ~200 records).
+    const groupHits = data.sys_user_group.filter((g) =>
+      (g.name || '').toLowerCase().includes(ql) ||
+      (g.description || '').toLowerCase().includes(ql)
+    ).slice(0, 6).map(g => ({
+      kind: 'group', sys_id: g.sys_id, label: g.name,
+      sub: g.description || `${(g.member_sys_ids || []).length} member${(g.member_sys_ids || []).length === 1 ? '' : 's'}`,
+    }));
+
+    // Users — background-loaded lookup Map (sys_id → projection).
+    const userHits = [];
+    if (data.sys_user_lookup && data.sys_user_lookup.forEach) {
+      data.sys_user_lookup.forEach((info, sys_id) => {
+        if (userHits.length >= 6) return;
+        if ((info.name || '').toLowerCase().includes(ql) ||
+            (info.user_name || '').toLowerCase().includes(ql) ||
+            (info.title || '').toLowerCase().includes(ql)) {
+          userHits.push({ kind: 'user', sys_id, label: info.name, sub: info.title });
+        }
+      });
+    }
 
     const cis = [];
     if (data.cmdb_ci_lookup && data.cmdb_ci_lookup.forEach) {
@@ -83,6 +99,9 @@ window.KPalette = function KPalette({ open, onClose }) {
     }
 
     const groups = [];
+    // Groups and users lead — they're who/what the search is usually about.
+    if (groupHits.length) groups.push({ group: 'Groups', items: groupHits });
+    if (userHits.length)  groups.push({ group: 'Users',  items: userHits });
     // Incidents and changes get prominent placement when matched.
     if (tasksByTable.incident)        groups.push({ group: 'Incidents', items: tasksByTable.incident });
     if (tasksByTable.change_request)  groups.push({ group: 'Change requests', items: tasksByTable.change_request });
@@ -91,9 +110,12 @@ window.KPalette = function KPalette({ open, onClose }) {
       groups.push({ group: window.taskLabel(t, 'plural'), items });
     }
     if (cis.length)   groups.push({ group: 'Configuration items', items: cis });
-    if (users.length) groups.push({ group: 'Users', items: users });
     return groups;
-  }, [debouncedQ, taskMatches]);
+    // Background lookups (sys_user_lookup, cmdb_ci_lookup) get a fresh
+    // reference on arrival, so depending on them re-runs the memo once
+    // they land — otherwise a query typed before they load shows empty
+    // sections until the user edits the input.
+  }, [debouncedQ, taskMatches, data.sys_user_lookup, data.cmdb_ci_lookup, data.sys_user_group]);
 
   const flat = React.useMemo(() => results.flatMap(g => g.items), [results]);
 
@@ -162,17 +184,18 @@ window.KPalette = function KPalette({ open, onClose }) {
                       )} size={13} />
                     </div>
                     <div className="label">
-                      {it.kind !== 'go' && it.kind !== 'user' && it.kind !== 'ci' && (
+                      {it.kind !== 'go' && it.kind !== 'user' && it.kind !== 'ci' && it.kind !== 'group' && (
                         <span className="num mono">{it.label.split(' · ')[0]}</span>
                       )}
-                      {(it.kind === 'go' || it.kind === 'user' || it.kind === 'ci') ? it.label : it.sub}
+                      {(it.kind === 'go' || it.kind === 'user' || it.kind === 'ci' || it.kind === 'group') ? it.label : it.sub}
                     </div>
                     {(it.kind !== 'go') && <span className="meta">{
                       it.kind === 'incident' ? 'incident' :
                       it.kind === 'change' ? 'change_request' :
                       it.kind === 'task' ? (it.meta || it.table) :
                       it.kind === 'user' ? 'sys_user' :
-                      it.kind === 'ci' ? 'cmdb_ci' : ''
+                      it.kind === 'ci' ? 'cmdb_ci' :
+                      it.kind === 'group' ? 'sys_user_group' : ''
                     }</span>}
                   </div>
                 );

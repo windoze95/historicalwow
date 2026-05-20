@@ -1,0 +1,37 @@
+name: verify-docs
+
+# Runs on every pull request. Confirms:
+#   * docs/tables.md and docs/openapi-schemas.yaml are in sync with the
+#     SCHEMAS dict in project/bin/build_sqlite.py (regen would no-op).
+#   * docs/openapi.yaml is a valid OpenAPI 3.0 document.
+#   * No external https:// references in the vendored Swagger UI bootstrap
+#     files (air-gap guard).
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'project/bin/build_sqlite.py'
+      - 'project/bin/server.py'
+      - 'project/bin/gen_table_catalog.py'
+      - 'Makefile'
+      - '.github/workflows/verify-docs.yml'
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install validator
+        run: python3 -m pip install --quiet openapi-spec-validator
+
+      - name: make verify-docs
+        run: make verify-docs

@@ -1,0 +1,725 @@
+openapi: 3.0.3
+info:
+  title: HistoricalWow API
+  version: '1.0.0'
+  description: |
+    Read-only HTTP API over a frozen ServiceNow archive. Returns records from
+    a SQLite database that was built from an offline ServiceNow export — no
+    live ServiceNow connection is involved at request time.
+
+    This spec is the contract for integration teams. The narrative guide
+    [docs/API.md](API.md) walks through auth, conventions, footguns, and a
+    glossary. The per-table column catalog is in
+    [docs/tables.md](tables.md). Interactive try-it-out is served by the
+    same image at `/docs` (Swagger UI).
+
+    ## Audience
+    Internal teams and approved external partners. The archive contains
+    real ServiceNow PII, ticket bodies, and attachment binaries — handle
+    every response as sensitive company data.
+
+    ## Authentication
+    Most endpoints are unauthenticated read-only. A subset of incidents
+    (those assigned to a configured HR group) plus their child rows
+    (journal, audit, attachments, links) is hidden unless the caller
+    holds a valid `hr_unlock` session cookie. See `/api/hr-status` and
+    `/api/hr-unlock`.
+
+    ## Versioning
+    `info.version` tracks the API surface, not the deployed image tag.
+    A new endpoint or new optional response field is a minor bump; a
+    breaking change to a response shape is a major bump. The current
+    image always serves the spec at `/openapi.yaml`.
+  contact:
+    name: HistoricalWow maintainers
+    url: https://github.com/windoze95/historicalwow/issues
+  license:
+    name: Private — not licensed for redistribution.
+
+servers:
+  - url: /
+    description: The same origin that serves this spec.
+
+tags:
+  - name: manifest
+    description: Build manifest and pre-computed lookup blobs.
+  - name: hr-gate
+    description: HR session cookie — query state, unlock, lock.
+  - name: tables
+    description: Generic per-table list and record routes.
+  - name: activity
+    description: Per-record journal entries, audit trail, and attachment metadata.
+  - name: search
+    description: Cross-table search and CMDB relations.
+  - name: catalog
+    description: Service catalog variables submitted on a request item.
+  - name: files
+    description: Attachment file binaries.
+
+paths:
+
+  /api/manifest:
+    get:
+      tags: [manifest]
+      summary: Build manifest
+      description: |
+        Returns the contents of `manifest.json` produced by the exporter — snapshot
+        date, source instance, integrity counts, per-table row totals, and the
+        SHA-256 digest of the manifest itself. Cached aggressively; clients
+        should revalidate via `If-None-Match`.
+      responses:
+        '200':
+          description: Manifest payload.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+            Content-Encoding:
+              schema: {type: string, enum: [gzip]}
+              description: 'Present iff the request advertised `Accept-Encoding: gzip` and the payload is larger than 4 KiB.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '304': {description: 'Not modified (matched `If-None-Match`).'}
+        '404': {description: 'Manifest missing on disk.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+
+  /api/cmdb_ci_lookup:
+    get:
+      tags: [manifest]
+      summary: Compact CI lookup blob
+      description: |
+        Returns a `{sys_id: {name, sys_class_name, operational_status}}` map for
+        every row in `cmdb_ci`. Optimised for clients that need to translate
+        many CI sys_ids to display names without firing one request per row.
+        Pre-built once per process and served from an in-memory cache.
+      responses:
+        '200':
+          description: CI lookup map.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    sys_class_name: {type: string}
+                    operational_status: {type: string}
+        '304': {description: Not modified.}
+
+  /api/sys_user_lookup:
+    get:
+      tags: [manifest]
+      summary: Compact user lookup blob
+      description: |
+        Returns a `{sys_id: {name, user_name, title, department, location}}` map
+        for every row in `sys_user`. Same caching shape as `/api/cmdb_ci_lookup`.
+      responses:
+        '200':
+          description: User lookup map.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    user_name: {type: string}
+                    title: {type: string}
+                    department: {type: string}
+                    location: {type: string}
+        '304': {description: Not modified.}
+
+  /api/hr-status:
+    get:
+      tags: [hr-gate]
+      summary: Inspect HR gate state
+      description: |
+        Reports whether the gate is enabled, whether the current request bears
+        a valid `hr_unlock` cookie, and the configured HR group sys_id and
+        label. Safe to call unauthenticated — no protected data is exposed.
+      responses:
+        '200':
+          description: Gate state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, unlocked]
+                properties:
+                  enabled:
+                    type: boolean
+                    description: True iff `HR_UNLOCK_PASSWORD` is configured server-side.
+                  unlocked:
+                    type: boolean
+                    description: True iff the request bears a valid `hr_unlock` cookie.
+                  group_sys_id:
+                    type: string
+                    description: sys_id of the HR group whose incidents are gated.
+                  group_label:
+                    type: string
+
+  /api/hr-unlock:
+    post:
+      tags: [hr-gate]
+      summary: Unlock the HR gate
+      description: |
+        Exchanges a password for an `hr_unlock` session cookie. The cookie is
+        `HttpOnly` and `SameSite=Strict`. Tokens live in process memory only;
+        a server restart invalidates every outstanding cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: Success. Sets the `hr_unlock` cookie.
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+              description: '`hr_unlock=<token>; Path=/; HttpOnly; SameSite=Strict`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, enum: [true]}
+        '400': {description: 'Invalid JSON body.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: 'Wrong password.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 'Gate disabled (no password configured).', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+
+  /api/hr-lock:
+    post:
+      tags: [hr-gate]
+      summary: Lock the HR gate
+      description: |
+        Invalidates the caller's `hr_unlock` token server-side and clears the
+        cookie. Idempotent — safe to call without a cookie.
+      responses:
+        '200':
+          description: Cookie cleared.
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+              description: '`hr_unlock=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, enum: [true]}
+
+  /api/search:
+    get:
+      tags: [search]
+      summary: Cross-table search
+      description: |
+        Searches `number` and `short_description` across the configured task
+        tables (see `x-task-tables` in openapi-schemas.yaml). HR-assigned
+        incidents and HR-linked child rows are filtered out when the gate is
+        locked. Returns at most `limit` rows per table.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+          description: Search needle. Matched with SQL `LIKE %q%` against `number` and `short_description`.
+        - name: types
+          in: query
+          schema: {type: string}
+          description: |
+            Optional comma-separated list of task tables to search. Defaults to
+            every table in `x-task-tables`. Unknown table names are silently dropped.
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 8}
+          description: Max rows returned per table.
+      responses:
+        '200':
+          description: Matched rows across each requested table.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  q: {type: string}
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      description: |
+                        A matched task row. Carries the indexed task columns plus a
+                        `_table` field naming the source table.
+                      properties:
+                        _table: {type: string}
+                        sys_id: {type: string}
+                        number: {type: string}
+                        short_description: {type: string}
+
+  /api/journal/{element_id}:
+    get:
+      tags: [activity]
+      summary: Journal entries for a record
+      description: |
+        Returns every `sys_journal_field` row whose `element_id` matches the
+        parent record's sys_id. Includes work notes and comments, ordered by
+        `sys_created_on` ascending. Returns `403 hr_locked` if `element_id`
+        refers to an HR-assigned incident and the request lacks an `hr_unlock`
+        cookie.
+      parameters:
+        - name: element_id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Parent record sys_id (typically an incident or change request).
+      responses:
+        '200':
+          description: Journal rows envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items: {$ref: 'openapi-schemas.yaml#/components/schemas/SysJournalFieldRow'}
+        '403':
+          description: HR-locked.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/audit/{documentkey}:
+    get:
+      tags: [activity]
+      summary: Audit trail for a record
+      description: |
+        Returns every `sys_audit` row whose `documentkey` matches the parent
+        record's sys_id. Each row is one field-level change. Same HR semantics
+        as `/api/journal/{element_id}`.
+      parameters:
+        - name: documentkey
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Audit rows envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items: {$ref: 'openapi-schemas.yaml#/components/schemas/SysAuditRow'}
+        '403':
+          description: HR-locked.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/attachments/{table_sys_id}:
+    get:
+      tags: [activity]
+      summary: Attachment metadata for a record
+      description: |
+        Returns `sys_attachment` metadata rows for the parent record. The
+        binaries themselves are served from `/data/attachments/<shard>/<sys_id>/<file_name>`.
+        Same HR semantics as the other activity endpoints.
+      parameters:
+        - name: table_sys_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Attachment rows envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items: {$ref: 'openapi-schemas.yaml#/components/schemas/SysAttachmentRow'}
+        '403':
+          description: HR-locked.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/related/cmdb/{sys_id}:
+    get:
+      tags: [search]
+      summary: CMDB relations for a CI
+      description: |
+        Returns upstream (parents) and downstream (children) relations for a
+        CI via the `cmdb_rel_ci` table. Each relation includes the related
+        CI's full envelope merged in under the `ci` key.
+      parameters:
+        - name: sys_id
+          in: path
+          required: true
+          schema: {type: string}
+          description: CI sys_id.
+      responses:
+        '200':
+          description: Upstream + downstream relations.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  upstream:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  downstream:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+
+  /api/variables/{ritm_sys_id}:
+    get:
+      tags: [catalog]
+      summary: Catalog variables submitted on an RITM
+      description: |
+        Joins `sc_item_option_mtom` → `sc_item_option` → `item_option_new` to
+        return the form fields a user typed when submitting a request item.
+        Returns variables ordered by their definition's `order` field, then by
+        question text.
+      parameters:
+        - name: ritm_sys_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Variables envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cat_item:
+                    type: string
+                    nullable: true
+                    description: Catalog item display name (from `sc_cat_item.name` on the first variable's join), or null if no variables matched.
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        var_name: {type: string}
+                        label: {type: string, description: '`question_text` from `item_option_new`.'}
+                        value: {type: string}
+                        type: {type: string, description: 'Variable type (e.g. `string`, `reference`, `select_box`).'}
+                        order_idx: {type: string, nullable: true}
+                        reference: {type: string, nullable: true, description: 'For `type=reference`, the target table.'}
+        '403':
+          description: HR-locked.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/{table}:
+    get:
+      tags: [tables]
+      summary: List rows from a table
+      description: |
+        Generic list endpoint. Supports pagination, free-text search on text
+        columns, exact-match filters on indexed columns, and ordering on
+        indexed columns.
+
+        **Filters**: any query parameter not listed below is treated as an
+        exact-match filter on a same-named indexed column. Unknown columns are
+        **silently ignored** (the route returns unfiltered rows; see the
+        footgun section of [API.md](API.md#10-footguns)). Booleans are
+        coerced: `?active=true` matches stored `1`, `?active=false` matches
+        `0`. The full list of filterable columns per table is in
+        [tables.md](tables.md) and machine-readable as `x-filterable-columns`
+        in [openapi-schemas.yaml](openapi-schemas.yaml).
+
+        **HR gate**: when the gate is locked, the `incident` table hides
+        rows whose `assignment_group` is the HR group, and child tables
+        (`sys_journal_field`, `sys_audit`, `sys_attachment`, `task_ci`,
+        `task_sla`, `incident_task` — see `x-hr-parent-columns`) hide rows
+        whose parent reference points at an HR-assigned incident. Row counts
+        drop silently; check `/api/hr-status` to know.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - alm_asset
+              - alm_consumable
+              - alm_facility
+              - alm_hardware
+              - alm_license
+              - alm_software_license
+              - alm_stockroom
+              - asset_task
+              - catalog_script_client
+              - catalog_ui_policy
+              - catalog_ui_policy_action
+              - change_request
+              - change_task
+              - cmdb_ci
+              - cmdb_ci_spkg
+              - cmdb_rel_ci
+              - cmdb_software_instance
+              - cmn_cost_center
+              - cmn_department
+              - cmn_location
+              - core_company
+              - incident
+              - incident_task
+              - io_set_item
+              - item_option_new
+              - item_option_new_set
+              - problem
+              - problem_task
+              - question
+              - question_choice
+              - sc_cat_item
+              - sc_cat_item_user_criteria_mtom
+              - sc_cat_item_user_criteria_no_mtom
+              - sc_catalog
+              - sc_category
+              - sc_item_option
+              - sc_item_option_mtom
+              - sc_req_item
+              - sc_request
+              - sc_task
+              - std_change_proposal
+              - sys_attachment
+              - sys_audit
+              - sys_choice
+              - sys_data_policy2
+              - sys_data_policy_rule
+              - sys_dictionary
+              - sys_dictionary_override
+              - sys_hub_flow
+              - sys_journal_field
+              - sys_properties
+              - sys_script
+              - sys_script_client
+              - sys_script_include
+              - sys_security_acl
+              - sys_ui_action
+              - sys_ui_policy
+              - sys_ui_policy_action
+              - sys_user
+              - sys_user_grmember
+              - sys_user_group
+              - sysapproval_approver
+              - sysapproval_group
+              - sysauto_script
+              - task_ci
+              - task_sla
+              - topic
+              - user_criteria
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Q'}
+        - {$ref: '#/components/parameters/OrderBy'}
+        - {$ref: '#/components/parameters/Dir'}
+        - {$ref: '#/components/parameters/Slim'}
+      responses:
+        '200':
+          description: List envelope.
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              description: '`public, max-age=300` for tables in `x-cache-5min` when `q` is empty and `limit > 200`; otherwise `no-cache, must-revalidate`.'
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListEnvelope'}
+        '404':
+          description: Unknown table.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/{table}/{sys_id}:
+    get:
+      tags: [tables]
+      summary: Fetch a single row by sys_id
+      description: |
+        Returns the row as a flat JSON object. Indexed columns appear as
+        scalars; every other field comes from the `raw` envelope merged into
+        the response. Returns `403 hr_locked` for `incident` rows whose
+        `assignment_group` is the HR group, and for child-table rows whose
+        parent points at an HR-assigned incident — see `x-hr-parent-columns`.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Same enum as `/api/{table}`. See `x-filterable-columns` in `openapi-schemas.yaml`.
+        - name: sys_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{1,32}$'}
+      responses:
+        '200':
+          description: Row as a flat object.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [sys_id]
+                properties:
+                  sys_id: {type: string}
+        '403':
+          description: HR-locked.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+        '404':
+          description: Row or table not found.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /data/attachments/{shard}/{attachment_sys_id}/{file_name}:
+    get:
+      tags: [files]
+      summary: Attachment file binary
+      description: |
+        Serves the raw file bytes for an attachment. `shard` is the lower-cased
+        first two characters of `attachment_sys_id`. Returns `403 hr_locked` if
+        the parent record is an HR-assigned incident and the request lacks an
+        `hr_unlock` cookie. Returns `403 forbidden path` for any URL containing
+        `.`, `..`, or empty path segments. Returns `404` if the file is missing
+        on disk (rare — attachments may not have been downloaded yet).
+      parameters:
+        - name: shard
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{2}$'}
+        - name: attachment_sys_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{1,32}$'}
+        - name: file_name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: File body.
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '403':
+          description: HR-locked or path traversal.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+        '404':
+          description: File missing.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+components:
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 2000000, default: 200}
+      description: |
+        Maximum number of rows in the response. Hard cap is 2,000,000. The
+        server still streams the response in one shot — pulling a huge `limit`
+        without `Accept-Encoding: gzip` produces a very large body.
+    Offset:
+      name: offset
+      in: query
+      schema: {type: integer, minimum: 0, default: 0}
+    Q:
+      name: q
+      in: query
+      schema: {type: string}
+      description: |
+        Free-text needle. Matched with SQL `LIKE %q%` against whichever of
+        `number`, `short_description`, `name`, `value` actually exist on the
+        target table. A `q` against a table that has none of those columns
+        returns every row (footgun).
+    OrderBy:
+      name: order_by
+      in: query
+      schema: {type: string, default: sys_id}
+      description: |
+        Indexed column to sort on. Whitelisted against the SQLite table
+        schema; unknown values fall back to `sys_id`. Defaults to `sys_id`
+        because that's the only column with a guaranteed index on every
+        table (the primary key). Pass `sys_updated_on` for recent-first lists.
+    Dir:
+      name: dir
+      in: query
+      schema: {type: string, enum: [asc, desc], default: desc}
+    Slim:
+      name: slim
+      in: query
+      schema: {type: boolean, default: false}
+      description: |
+        When `true`, the response includes only the indexed columns. The `raw`
+        envelope is skipped entirely. Use for eager-loading list views that
+        only need a handful of fields per row.
+
+  schemas:
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+
+    ListEnvelope:
+      type: object
+      required: [rows, total, limit, offset]
+      properties:
+        rows:
+          type: array
+          description: |
+            One element per row. The shape varies by table — see the per-table
+            `*Row` schemas in `openapi-schemas.yaml` and the `x-filterable-columns`
+            extension. Every row carries at least `sys_id`. Indexed columns
+            appear as scalars; every other field comes from the row's `raw`
+            envelope merged into the response (unless `?slim=1`).
+          items:
+            type: object
+            additionalProperties: true
+            required: [sys_id]
+            properties:
+              sys_id: {type: string}
+        total: {type: integer, description: 'Total rows matching the filter, regardless of pagination.'}
+        limit: {type: integer}
+        offset: {type: integer}
+
+  securitySchemes:
+    HrUnlockCookie:
+      type: apiKey
+      in: cookie
+      name: hr_unlock
+      description: |
+        Session cookie issued by `POST /api/hr-unlock`. `HttpOnly`,
+        `SameSite=Strict`. Required to read HR-assigned incidents and their
+        child rows. Token lives in process memory only; a server restart
+        clears every outstanding cookie.
+
+# Per-table response shapes ($refs above point into this file).
+# Auto-generated by project/bin/gen_table_catalog.py — see openapi-schemas.yaml.
+
+# Note on validation: the row schemas live in openapi-schemas.yaml. Tools that
+# don't follow external $refs can resolve them by concatenating this file with
+# openapi-schemas.yaml (skip the duplicate `components:` line) or by using a
+# bundler (e.g. `redocly bundle`). Swagger UI 5 follows the external $refs
+# automatically when both files are served from the same origin (which is the
+# case at /openapi.yaml and /openapi-schemas.yaml).

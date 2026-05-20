@@ -151,7 +151,7 @@ window.KPalette = function KPalette({ open, onClose }) {
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Search incidents, changes, users, CIs, journal entries…"
+            placeholder="Search incidents, changes, users, groups, CIs, journal entries…"
             spellCheck={false}
           />
           <span className="kbd-inline">esc</span>

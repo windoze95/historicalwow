@@ -1846,7 +1846,7 @@ window.KPalette = function KPalette({ open, onClose }) {
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Search incidents, changes, users, CIs, journal entries…"
+            placeholder="Search incidents, changes, users, groups, CIs, journal entries…"
             spellCheck={false}
           />
           <span className="kbd-inline">esc</span>
@@ -3699,7 +3699,7 @@ window.HomePage = function HomePage({ openPalette }) {
         boxShadow: 'var(--shadow-sm)',
       }}>
         <window.Icon name="search" size={16} />
-        <span style={{ color: 'var(--fg-3)', flex: 1 }}>Search incident number, free text, caller, CI…</span>
+        <span style={{ color: 'var(--fg-3)', flex: 1 }}>Search incidents, changes, users, groups, CIs, journal…</span>
         <span className="kbd-inline">⌘ K</span>
       </div>
 
@@ -9388,7 +9388,7 @@ function App() {
         <div className="search-wrap">
           <div className="search-trigger" onClick={() => setPaletteOpen(true)}>
             <window.Icon name="search" size={14} />
-            <span>Search incidents, changes, users, CIs, journal…</span>
+            <span>Search incidents, changes, users, groups, CIs, journal…</span>
             <span className="kbd">
               <kbd>⌘</kbd><kbd>K</kbd>
             </span>

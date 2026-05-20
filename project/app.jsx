@@ -118,7 +118,7 @@ function App() {
         <div className="search-wrap">
           <div className="search-trigger" onClick={() => setPaletteOpen(true)}>
             <window.Icon name="search" size={14} />
-            <span>Search incidents, changes, users, CIs, journal…</span>
+            <span>Search incidents, changes, users, groups, CIs, journal…</span>
             <span className="kbd">
               <kbd>⌘</kbd><kbd>K</kbd>
             </span>

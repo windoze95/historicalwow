@@ -58,7 +58,7 @@ window.HomePage = function HomePage({ openPalette }) {
         boxShadow: 'var(--shadow-sm)',
       }}>
         <window.Icon name="search" size={16} />
-        <span style={{ color: 'var(--fg-3)', flex: 1 }}>Search incident number, free text, caller, CI…</span>
+        <span style={{ color: 'var(--fg-3)', flex: 1 }}>Search incidents, changes, users, groups, CIs, journal…</span>
         <span className="kbd-inline">⌘ K</span>
       </div>
 

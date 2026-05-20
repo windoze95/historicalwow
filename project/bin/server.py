@@ -330,6 +330,55 @@ def hr_subquery() -> str:
     return '(SELECT sys_id FROM incident WHERE assignment_group = ?)'
 
 
+# Tables whose rows are tied to a parent incident's sys_id via the listed
+# column. When the HR gate is locked, rows referencing an HR-assigned
+# incident must be hidden from the generic /api/<table> list route and
+# /api/<table>/<sys_id> record route — otherwise a caller can pull HR
+# journal entries, audit trails, attachment metadata, etc. by querying the
+# child table directly with `?element_id=<hr_incident_sys_id>` or just
+# dumping the whole table.
+HR_PARENT_COLUMN = {
+    'sys_journal_field': 'element_id',
+    'sys_audit':         'documentkey',
+    'sys_attachment':    'table_sys_id',
+    'task_ci':           'task',
+    'task_sla':          'task',
+    'incident_task':     'parent',
+}
+
+
+def _hr_record_parent_locked(table: str, sys_id: str) -> bool:
+    """True iff `table` is HR-gated by a parent column AND the row at `sys_id`
+    points at an HR-assigned incident. Used by get_record to block direct
+    fetches of e.g. a sys_journal_field row whose element_id is an HR
+    incident."""
+    col = HR_PARENT_COLUMN.get(table)
+    if not col or not hr_gate_enabled():
+        return False
+    conn = get_conn()
+    row = conn.execute(
+        f'SELECT 1 FROM "{table}" t JOIN incident i ON i.sys_id = t."{col}" '
+        f'WHERE t.sys_id = ? AND i.assignment_group = ? LIMIT 1',
+        (sys_id, HR_GROUP_SYS_ID),
+    ).fetchone()
+    return row is not None
+
+
+def _attachment_is_hr(attach_sys_id: str) -> bool:
+    """True if this sys_attachment row is linked to an HR-assigned incident.
+    Used to gate the static /data/attachments/<...> route — without this,
+    knowing an attachment's sys_id is enough to download HR file bodies."""
+    if not hr_gate_enabled():
+        return False
+    conn = get_conn()
+    row = conn.execute(
+        'SELECT 1 FROM sys_attachment a JOIN incident i ON i.sys_id = a.table_sys_id '
+        'WHERE a.sys_id = ? AND i.assignment_group = ? LIMIT 1',
+        (attach_sys_id, HR_GROUP_SYS_ID),
+    ).fetchone()
+    return row is not None
+
+
 def _row_to_dict(row):
     """Convert a sqlite3.Row to a dict, parsing the `raw` JSON envelope into the
     main payload so the viewer sees a single flat object."""
@@ -403,12 +452,20 @@ def list_table(handler, table, params):
         where.append(f'"{k}" = ?')
         args.append(val)
 
-    # HR gate: hide incidents assigned to the HR group when the request
-    # isn't unlocked. Only `incident` is gated — same table the user asked
-    # about — but the same predicate would extend to other task tables.
-    if table == 'incident' and not is_hr_unlocked(handler):
-        where.append('"assignment_group" IS NOT ?')
-        args.append(HR_GROUP_SYS_ID)
+    # HR gate. Two shapes:
+    #   incident itself      → filter on its own assignment_group.
+    #   child / join tables  → filter on their parent-incident reference
+    #                          (see HR_PARENT_COLUMN). Without this, callers
+    #                          can pull HR journal/audit/attachment rows by
+    #                          querying the child table directly.
+    if not is_hr_unlocked(handler):
+        if table == 'incident':
+            where.append('"assignment_group" IS NOT ?')
+            args.append(HR_GROUP_SYS_ID)
+        elif table in HR_PARENT_COLUMN:
+            col = HR_PARENT_COLUMN[table]
+            where.append(f'"{col}" NOT IN {hr_subquery()}')
+            args.append(HR_GROUP_SYS_ID)
 
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     total = conn.execute(f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args).fetchone()['n']
@@ -433,8 +490,11 @@ def list_table(handler, table, params):
 def get_record(handler, table, sys_id):
     if table not in ALL_TABLES:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown table: {table}')
-    if table == 'incident' and not is_hr_unlocked(handler) and is_hr_record(sys_id):
-        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+    if not is_hr_unlocked(handler):
+        if table == 'incident' and is_hr_record(sys_id):
+            return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+        if table in HR_PARENT_COLUMN and _hr_record_parent_locked(table, sys_id):
+            return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
     row = conn.execute(f'SELECT * FROM "{table}" WHERE sys_id = ?', (sys_id,)).fetchone()
     if not row:
@@ -567,9 +627,15 @@ def cross_table_search(handler, params):
                f'sys_updated_on, raw FROM "{t}" '
                f'WHERE (number LIKE ? OR short_description LIKE ?)')
         args = [like, like]
-        if t == 'incident' and not hr_unlocked:
-            sql += ' AND assignment_group IS NOT ?'
-            args.append(HR_GROUP_SYS_ID)
+        if not hr_unlocked:
+            if t == 'incident':
+                sql += ' AND assignment_group IS NOT ?'
+                args.append(HR_GROUP_SYS_ID)
+            elif t in HR_PARENT_COLUMN:
+                # incident_task etc. — hide rows whose parent incident is HR.
+                col = HR_PARENT_COLUMN[t]
+                sql += f' AND "{col}" NOT IN {hr_subquery()}'
+                args.append(HR_GROUP_SYS_ID)
         sql += ' ORDER BY sys_updated_on DESC LIMIT ?'
         args.append(limit_per_table)
         try:
@@ -782,7 +848,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/data/manifest.json':
             return get_manifest(self)
 
-        # Attachment file bodies
+        # Attachment file bodies. URL shape: /data/attachments/<shard>/<attach_sys_id>/<filename>
         if path.startswith('/data/attachments/'):
             rel = path[len('/data/'):]
             target = (DATA_DIR / rel).resolve()
@@ -791,6 +857,17 @@ class Handler(BaseHTTPRequestHandler):
                 target.relative_to(DATA_DIR)
             except ValueError:
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
+            # HR gate. The shard ([0]=attachments, [1]=shard, [2]=attach_sys_id)
+            # lets us look up the sys_attachment row and refuse if its parent
+            # incident is HR-assigned. Without this check, anyone who knows
+            # an attachment's sys_id can download HR file bodies — the
+            # metadata listing is gated but the static path was open.
+            if hr_gate_enabled() and not is_hr_unlocked(self):
+                parts = rel.split('/')
+                if len(parts) >= 3 and parts[0] == 'attachments':
+                    attach_sys_id = parts[2]
+                    if _attachment_is_hr(attach_sys_id):
+                        return _send_error(self, HTTPStatus.FORBIDDEN, 'hr_locked')
             return _send_static(self, target)
 
         # API

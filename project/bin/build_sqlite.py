@@ -695,7 +695,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
     print(f'[{table}]', end=' ', flush=True)
     if not ndjson_path.exists():
         print(f'no NDJSON file — skipping')
-        return 0
+        return 0, False
 
     delta_field = _delta_field(table)
     last_cursor = None if force_full else _read_build_state(conn, table)

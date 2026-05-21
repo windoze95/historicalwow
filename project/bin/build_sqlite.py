@@ -695,7 +695,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
     print(f'[{table}]', end=' ', flush=True)
     if not ndjson_path.exists():
         print(f'no NDJSON file — skipping')
-        return 0
+        return 0, False
 
     delta_field = _delta_field(table)
     last_cursor = None if force_full else _read_build_state(conn, table)
@@ -722,6 +722,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
     # gets populated for existing rows. Without this, a code change that
     # adds a filter column (e.g. sc_task.request_item) would index nothing
     # for old rows and silently break per-record filters.
+    schema_drift = False
     if last_cursor:
         try:
             existing_cols = {r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')}
@@ -730,6 +731,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
             if missing:
                 print(f'(schema drift: +{",".join(sorted(missing))} → full rebuild)', end=' ', flush=True)
                 last_cursor = None
+                schema_drift = True
         except sqlite3.OperationalError:
             pass  # table doesn't exist; will be created below
 
@@ -816,7 +818,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
         print(f'{written:,} updated/new, {skipped:,} unchanged ({rows_total:,} total) in {elapsed:.0f}s')
     else:
         print(f'{written:,} rows in {elapsed:.0f}s')
-    return written
+    return written, schema_drift
 
 
 def main():
@@ -854,10 +856,13 @@ def main():
 
     started = time.time()
     total_written = 0
+    drift_tables = []
     for table, indexed_cols in SCHEMAS.items():
         ndjson_path = DATA / f'{table}.ndjson'
-        n = build_table(conn, table, indexed_cols, ndjson_path, force_full=is_full)
+        n, drift = build_table(conn, table, indexed_cols, ndjson_path, force_full=is_full)
         total_written += n
+        if drift:
+            drift_tables.append(table)
 
     if args.vacuum:
         print('Vacuuming (this can take 15-25 minutes on a large DB)…')
@@ -866,8 +871,18 @@ def main():
     # the resulting file is fully self-contained. Otherwise read-only mounts
     # in the container can't open it (SQLite needs to create -shm/-wal
     # coordination files for WAL-mode DBs even on pure SELECT workloads).
+    # If a reader (e.g. the running container) holds the DB open, the
+    # journal-mode switch can fail with "database is locked" — that's
+    # cosmetic (data is already checkpointed) and the container handles
+    # WAL mode fine, so warn and proceed.
     conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-    conn.execute('PRAGMA journal_mode=DELETE')
+    try:
+        conn.execute('PRAGMA journal_mode=DELETE')
+    except sqlite3.OperationalError as e:
+        print(f'note: could not switch to DELETE journal_mode ({e}); '
+              f'DB stays in WAL mode. This is fine — the container reads '
+              f'WAL-mode DBs correctly. To clean up the -wal/-shm sidecars, '
+              f'stop the container and rerun this script.')
     conn.close()
 
     size_mb = DB_PATH.stat().st_size / 1024 / 1024
@@ -875,6 +890,12 @@ def main():
     print(f'Done in {int(elapsed)}s. {total_written:,} rows '
           f'{"loaded" if is_full else "updated/new"}. '
           f'DB size: {size_mb:.0f} MB at {DB_PATH}')
+    if drift_tables:
+        print()
+        print(f'⚠  Schema drift triggered a full rebuild for: {", ".join(drift_tables)}')
+        print(f'   The running container caches per-thread SQLite connections.')
+        print(f'   Restart it so the new schema is visible:')
+        print(f'     docker compose restart historicalwow')
 
 
 if __name__ == '__main__':

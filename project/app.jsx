@@ -153,7 +153,6 @@ function App() {
           <div className="divider-v" />
           <WhoamiBadge whoami={data.whoami} />
         </div>
-        </div>
       </div>
 
       <div className="body">

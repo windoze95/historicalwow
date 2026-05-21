@@ -60,6 +60,13 @@ ACCESS_LOG_PATH    = os.environ.get('HISTORICALWOW_ACCESS_LOG', '/app/logs/acces
 ACCESS_LOG_DNS     = os.environ.get('HISTORICALWOW_ACCESS_LOG_DNS', '1') != '0'
 ACCESS_LOG_MAX     = int(os.environ.get('HISTORICALWOW_ACCESS_LOG_MAX_BYTES', str(10 * 1024 * 1024)))
 ACCESS_LOG_BACKUPS = int(os.environ.get('HISTORICALWOW_ACCESS_LOG_BACKUPS', '5'))
+# X-Forwarded-For is trusted ONLY when this service sits behind a proxy that
+# sets it. The container is directly reachable today, so default OFF: a
+# direct client can set any XFF value it likes, and honoring it would let
+# callers forge the logged/displayed IP and hostname — defeating the point
+# of an audit log. Set HISTORICALWOW_TRUST_PROXY=1 once a trusted reverse
+# proxy terminates connections in front of this server.
+TRUST_PROXY        = os.environ.get('HISTORICALWOW_TRUST_PROXY', '0') == '1'
 
 # --- HR gate --------------------------------------------------------------
 # Incidents assigned to this group (sys_user_group.sys_id) are hidden from
@@ -213,12 +220,16 @@ def _reverse_dns(ip: str) -> str:
 
 
 def _client_ip(handler) -> str:
-    """Trust X-Forwarded-For only if it's set (no proxy today; this is
-    future-proofing). Fall back to the socket peer."""
-    xff = handler.headers.get('X-Forwarded-For', '')
-    if xff:
-        return xff.split(',')[0].strip()
-    return handler.client_address[0] if handler.client_address else '-'
+    """Source IP for logging/identity. Uses the TCP peer address, which a
+    client can't forge without network-level spoofing. X-Forwarded-For is
+    honored only when HISTORICALWOW_TRUST_PROXY=1 — otherwise a direct
+    caller could spoof it and poison the audit log."""
+    peer = handler.client_address[0] if handler.client_address else '-'
+    if TRUST_PROXY:
+        xff = handler.headers.get('X-Forwarded-For', '')
+        if xff:
+            return xff.split(',')[0].strip()
+    return peer
 
 
 # Tables we serve via /api/<table>. Keep in sync with bin/build_sqlite.py.
@@ -1163,9 +1174,9 @@ def main():
     else:
         log.warning('hr gate DISABLED — set HR_UNLOCK_PASSWORD to protect HR incidents')
     if ACCESS_LOG_PATH:
-        log.info('access log ENABLED — %s (dns=%s, max=%d, backups=%d)',
+        log.info('access log ENABLED — %s (dns=%s, max=%d, backups=%d, trust_proxy=%s)',
                  ACCESS_LOG_PATH, 'on' if ACCESS_LOG_DNS else 'off',
-                 ACCESS_LOG_MAX, ACCESS_LOG_BACKUPS)
+                 ACCESS_LOG_MAX, ACCESS_LOG_BACKUPS, 'on' if TRUST_PROXY else 'off')
     else:
         log.info('access log DISABLED — set HISTORICALWOW_ACCESS_LOG to enable')
     # Pre-build the heavy lookup caches on a background thread so the first

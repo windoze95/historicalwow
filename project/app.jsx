@@ -97,7 +97,10 @@ function App() {
       <div className="banner">
         <div className="left">
           <span className="dot"></span>
-          <span><strong style={{ fontWeight: 600 }}>Read-only archive</strong> · all reads logged</span>
+          <span>
+            <strong style={{ fontWeight: 600 }}>Read-only archive</strong>
+            {data.whoami.access_log ? ' · all reads logged' : ''}
+          </span>
         </div>
         <div className="right">
           <span>snapshot {data.manifest.label}</span>
@@ -148,10 +151,7 @@ function App() {
             <window.Icon name="history" size={14} />
           </button>
           <div className="divider-v" />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px 0 4px' }}>
-            <window.Avatar name="Julian Dicesare" size="sm" />
-            <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>julian.dicesare</span>
-          </div>
+          <WhoamiBadge whoami={data.whoami} />
         </div>
       </div>
 
@@ -382,13 +382,18 @@ function Sidebar({ route }) {
 
 function AuditLogPanel({ onClose }) {
   const entries = window.AuditLog.all();
+  const who = window.HistoricalWowData.whoami || {};
+  const label = who.host || who.ip || 'this browser';
+  const sub = who.access_log
+    ? 'session view; the server also records every request to its access log'
+    : 'session view; server-side access log is disabled on this deployment';
   return (
     <div className="audit-log-overlay" onClick={onClose}>
       <div className="audit-log-panel" onClick={e => e.stopPropagation()}>
         <div className="head">
           <window.Icon name="history" size={14} />
           <h3>Your access log</h3>
-          <span className="sub">every archive read is logged</span>
+          <span className="sub">{sub}</span>
           <button className="icon-btn close" onClick={onClose} style={{ width: 26, height: 26, display: 'grid', placeItems: 'center', borderRadius: 6 }}>
             <window.Icon name="close" size={14} />
           </button>
@@ -397,7 +402,7 @@ function AuditLogPanel({ onClose }) {
           {entries.length === 0 && <div className="empty">No reads recorded yet this session.</div>}
           {entries.map((e, i) => (
             <div key={i} className="entry">
-              <div className="when">{new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19)} · julian.dicesare</div>
+              <div className="when">{new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19)} · {label}</div>
               <div className="what">
                 {e.kind === 'view' ? 'opened ' : e.kind === 'list' ? 'listed ' : 'searched '}
                 <span className="target mono">{e.target}</span>
@@ -407,6 +412,26 @@ function AuditLogPanel({ onClose }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function WhoamiBadge({ whoami }) {
+  // Server-seen identity. host is the reverse-DNS of the request's client
+  // IP (cached server-side); ip is the raw source IP; both can be null if
+  // the server couldn't resolve them or the access-log DNS lookup is off.
+  const w = whoami || {};
+  const primary = w.host || w.ip || 'unknown';
+  const tip = w.access_log
+    ? `Server sees ${w.host || '(no PTR)'} · ${w.ip || '(no IP)'}\nRequests are recorded to the access log.`
+    : `Server sees ${w.host || '(no PTR)'} · ${w.ip || '(no IP)'}\nAccess log is disabled on this deployment.`;
+  return (
+    <div title={tip}
+         style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px 0 4px', minWidth: 0 }}>
+      <window.Avatar name={primary} size="sm" />
+      <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+        {primary}
+      </span>
     </div>
   );
 }

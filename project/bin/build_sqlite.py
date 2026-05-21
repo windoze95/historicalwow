@@ -710,15 +710,28 @@ def _write_build_state(conn, table, last_cursor, delta_field, rows_total):
     conn.commit()
 
 
-def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
+def build_table(conn, table, indexed_cols, ndjson_path, force_full=False,
+                report_new_tables=True):
     """Stream NDJSON → SQLite. Incremental by default: rows whose delta-field
     value (sys_updated_on or sys_created_on) is <= the last recorded cursor
     are skipped. Force a full rebuild with `force_full=True` (or pass
-    --rebuild on the CLI, which deletes the DB before this is called)."""
+    --rebuild on the CLI, which deletes the DB before this is called).
+
+    `report_new_tables`: when True, flag tables that don't yet exist as
+    schema_drift and print `(new table)` inline. main() sets this to False
+    for a first-ever build or a forced --rebuild, where every table is
+    "new" by construction (not a meaningful schema change to surface)."""
     print(f'[{table}]', end=' ', flush=True)
     if not ndjson_path.exists():
         print(f'no NDJSON file — skipping')
         return 0, False
+
+    # Track whether this is a brand-new SQLite table — used by main() to
+    # surface schema-change events at the end of the run. A forced full
+    # rebuild of an existing table is intentional, NOT drift.
+    table_existed = conn.execute(
+        'SELECT 1 FROM sqlite_master WHERE type=? AND name=?', ('table', table)
+    ).fetchone() is not None
 
     delta_field = _delta_field(table)
     last_cursor = None if force_full else _read_build_state(conn, table)
@@ -740,11 +753,18 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
             if last_cursor:
                 print(f'(recovered cursor)', end=' ', flush=True)
 
-    # Column-drift detection. If indexed_cols added a new column that the
-    # existing table doesn't have, force a full rebuild so the new column
-    # gets populated for existing rows. Without this, a code change that
-    # adds a filter column (e.g. sc_task.request_item) would index nothing
-    # for old rows and silently break per-record filters.
+    # Schema-change detection. Two flavours, both surfaced to the end-of-run
+    # summary so the operator knows what the SQL surface looked like last
+    # run vs. this run.
+    #
+    # 1. Column drift on an existing table — a SCHEMAS edit added a column
+    #    the table doesn't have. Force a full rebuild so the new column
+    #    gets populated for existing rows; without this, the column would
+    #    index nothing for old rows and silently break per-record filters.
+    # 2. Brand-new table — a SCHEMAS entry that didn't have a SQLite table
+    #    yet. The "not incremental" branch below handles creating it; this
+    #    flag just lets main() report it. (A forced --rebuild of an
+    #    existing table is intentional, NOT drift.)
     schema_drift = False
     if last_cursor:
         try:
@@ -757,6 +777,9 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
                 schema_drift = True
         except sqlite3.OperationalError:
             pass  # table doesn't exist; will be created below
+    if report_new_tables and not table_existed:
+        print('(new table)', end=' ', flush=True)
+        schema_drift = True
 
     incremental = bool(last_cursor)
 
@@ -877,12 +900,24 @@ def main():
 
     _ensure_build_state_table(conn)
 
+    # New-table drift flagging is only meaningful on a SUBSEQUENT run where
+    # the DB had prior state — i.e. when a SCHEMAS edit lands on an existing
+    # archive. On a forced --rebuild (DB deleted) or an initial deploy (DB
+    # didn't exist), every table looks "new" and surfacing 60+ of them in
+    # the end-of-run summary is just noise. `_build_state` being empty
+    # before the per-table loop populates it covers both cases.
+    report_new_tables = conn.execute(
+        'SELECT COUNT(*) FROM _build_state'
+    ).fetchone()[0] > 0
+
     started = time.time()
     total_written = 0
     drift_tables = []
     for table, indexed_cols in SCHEMAS.items():
         ndjson_path = DATA / f'{table}.ndjson'
-        n, drift = build_table(conn, table, indexed_cols, ndjson_path, force_full=is_full)
+        n, drift = build_table(conn, table, indexed_cols, ndjson_path,
+                               force_full=is_full,
+                               report_new_tables=report_new_tables)
         total_written += n
         if drift:
             drift_tables.append(table)
@@ -915,10 +950,12 @@ def main():
           f'DB size: {size_mb:.0f} MB at {DB_PATH}')
     if drift_tables:
         print()
-        print(f'⚠  Schema drift triggered a full rebuild for: {", ".join(drift_tables)}')
-        print(f'   The running container caches per-thread SQLite connections.')
-        print(f'   Restart it so the new schema is visible:')
-        print(f'     docker compose restart historicalwow')
+        print(f'Schema changes this run: {", ".join(drift_tables)}')
+        print(f'  (new tables created and/or existing tables rebuilt for added columns)')
+        print(f'  Server.py reads schema-aware queries fine without a restart in')
+        print(f'  normal operation. If API responses show stale schema after this')
+        print(f'  run (missing columns, "no such table"):')
+        print(f'    docker compose restart historicalwow')
 
 
 if __name__ == '__main__':

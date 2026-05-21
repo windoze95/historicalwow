@@ -710,11 +710,17 @@ def _write_build_state(conn, table, last_cursor, delta_field, rows_total):
     conn.commit()
 
 
-def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
+def build_table(conn, table, indexed_cols, ndjson_path, force_full=False,
+                report_new_tables=True):
     """Stream NDJSON → SQLite. Incremental by default: rows whose delta-field
     value (sys_updated_on or sys_created_on) is <= the last recorded cursor
     are skipped. Force a full rebuild with `force_full=True` (or pass
-    --rebuild on the CLI, which deletes the DB before this is called)."""
+    --rebuild on the CLI, which deletes the DB before this is called).
+
+    `report_new_tables`: when True, flag tables that don't yet exist as
+    schema_drift and print `(new table)` inline. main() sets this to False
+    for a first-ever build or a forced --rebuild, where every table is
+    "new" by construction (not a meaningful schema change to surface)."""
     print(f'[{table}]', end=' ', flush=True)
     if not ndjson_path.exists():
         print(f'no NDJSON file — skipping')
@@ -771,7 +777,7 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False):
                 schema_drift = True
         except sqlite3.OperationalError:
             pass  # table doesn't exist; will be created below
-    if not table_existed:
+    if report_new_tables and not table_existed:
         print('(new table)', end=' ', flush=True)
         schema_drift = True
 
@@ -894,12 +900,24 @@ def main():
 
     _ensure_build_state_table(conn)
 
+    # New-table drift flagging is only meaningful on a SUBSEQUENT run where
+    # the DB had prior state — i.e. when a SCHEMAS edit lands on an existing
+    # archive. On a forced --rebuild (DB deleted) or an initial deploy (DB
+    # didn't exist), every table looks "new" and surfacing 60+ of them in
+    # the end-of-run summary is just noise. `_build_state` being empty
+    # before the per-table loop populates it covers both cases.
+    report_new_tables = conn.execute(
+        'SELECT COUNT(*) FROM _build_state'
+    ).fetchone()[0] > 0
+
     started = time.time()
     total_written = 0
     drift_tables = []
     for table, indexed_cols in SCHEMAS.items():
         ndjson_path = DATA / f'{table}.ndjson'
-        n, drift = build_table(conn, table, indexed_cols, ndjson_path, force_full=is_full)
+        n, drift = build_table(conn, table, indexed_cols, ndjson_path,
+                               force_full=is_full,
+                               report_new_tables=report_new_tables)
         total_written += n
         if drift:
             drift_tables.append(table)

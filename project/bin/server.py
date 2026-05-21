@@ -248,7 +248,7 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0):
     handler.wfile.write(body)
 
 
-def _send_static(handler, path, content_type=None):
+def _send_static(handler, path, content_type=None, vary=None):
     if not path.is_file():
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'not found: {path.name}')
     if content_type is None:
@@ -274,6 +274,12 @@ def _send_static(handler, path, content_type=None):
     handler.send_response(HTTPStatus.OK)
     handler.send_header('Content-Type', content_type)
     handler.send_header('Content-Length', str(size))
+    # Vary tells intermediate caches (browser HTTP cache, proxies, CDNs) to
+    # key responses by the listed request headers. Required whenever a
+    # single URL returns different bodies based on a header (e.g. /docs/<file>.md
+    # picking between rendered viewer and raw markdown via Accept).
+    if vary:
+        handler.send_header('Vary', vary)
     if path.suffix.lower() == '.html':
         handler.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
     handler.end_headers()
@@ -925,9 +931,17 @@ class Handler(BaseHTTPRequestHandler):
         # links to these with relative URLs ([API.md](API.md) etc.), which
         # Swagger UI resolves against the page's own /docs/ origin — so the
         # files must be reachable at /docs/<name>.<ext> for those links to
-        # work. .md files come back as text/markdown (most browsers show as
-        # plain text; rendering can be a later enhancement). .yaml files
-        # match the same Content-Type as the /openapi.yaml root route.
+        # work.
+        #
+        # .md responses are content-negotiated:
+        #   * Accept: text/html (browsers)  → serve md-viewer/viewer.html.
+        #     The viewer's JS fetches the same URL back with
+        #     Accept: text/markdown to get the raw bytes, then renders via
+        #     marked.js.
+        #   * Anything else (curl `*/*`, JS fetch with explicit
+        #     text/markdown, scripted clients) → raw bytes, same as before.
+        # .yaml files always serve raw — Swagger UI never opens them as
+        # pages; they're only ever consumed by JS or CLI tooling.
         m = re.match(r'^/docs/([\w.\-]+\.(?:md|yaml))$', path)
         if m:
             asset = APP_DIR / 'docs' / m.group(1)
@@ -935,9 +949,31 @@ class Handler(BaseHTTPRequestHandler):
                 asset.resolve().relative_to((APP_DIR / 'docs').resolve())
             except ValueError:
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
-            ctype = ('text/markdown; charset=utf-8' if asset.suffix == '.md'
-                     else 'application/yaml; charset=utf-8')
-            return _send_static(self, asset, content_type=ctype)
+            if asset.suffix == '.md':
+                accept = self.headers.get('Accept', '') or ''
+                # Both branches set Vary: Accept so caches keep the rendered-
+                # viewer and raw-markdown representations on separate keys —
+                # otherwise a cached curl response could be served to a
+                # browser navigation (or vice versa).
+                if 'text/html' in accept:
+                    return _send_static(self,
+                        APP_DIR / 'docs' / 'md-viewer' / 'viewer.html',
+                        vary='Accept')
+                return _send_static(self, asset,
+                    content_type='text/markdown; charset=utf-8',
+                    vary='Accept')
+            return _send_static(self, asset,
+                content_type='application/yaml; charset=utf-8')
+        # md-viewer vendored assets (marked.js). Same defense-in-depth
+        # shape as the /docs/<asset> swagger-ui route above.
+        m = re.match(r'^/docs/md-viewer/([\w.\-]+\.(?:css|js|html))$', path)
+        if m:
+            asset = APP_DIR / 'docs' / 'md-viewer' / m.group(1)
+            try:
+                asset.resolve().relative_to((APP_DIR / 'docs' / 'md-viewer').resolve())
+            except ValueError:
+                return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
+            return _send_static(self, asset)
 
         # API
         if path == '/api/manifest':

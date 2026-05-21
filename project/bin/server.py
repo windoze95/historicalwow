@@ -248,7 +248,7 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0):
     handler.wfile.write(body)
 
 
-def _send_static(handler, path, content_type=None):
+def _send_static(handler, path, content_type=None, vary=None):
     if not path.is_file():
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'not found: {path.name}')
     if content_type is None:
@@ -274,6 +274,12 @@ def _send_static(handler, path, content_type=None):
     handler.send_response(HTTPStatus.OK)
     handler.send_header('Content-Type', content_type)
     handler.send_header('Content-Length', str(size))
+    # Vary tells intermediate caches (browser HTTP cache, proxies, CDNs) to
+    # key responses by the listed request headers. Required whenever a
+    # single URL returns different bodies based on a header (e.g. /docs/<file>.md
+    # picking between rendered viewer and raw markdown via Accept).
+    if vary:
+        handler.send_header('Vary', vary)
     if path.suffix.lower() == '.html':
         handler.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
     handler.end_headers()
@@ -945,11 +951,17 @@ class Handler(BaseHTTPRequestHandler):
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
             if asset.suffix == '.md':
                 accept = self.headers.get('Accept', '') or ''
+                # Both branches set Vary: Accept so caches keep the rendered-
+                # viewer and raw-markdown representations on separate keys —
+                # otherwise a cached curl response could be served to a
+                # browser navigation (or vice versa).
                 if 'text/html' in accept:
                     return _send_static(self,
-                        APP_DIR / 'docs' / 'md-viewer' / 'viewer.html')
+                        APP_DIR / 'docs' / 'md-viewer' / 'viewer.html',
+                        vary='Accept')
                 return _send_static(self, asset,
-                    content_type='text/markdown; charset=utf-8')
+                    content_type='text/markdown; charset=utf-8',
+                    vary='Accept')
             return _send_static(self, asset,
                 content_type='application/yaml; charset=utf-8')
         # md-viewer vendored assets (marked.js). Same defense-in-depth

@@ -42,6 +42,7 @@ window.HistoricalWowData = (function () {
     'sc_request', 'sc_req_item', 'sc_task',
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
+    'sn_contract_renewal_task',
   ];
 
   const data = {

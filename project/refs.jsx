@@ -194,15 +194,16 @@ window.HomePage = function HomePage({ openPalette }) {
 
 // Per-user relationship × table fan-out for the user record page.
 // `tables` is the scoped allow-list for each relationship — `requested_for`
-// is only meaningful on catalog tables, so it's not queried on `incident`.
+// is only meaningful on catalog tables, so it's not queried on `incident`
+// or `sn_contract_renewal_task`.
 const USER_RELATIONS = [
-  { field: 'caller_id',     label: 'as caller',        tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'caller_id',     label: 'as caller',        tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'] },
   { field: 'requested_for', label: 'as requested for', tables: ['sc_request', 'sc_req_item', 'sc_task'] },
-  { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'] },
 ];
 // Stable display order for the per-table sections — top-down task volume,
-// then the catalog flow REQ → RITM → SCTASK.
-const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task'];
+// then the catalog flow REQ → RITM → SCTASK, then asset-task siblings.
+const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'];
 
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;

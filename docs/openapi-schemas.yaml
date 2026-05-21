@@ -453,6 +453,45 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    SnContractRenewalTaskRow:
+      type: object
+      description: 'Row from the `sn_contract_renewal_task` table (task, cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        number:
+          type: string
+        short_description:
+          type: string
+        state:
+          type: string
+        priority:
+          type: string
+        assigned_to:
+          type: string
+        assignment_group:
+          type: string
+        cmdb_ci:
+          type: string
+        caller_id:
+          type: string
+        opened_at:
+          type: string
+        sys_created_on:
+          type: string
+        sys_updated_on:
+          type: string
+        legal_hold:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        sys_class_name:
+          type: string
+        parent:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
     SysUserRow:
       type: object
       description: 'Row from the `sys_user` table (cache-5min).'
@@ -1507,6 +1546,41 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    SnEntFacilityAssetRow:
+      type: object
+      description: 'Row from the `sn_ent_facility_asset` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        asset_tag:
+          type: string
+        display_name:
+          type: string
+        serial_number:
+          type: string
+        model:
+          type: string
+        model_category:
+          type: string
+        state:
+          type: string
+        substatus:
+          type: string
+        assigned_to:
+          type: string
+        owned_by:
+          type: string
+        location:
+          type: string
+        ci:
+          type: string
+        sys_created_on:
+          type: string
+        sys_updated_on:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
     AlmSoftwareLicenseRow:
       type: object
       description: 'Row from the `alm_software_license` table (reference).'
@@ -1701,6 +1775,7 @@ x-filterable-columns:
   change_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sysapproval_group: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   asset_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  sn_contract_renewal_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sys_user: [sys_id, user_name, name, email, title, department, location, active]
   sys_user_group: [sys_id, name, manager, description, active]
   sys_user_grmember: [sys_id, group, user]
@@ -1751,6 +1826,7 @@ x-filterable-columns:
   sys_security_acl: [sys_id, name, operation, type, active, admin_overrides, decision_type, sys_class_name]
   alm_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, company, cost_center, sys_class_name, sys_created_on, sys_updated_on]
   alm_hardware: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, warranty_expiration, sys_created_on, sys_updated_on]
+  sn_ent_facility_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, sys_created_on, sys_updated_on]
   alm_software_license: [sys_id, asset_tag, display_name, vendor, license_key, license_count, expiration_date, state, owned_by, cost_center, sys_created_on, sys_updated_on]
   alm_consumable: [sys_id, asset_tag, display_name, quantity, model, location, state, sys_created_on, sys_updated_on]
   alm_facility: [sys_id, asset_tag, display_name, location, state, sys_created_on, sys_updated_on]
@@ -1770,6 +1846,7 @@ x-task-tables:
   - sc_req_item
   - sc_request
   - sc_task
+  - sn_contract_renewal_task
   - sysapproval_group
 
 x-cache-5min:
@@ -1799,6 +1876,8 @@ x-cache-5min:
   - sc_req_item
   - sc_request
   - sc_task
+  - sn_contract_renewal_task
+  - sn_ent_facility_asset
   - std_change_proposal
   - sys_choice
   - sys_data_policy2

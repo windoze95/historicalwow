@@ -154,6 +154,10 @@ TASK_TABLES = {
     'sc_request', 'sc_req_item', 'sc_task',
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
+    # All concrete asset_task descendants on this instance carry
+    # `sys_class_name=sn_contract_renewal_task` (CMRTASK number prefix),
+    # so the asset_task list is empty and the actual records live here.
+    'sn_contract_renewal_task',
 }
 REFERENCE_TABLES = {
     'sys_user', 'sys_user_group', 'sys_user_grmember',
@@ -176,6 +180,10 @@ REFERENCE_TABLES = {
     'std_change_proposal',
     'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
     'alm_consumable', 'alm_facility', 'alm_stockroom',
+    # sn_ent_facility_asset is an alm_asset descendant (facility plugin —
+    # security cameras, IoT, access control). Pulled with sys_class_name
+    # filtering so its rows have their own NDJSON/table.
+    'sn_ent_facility_asset',
     'cmdb_ci_spkg', 'cmdb_software_instance',
     # Server-side logic — business rules, client scripts, script includes,
     # scheduled scripts, UI policies, data policies. Lets the per-table
@@ -767,6 +775,7 @@ CACHE_5MIN = {
     'sc_request', 'sc_req_item', 'sc_task',
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
+    'sn_contract_renewal_task', 'sn_ent_facility_asset',
     'task_ci', 'task_sla', 'sysapproval_approver',
     # Catalog admin metadata is small and changes rarely — fine to cache.
     'sc_cat_item', 'sc_catalog', 'sc_category',

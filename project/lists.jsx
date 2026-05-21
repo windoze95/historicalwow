@@ -15,6 +15,7 @@ window.TASK_LABELS = {
   sc_task:           { plural: 'Catalog tasks',     singular: 'Catalog task' },
   sysapproval_group: { plural: 'Group approvals',   singular: 'Group approval' },
   asset_task:        { plural: 'Asset tasks',       singular: 'Asset task' },
+  sn_contract_renewal_task: { plural: 'Contract renewal tasks', singular: 'Contract renewal task' },
   incident_task:     { plural: 'Incident tasks',    singular: 'Incident task' },
   change_task:       { plural: 'Change tasks',      singular: 'Change task' },
   alm_asset:           { plural: 'Assets',            singular: 'Asset' },
@@ -24,6 +25,7 @@ window.TASK_LABELS = {
   alm_consumable:      { plural: 'Consumables',       singular: 'Consumable' },
   alm_facility:        { plural: 'Facilities',        singular: 'Facility' },
   alm_stockroom:       { plural: 'Stockrooms',        singular: 'Stockroom' },
+  sn_ent_facility_asset:{ plural: 'Facility assets', singular: 'Facility asset' },
   cmdb_ci_spkg:        { plural: 'Software packages', singular: 'Software package' },
   cmdb_software_instance: { plural: 'Software installs', singular: 'Software install' },
 };
@@ -39,6 +41,7 @@ const PAGE_SIZE = 50;
 const ASSET_TABLES = [
   'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
   'alm_consumable', 'alm_facility', 'alm_stockroom',
+  'sn_ent_facility_asset',
   'cmdb_ci_spkg', 'cmdb_software_instance',
 ];
 
@@ -205,6 +208,13 @@ const ASSET_COLS = {
     { key: 'model',         label: 'Model',          ref: 'cmdb_ci' },
     { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
     { key: 'assigned_to',   label: 'Assigned to',    ref: 'user', w: 180 },
+  ],
+  sn_ent_facility_asset: [
+    { key: 'asset_tag',     label: 'Asset tag',      cls: 'mono', w: 160 },
+    { key: 'display_name',  label: 'Name',           grow: true },
+    { key: 'model',         label: 'Model',          ref: 'cmdb_ci' },
+    { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
+    { key: 'location',      label: 'Location',       ref: 'location', w: 180 },
   ],
   alm_software_license: [
     { key: 'asset_tag',     label: 'Asset tag',      cls: 'num',  w: 110 },

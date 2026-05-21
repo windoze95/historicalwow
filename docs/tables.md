@@ -323,6 +323,32 @@ Filterable columns:
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
+### `sn_contract_renewal_task`
+
+Tags: `task` `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `number` | string |  |
+| `short_description` | string |  |
+| `state` | string |  |
+| `priority` | string |  |
+| `assigned_to` | string |  |
+| `assignment_group` | string |  |
+| `cmdb_ci` | string |  |
+| `caller_id` | string |  |
+| `opened_at` | string |  |
+| `sys_created_on` | string |  |
+| `sys_updated_on` | string |  |
+| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `sys_class_name` | string |  |
+| `parent` | string |  |
+
 ## All other tables
 
 ### `sys_user`
@@ -1182,6 +1208,31 @@ Filterable columns:
 | `location` | string |  |
 | `ci` | string |  |
 | `warranty_expiration` | string |  |
+| `sys_created_on` | string |  |
+| `sys_updated_on` | string |  |
+
+### `sn_ent_facility_asset`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `asset_tag` | string |  |
+| `display_name` | string |  |
+| `serial_number` | string |  |
+| `model` | string |  |
+| `model_category` | string |  |
+| `state` | string |  |
+| `substatus` | string |  |
+| `assigned_to` | string |  |
+| `owned_by` | string |  |
+| `location` | string |  |
+| `ci` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
 

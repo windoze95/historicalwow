@@ -921,6 +921,23 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
             return _send_static(self, asset)
+        # Narrative + spec sources at /docs/<file>. The OpenAPI description
+        # links to these with relative URLs ([API.md](API.md) etc.), which
+        # Swagger UI resolves against the page's own /docs/ origin — so the
+        # files must be reachable at /docs/<name>.<ext> for those links to
+        # work. .md files come back as text/markdown (most browsers show as
+        # plain text; rendering can be a later enhancement). .yaml files
+        # match the same Content-Type as the /openapi.yaml root route.
+        m = re.match(r'^/docs/([\w.\-]+\.(?:md|yaml))$', path)
+        if m:
+            asset = APP_DIR / 'docs' / m.group(1)
+            try:
+                asset.resolve().relative_to((APP_DIR / 'docs').resolve())
+            except ValueError:
+                return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
+            ctype = ('text/markdown; charset=utf-8' if asset.suffix == '.md'
+                     else 'application/yaml; charset=utf-8')
+            return _send_static(self, asset, content_type=ctype)
 
         # API
         if path == '/api/manifest':

@@ -36,7 +36,9 @@ RUN ln -sf /app/HistoricalWow.html /app/index.html && \
     test -s /app/docs/openapi.yaml && \
     test -s /app/docs/openapi-schemas.yaml && \
     test -s /app/docs/swagger-ui/index.html && \
-    test -s /app/docs/swagger-ui/swagger-ui-bundle.js
+    test -s /app/docs/swagger-ui/swagger-ui-bundle.js && \
+    test -s /app/docs/md-viewer/viewer.html && \
+    test -s /app/docs/md-viewer/marked.min.js
 
 EXPOSE 80
 

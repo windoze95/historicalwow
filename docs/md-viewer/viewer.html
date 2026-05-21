@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HistoricalWow docs</title>
+  <style>
+    body { margin: 0; background: #fafafa; color: #1c1c1c;
+           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                        Helvetica, Arial, sans-serif;
+           font-size: 14.5px; line-height: 1.55; }
+    header { background: #fff; border-bottom: 1px solid #e3e3e3;
+             padding: 10px 32px; font-size: 13px; }
+    header a { color: #555; text-decoration: none; }
+    header a:hover { text-decoration: underline; color: #0366d6; }
+    main { max-width: 920px; margin: 0 auto; padding: 28px 32px 64px; }
+    main h1, main h2, main h3, main h4 { font-weight: 600; line-height: 1.25;
+        margin: 1.6em 0 0.6em; }
+    main h1 { font-size: 1.95em; border-bottom: 1px solid #e3e3e3;
+              padding-bottom: 0.3em; margin-top: 0.2em; }
+    main h2 { font-size: 1.45em; border-bottom: 1px solid #eee;
+              padding-bottom: 0.25em; }
+    main h3 { font-size: 1.18em; }
+    main h4 { font-size: 1.05em; color: #444; }
+    main p { margin: 0.6em 0; }
+    main code { background: #f1f1f1; padding: 1px 5px; border-radius: 3px;
+        font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+    main pre { background: #f4f4f4; padding: 12px 16px; border-radius: 6px;
+        overflow-x: auto; font-size: 0.9em; line-height: 1.45; }
+    main pre code { background: none; padding: 0; }
+    main table { border-collapse: collapse; margin: 1em 0; display: block;
+                 overflow-x: auto; }
+    main table th, main table td { border: 1px solid #ddd; padding: 6px 12px;
+                                   text-align: left; vertical-align: top; }
+    main table th { background: #f5f5f5; font-weight: 600; }
+    main blockquote { border-left: 4px solid #dfe4ea; padding: 0 14px;
+                      margin: 1em 0; color: #555; }
+    main a { color: #0366d6; text-decoration: none; }
+    main a:hover { text-decoration: underline; }
+    main hr { border: 0; border-top: 1px solid #e3e3e3; margin: 1.6em 0; }
+    main ul, main ol { padding-left: 30px; }
+    main li { margin: 0.15em 0; }
+    main img { max-width: 100%; }
+    #status { color: #888; padding: 24px 0; font-style: italic; }
+    #status.err { color: #c00; font-style: normal; }
+  </style>
+</head>
+<body>
+<header>
+  <a href="/docs/">← Interactive API docs</a>
+</header>
+<main id="content"><div id="status">Loading…</div></main>
+<script src="md-viewer/marked.min.js"></script>
+<script>
+(function () {
+  // viewer.html is served by server.py whenever a browser requests
+  // /docs/<file>.md (content negotiation on Accept). The page is the same
+  // for every .md request — the JS reads window.location.pathname to
+  // figure out which file it's rendering and fetches the same URL back
+  // with Accept: text/markdown so the server returns the raw bytes.
+  var path = window.location.pathname;
+  document.title = path.split('/').pop() + ' — HistoricalWow docs';
+  fetch(path, { headers: { 'Accept': 'text/markdown' } })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function (md) {
+      // Conservative marked options — no GFM autolink, no breaks-on-newline.
+      // Our markdown is hand-authored with explicit links and blank lines.
+      var html = marked.parse(md, { gfm: true, breaks: false });
+      document.getElementById('content').innerHTML = html;
+      var h1 = document.querySelector('#content h1');
+      if (h1) document.title = h1.textContent + ' — HistoricalWow docs';
+    })
+    .catch(function (e) {
+      var s = document.getElementById('status') ||
+              (function () {
+                var d = document.createElement('div');
+                d.id = 'status';
+                document.getElementById('content').appendChild(d);
+                return d;
+              })();
+      s.className = 'err';
+      s.textContent = 'Could not load this document: ' + e.message;
+    });
+})();
+</script>
+</body>
+</html>

@@ -19,6 +19,10 @@ project/export/export.log
 project/export/*.log
 *.log
 
+# Server access log (mounted at /app/logs in the container; contains
+# client IPs, reverse-DNS hostnames, and requested URL paths)
+logs/
+
 # Salvage backups created during recovery runs
 *.ndjson.flat-salvaged
 *.ndjson.tmp

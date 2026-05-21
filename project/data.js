@@ -77,13 +77,19 @@ window.HistoricalWowData = (function () {
     // server is filtering HR-assigned incidents on locked sessions; the
     // viewer surfaces an unlock button when so.
     hrStatus: { enabled: false, unlocked: false, group_sys_id: '', group_label: '' },
+    // Caller identity-by-network-position, populated by /api/whoami on boot.
+    // There is no auth in front of this service; `host` is the server's
+    // reverse-DNS lookup of the request's client IP (best-effort, cached
+    // server-side), `ip` is the raw client IP, and `access_log` reports
+    // whether the server is recording requests to its rotating log file.
+    whoami: { ip: null, host: null, access_log: false },
     loadStatus: {
       ready: false, source: null, table: null,
       // Critical jobs the loading screen blocks on: manifest + EAGER_TABLES
-      // + hr_status. The two big lookup maps (sys_user_lookup,
+      // + hr_status + whoami. The two big lookup maps (sys_user_lookup,
       // cmdb_ci_lookup — together 38 MB gzipped) load in the background
       // after `ready=true` so they don't block the UI on slow networks.
-      total: EAGER_TABLES.length + 2,
+      total: EAGER_TABLES.length + 3,
       loaded: 0,
       error: null,
     },
@@ -325,6 +331,13 @@ window.HistoricalWowData = (function () {
         data.hrStatus = await apiGet('/api/hr-status');
       } catch (e) {
         console.warn('[historicalwow] hr-status failed:', e.message);
+      }
+    }]);
+    jobs.push(['whoami', async () => {
+      try {
+        data.whoami = await apiGet('/api/whoami');
+      } catch (e) {
+        console.warn('[historicalwow] whoami failed:', e.message);
       }
     }]);
     return jobs;

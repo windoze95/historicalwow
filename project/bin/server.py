@@ -27,6 +27,7 @@ import gzip
 import hmac
 import json
 import logging
+import logging.handlers
 import os
 import re
 import secrets
@@ -34,6 +35,7 @@ import socket
 import sqlite3
 import sys
 import threading
+import time
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +48,18 @@ DB_PATH    = DATA_DIR / 'historicalwow.db'
 STATIC_HTML = APP_DIR / 'HistoricalWow.html'
 
 PORT = int(os.environ.get('HISTORICALWOW_PORT', '80'))
+
+# --- Access log -----------------------------------------------------------
+# One JSON line per request to a rotating file. Default on; set
+# HISTORICALWOW_ACCESS_LOG="" to disable. Reverse-DNS is the only realistic
+# source of caller identity (no auth in front of this service); set
+# HISTORICALWOW_ACCESS_LOG_DNS=0 to skip lookups if corp DNS is slow or
+# unreliable, in which case the `host` field is logged as "-" and the
+# /api/whoami endpoint returns null.
+ACCESS_LOG_PATH    = os.environ.get('HISTORICALWOW_ACCESS_LOG', '/app/logs/access.log').strip()
+ACCESS_LOG_DNS     = os.environ.get('HISTORICALWOW_ACCESS_LOG_DNS', '1') != '0'
+ACCESS_LOG_MAX     = int(os.environ.get('HISTORICALWOW_ACCESS_LOG_MAX_BYTES', str(10 * 1024 * 1024)))
+ACCESS_LOG_BACKUPS = int(os.environ.get('HISTORICALWOW_ACCESS_LOG_BACKUPS', '5'))
 
 # --- HR gate --------------------------------------------------------------
 # Incidents assigned to this group (sys_user_group.sys_id) are hidden from
@@ -146,6 +160,65 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 log = logging.getLogger('historicalwow.server')
+
+# Access log is a separate sink so the operational stderr stream and the
+# durable request log don't intermix. `propagate=False` keeps records out of
+# the root logger's stdout handler set up above.
+access_log = logging.getLogger('historicalwow.access')
+access_log.propagate = False
+access_log.setLevel(logging.INFO)
+if ACCESS_LOG_PATH:
+    try:
+        Path(ACCESS_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        _h = logging.handlers.RotatingFileHandler(
+            ACCESS_LOG_PATH, maxBytes=ACCESS_LOG_MAX,
+            backupCount=ACCESS_LOG_BACKUPS, encoding='utf-8',
+        )
+        _h.setFormatter(logging.Formatter('%(message)s'))
+        access_log.addHandler(_h)
+    except OSError as e:
+        log.warning('access log disabled (%s): %s', ACCESS_LOG_PATH, e)
+        ACCESS_LOG_PATH = ''
+
+# Reverse-DNS cache. Cold lookups can block 1–2s; cache aggressively and
+# only resolve once per IP per hour. Bounded to 256 entries to keep memory
+# trivial — a corporate viewer rarely sees that many distinct clients.
+_DNS_TTL = 3600
+_DNS_MAX = 256
+_dns_cache: dict = {}  # ip -> (host, expires_at)
+_dns_lock = threading.Lock()
+
+
+def _reverse_dns(ip: str) -> str:
+    """Best-effort PTR lookup, cached. Returns '-' on failure or when
+    HISTORICALWOW_ACCESS_LOG_DNS is disabled."""
+    if not ACCESS_LOG_DNS or not ip:
+        return '-'
+    now = time.time()
+    with _dns_lock:
+        cached = _dns_cache.get(ip)
+        if cached and cached[1] > now:
+            return cached[0]
+    try:
+        host = socket.gethostbyaddr(ip)[0]
+    except (socket.herror, socket.gaierror, OSError):
+        host = '-'
+    with _dns_lock:
+        if len(_dns_cache) >= _DNS_MAX:
+            # Evict the soonest-expiring entry; cheap O(n) over a tiny dict.
+            victim = min(_dns_cache.items(), key=lambda kv: kv[1][1])[0]
+            _dns_cache.pop(victim, None)
+        _dns_cache[ip] = (host, now + _DNS_TTL)
+    return host
+
+
+def _client_ip(handler) -> str:
+    """Trust X-Forwarded-For only if it's set (no proxy today; this is
+    future-proofing). Fall back to the socket peer."""
+    xff = handler.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return handler.client_address[0] if handler.client_address else '-'
 
 
 # Tables we serve via /api/<table>. Keep in sync with bin/build_sqlite.py.
@@ -723,6 +796,20 @@ def get_hr_status(handler):
     })
 
 
+def get_whoami(handler):
+    """Return what the server sees about the caller. There is no auth in
+    front of this service — this is identity-by-network-position, not
+    identity-by-credential. The viewer renders these values so a caller
+    can verify what gets logged about them."""
+    ip = _client_ip(handler)
+    host = _reverse_dns(ip)
+    _json_response(handler, {
+        'ip': ip if ip != '-' else None,
+        'host': host if host != '-' else None,
+        'access_log': bool(ACCESS_LOG_PATH),
+    })
+
+
 def post_hr_unlock(handler, body):
     if not hr_gate_enabled():
         return _send_error(handler, HTTPStatus.SERVICE_UNAVAILABLE,
@@ -815,10 +902,41 @@ CACHE_5MIN = {
 class Handler(BaseHTTPRequestHandler):
     server_version = 'historicalwow/1'
 
-    # Quiet the default access log; we'll log selectively below.
+    # Suppress the stdlib default per-request stderr line; we emit our own
+    # structured record to the access log instead. The status code captured
+    # here in log_request() comes from BaseHTTPRequestHandler.send_response,
+    # which is called once per response.
     def log_message(self, fmt, *args):
-        # Don't print the noisy default; keep our own log.
         pass
+
+    def log_request(self, code='-', size='-'):
+        if isinstance(code, HTTPStatus):
+            code = code.value
+        self._access_status = code
+
+    def _emit_access(self):
+        if not ACCESS_LOG_PATH:
+            return
+        ua = self.headers.get('User-Agent', '-') or '-'
+        # Drop healthcheck noise — Dockerfile pings `/` via wget every 30s
+        # with this UA. Without this, ~95% of the log is /-200 selfchecks.
+        if ua.startswith('Wget') and getattr(self, 'path', '') == '/':
+            return
+        ip = _client_ip(self)
+        record = {
+            'ts':     time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'ip':     ip,
+            'host':   _reverse_dns(ip),
+            'method': self.command or '-',
+            'path':   getattr(self, 'path', '-'),
+            'status': getattr(self, '_access_status', '-'),
+            'ua':     ua[:160],
+        }
+        try:
+            access_log.info(json.dumps(record, separators=(',', ':')))
+        except Exception:
+            # Never let logging break a real request.
+            pass
 
     def do_GET(self):
         try:
@@ -831,6 +949,8 @@ class Handler(BaseHTTPRequestHandler):
                 _send_error(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
             except Exception:
                 pass
+        finally:
+            self._emit_access()
 
     def do_POST(self):
         try:
@@ -851,6 +971,8 @@ class Handler(BaseHTTPRequestHandler):
                 _send_error(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
             except Exception:
                 pass
+        finally:
+            self._emit_access()
 
     def _route(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -984,6 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
             return get_sys_user_lookup(self)
         if path == '/api/hr-status':
             return get_hr_status(self)
+        if path == '/api/whoami':
+            return get_whoami(self)
         if path == '/api/search':
             return cross_table_search(self, params)
 
@@ -1038,6 +1162,12 @@ def main():
         log.info('hr gate ENABLED — group=%s (%s)', HR_GROUP_LABEL, HR_GROUP_SYS_ID)
     else:
         log.warning('hr gate DISABLED — set HR_UNLOCK_PASSWORD to protect HR incidents')
+    if ACCESS_LOG_PATH:
+        log.info('access log ENABLED — %s (dns=%s, max=%d, backups=%d)',
+                 ACCESS_LOG_PATH, 'on' if ACCESS_LOG_DNS else 'off',
+                 ACCESS_LOG_MAX, ACCESS_LOG_BACKUPS)
+    else:
+        log.info('access log DISABLED — set HISTORICALWOW_ACCESS_LOG to enable')
     # Pre-build the heavy lookup caches on a background thread so the first
     # user-facing request is O(network) instead of O(SQL+gzip). Doesn't
     # block server start — if warmup races against the first request the

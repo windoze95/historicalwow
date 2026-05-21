@@ -135,6 +135,11 @@ function App() {
               }}
             />
           )}
+          <a className="toggle" href="/docs/" title="OpenAPI spec, schema reference, and interactive try-it-out"
+             style={{ textDecoration: 'none' }}>
+            <window.Icon name="book" size={13} />
+            <span>docs</span>
+          </a>
           <button className={'toggle' + (showRaw ? ' on' : '')} onClick={() => setShowRaw(v => !v)} title="Show raw values alongside display values">
             <window.Icon name={showRaw ? 'eye' : 'eye_off'} size={13} />
             <span>raw</span>

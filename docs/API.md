@@ -2,10 +2,11 @@
 
 Integration guide for teams consuming the HistoricalWow archive.
 
+> **For interactive try-it-out**, visit `/docs` on any running instance — that page renders this same OpenAPI spec via Swagger UI.
+>
 > - Machine-readable spec: [`openapi.yaml`](openapi.yaml) (paths) + [`openapi-schemas.yaml`](openapi-schemas.yaml) (per-table row shapes, auto-generated)
 > - Per-table column catalog: [`tables.md`](tables.md) (auto-generated)
 > - ServiceNow term glossary: [`glossary.md`](glossary.md)
-> - **Interactive try-it-out at `/docs`** — vendored Swagger UI assets are in [`swagger-ui/`](swagger-ui/), but the server routes that expose them at `/docs` and `/openapi.yaml` on a running instance haven't shipped yet. Until they do, read the spec from the repo or render it locally with [editor.swagger.io](https://editor.swagger.io).
 
 ## 1. Overview
 
@@ -60,7 +61,7 @@ curl --compressed -s "https://<host>/api/sys_user_lookup" | jq '. | length'
 
 Use `--compressed` (or send `Accept-Encoding: gzip` directly) — list responses are gzipped above 4 KiB.
 
-For the HR-gated subset of the data, see [§3](#3-authentication--authorization-hr-gate). For interactive exploration with a UI, hit `https://<host>/docs` in a browser once the serving routes ship (see the note at the top of this page).
+For the HR-gated subset of the data, see [§3](#3-authentication--authorization-hr-gate). For interactive exploration with a UI, hit `https://<host>/docs` in a browser.
 
 ## 3. Authentication & authorization (HR gate)
 
@@ -212,7 +213,7 @@ Status codes:
 
 ## 5. Endpoint summary
 
-Compact reference. Full details and request/response shapes are in [`openapi.yaml`](openapi.yaml); interactive try-it-out is at `/docs` on the running instance once the serving routes ship.
+Compact reference. Full details, request/response shapes, and try-it-out are in `/docs` and [`openapi.yaml`](openapi.yaml).
 
 | Method | Path | Tag | Summary |
 | --- | --- | --- | --- |

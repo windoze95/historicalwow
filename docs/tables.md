@@ -157,6 +157,7 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `requested_for` | string |  |
 
 ### `sc_req_item`
 
@@ -183,6 +184,7 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `requested_for` | string |  |
 | `request` | string |  |
 | `cat_item` | string |  |
 
@@ -211,6 +213,7 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `requested_for` | string |  |
 | `request_item` | string |  |
 | `request` | string |  |
 

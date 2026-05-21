@@ -203,6 +203,8 @@ components:
           type: string
         parent:
           type: string
+        requested_for:
+          type: string
       required: [sys_id]
       additionalProperties: true
     ScReqItemRow:
@@ -241,6 +243,8 @@ components:
         sys_class_name:
           type: string
         parent:
+          type: string
+        requested_for:
           type: string
         request:
           type: string
@@ -284,6 +288,8 @@ components:
         sys_class_name:
           type: string
         parent:
+          type: string
+        requested_for:
           type: string
         request_item:
           type: string
@@ -1688,9 +1694,9 @@ x-filterable-columns:
   change_request: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, std_change_producer_version, chg_model, type]
   problem: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   problem_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sc_request: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sc_req_item: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, request, cat_item]
-  sc_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, request_item, request]
+  sc_request: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for]
+  sc_req_item: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request, cat_item]
+  sc_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request_item, request]
   incident_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   change_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sysapproval_group: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]

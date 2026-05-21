@@ -94,11 +94,21 @@ CMDB_INDEXED_COLS = [
 # to sc_req_item via `request_item`. Without these columns indexed, the
 # viewer's child-task filter (parent record → child rows) silently returned
 # every row in the table.
-SC_REQ_ITEM_COLS = TASK_INDEXED_COLS + [
+#
+# `requested_for` is the beneficiary of a catalog order — typically the user
+# the new laptop / access / onboarding is for. ServiceNow lets it differ from
+# `caller_id` (who clicked submit), and the user record page needs to find
+# both. Indexed across all three SC tables so `/api/sc_*?requested_for=<sid>`
+# works at the user-page fan-out without a SCHEMAS rebuild later.
+SC_EXTRA_USER_COLS = [
+    ('requested_for', lambda r: _v(r.get('requested_for'))),
+]
+SC_REQUEST_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS
+SC_REQ_ITEM_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS + [
     ('request',     lambda r: _v(r.get('request'))),
     ('cat_item',    lambda r: _v(r.get('cat_item'))),
 ]
-SC_TASK_COLS = TASK_INDEXED_COLS + [
+SC_TASK_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS + [
     ('request_item', lambda r: _v(r.get('request_item'))),
     ('request',      lambda r: _v(r.get('request'))),
 ]
@@ -118,7 +128,7 @@ SCHEMAS = {
     'change_request':      CHANGE_REQUEST_COLS,
     'problem':             TASK_INDEXED_COLS,
     'problem_task':        TASK_INDEXED_COLS,
-    'sc_request':          TASK_INDEXED_COLS,
+    'sc_request':          SC_REQUEST_COLS,
     'sc_req_item':         SC_REQ_ITEM_COLS,
     'sc_task':             SC_TASK_COLS,
     'incident_task':       TASK_INDEXED_COLS,

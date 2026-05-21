@@ -192,23 +192,41 @@ window.HomePage = function HomePage({ openPalette }) {
   );
 };
 
+// Per-user relationship × table fan-out for the user record page.
+// `tables` is the scoped allow-list for each relationship — `requested_for`
+// is only meaningful on catalog tables, so it's not queried on `incident`.
+const USER_RELATIONS = [
+  { field: 'caller_id',     label: 'as caller',        tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'requested_for', label: 'as requested for', tables: ['sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+];
+// Stable display order for the per-table sections — top-down task volume,
+// then the catalog flow REQ → RITM → SCTASK.
+const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task'];
+
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
-  const [asCaller, setAsCaller]     = React.useState(null);
-  const [asAssignee, setAsAssignee] = React.useState(null);
+  // relations: null while loading; otherwise { [field]: [{table, items, total}, ...] }
+  const [relations, setRelations]   = React.useState(null);
   const [hwAssigned, setHwAssigned] = React.useState(null);
   const [hwOwned, setHwOwned]       = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
-    setAsCaller(null); setAsAssignee(null);
+    setRelations(null);
     setHwAssigned(null); setHwOwned(null);
-    data.fetchTaskList('incident', { limit: 12, filters: { caller_id: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
-      .then(r => { if (!cancel) setAsCaller(r); }).catch(() => { if (!cancel) setAsCaller({ rows: [], total: 0 }); });
-    data.fetchTaskList('incident', { limit: 12, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
-      .then(r => { if (!cancel) setAsAssignee(r); }).catch(() => { if (!cancel) setAsAssignee({ rows: [], total: 0 }); });
+    // Fan out across (relation × table) in parallel. Each promise resolves to
+    // [field, buckets[]]; collect into a {field: buckets[]} map.
+    Promise.all(USER_RELATIONS.map(({ field, tables }) =>
+      bucketTaskRecordsAsync(field, sys_id, { tables })
+        .then(buckets => [field, buckets])
+        .catch(() => [field, []])
+    )).then(pairs => {
+      if (cancel) return;
+      setRelations(Object.fromEntries(pairs));
+    });
     // Hardware this user is assigned / owns
     data.fetchTaskList('alm_hardware', { limit: 24, filters: { assigned_to: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setHwAssigned(r); }).catch(() => { if (!cancel) setHwAssigned({ rows: [], total: 0 }); });
@@ -273,14 +291,47 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
         </div>
       </div>
 
-      <div className="ref-section">
-        <h2>Incidents · as caller <span className="count">{asCaller ? asCaller.total.toLocaleString() : '…'}</span></h2>
-        <SmallIncTable incidents={asCaller?.rows || (asCaller == null ? null : [])} />
-      </div>
-      <div className="ref-section">
-        <h2>Incidents · as assignee <span className="count">{asAssignee ? asAssignee.total.toLocaleString() : '…'}</span></h2>
-        <SmallIncTable incidents={asAssignee?.rows || (asAssignee == null ? null : [])} />
-      </div>
+      {relations == null && (
+        <div className="ref-section">
+          <h2>Related work <span className="count">…</span></h2>
+          <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>
+            <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+          </div>
+        </div>
+      )}
+      {relations != null && (() => {
+        // Pivot relations ({field: buckets[]}) into per-table view:
+        //   byTable[t] = [{ label, total, items }, ...]   (one entry per non-empty relationship)
+        const byTable = {};
+        for (const { field, label } of USER_RELATIONS) {
+          for (const bucket of (relations[field] || [])) {
+            if (!byTable[bucket.table]) byTable[bucket.table] = [];
+            byTable[bucket.table].push({ label, total: bucket.total, items: bucket.items });
+          }
+        }
+        const tables = USER_TABLE_ORDER.filter(t => byTable[t]);
+        if (tables.length === 0) {
+          return (
+            <div className="ref-section">
+              <h2>Related work <span className="count">0</span></h2>
+              <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None in this snapshot.</div>
+            </div>
+          );
+        }
+        return tables.map(t => (
+          <div key={t} className="ref-section">
+            <h2>{window.taskLabel(t, 'plural')}</h2>
+            {byTable[t].map(({ label, total, items }) => (
+              <div key={label} style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 6, fontWeight: 500 }}>
+                  · {label} <span className="count">{total.toLocaleString()}</span>
+                </div>
+                <SmallIncTable incidents={items} table={t} />
+              </div>
+            ))}
+          </div>
+        ));
+      })()}
       {hwAssigned && hwAssigned.total > 0 && (
         <div className="ref-section">
           <h2>Hardware · assigned <span className="count">{hwAssigned.total.toLocaleString()}</span></h2>
@@ -343,7 +394,7 @@ function SmallIncTable({ incidents, table = 'incident' }) {
             <td className="num" style={{ width: 110 }}>{i.number}</td>
             <td className="short"><span className="truncate">{i.short_description}</span></td>
             <td style={{ width: 80 }}>{i.priority ? <span className={`chip ${window.priorityChipClass(i.priority)}`}>P{i.priority}</span> : <span className="muted">—</span>}</td>
-            <td style={{ width: 110 }}>{i.state ? <span className={`chip ${window.stateChipClass('incident', i.state)}`}>{window.decodeChoice('incident', 'state', i.state).label || i.state}</span> : <span className="muted">—</span>}</td>
+            <td style={{ width: 110 }}>{i.state ? <span className={`chip ${window.stateChipClass(table, i.state)}`}>{window.decodeChoice(table, 'state', i.state).label || i.state}</span> : <span className="muted">—</span>}</td>
             <td className="num muted" style={{ width: 90 }}>{window.fmtRelative(i.sys_updated_on)}</td>
           </tr>
         ))}
@@ -353,34 +404,29 @@ function SmallIncTable({ incidents, table = 'incident' }) {
 }
 
 // Helper: bucket task records by their table for a sys_id-based field
-// (e.g. `assignment_group`, `cmdb_ci`). Eager-loaded tables filter in memory;
-// `incident` (lazy) gets a paginated API call. Returns a promise resolving
-// to an ordered list of {table, items} buckets (only non-empty buckets).
-async function bucketTaskRecordsAsync(field, sys_id) {
-  const buckets = [];
-  const tables = window.TASK_TABLES || ['incident', 'change_request'];
-  for (const t of tables) {
-    if (t === 'incident') {
-      // Lazy: fetch via API
-      try {
-        const res = await window.HistoricalWowData.fetchTaskList(t, {
-          limit: 12, filters: { [field]: sys_id },
-          order_by: 'sys_updated_on', dir: 'desc',
-        });
-        if (res.rows && res.rows.length) {
-          buckets.push({ table: t, items: res.rows, total: res.total });
-        }
-      } catch (_) { /* skip on error */ }
-    } else {
-      const arr = window.getTaskRecords(t);
-      const matches = arr.filter(r => r[field] === sys_id);
-      if (matches.length) {
-        matches.sort((a, b) => (b.sys_updated_on || '').localeCompare(a.sys_updated_on || ''));
-        buckets.push({ table: t, items: matches, total: matches.length });
-      }
-    }
-  }
-  return buckets;
+// (e.g. `assignment_group`, `cmdb_ci`, `caller_id`, `requested_for`).
+// Issues one /api/<table>?<field>=<sys_id> query per table in parallel and
+// returns the non-empty buckets in input order.
+//
+// History: an older version filtered eager-loaded arrays in memory for any
+// non-`incident` table. That silently dropped every non-incident bucket
+// because the eager arrays for sc_request/sc_req_item/sc_task/etc. are
+// declared `[]` in data.js but never populated (lazy by design — see the
+// EAGER_TABLES list there). Switching everything to the API also handles
+// per-relationship fan-out from the user record page cleanly.
+async function bucketTaskRecordsAsync(field, sys_id, { tables } = {}) {
+  const ts = tables || window.TASK_TABLES || ['incident', 'change_request'];
+  const data = window.HistoricalWowData;
+  const results = await Promise.all(ts.map(t =>
+    data.fetchTaskList(t, {
+      limit: 12, filters: { [field]: sys_id },
+      order_by: 'sys_updated_on', dir: 'desc',
+    }).then(res => (res.rows && res.rows.length)
+      ? { table: t, items: res.rows, total: res.total }
+      : null
+    ).catch(() => null)
+  ));
+  return results.filter(Boolean);
 }
 
 window.GroupRefPage = function GroupRefPage({ sys_id }) {

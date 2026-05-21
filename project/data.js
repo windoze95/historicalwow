@@ -37,9 +37,12 @@ window.HistoricalWowData = (function () {
   ];
 
   // Mirrors the exporter — used by UI code to inspect "is this a task table?"
+  // and to drive bucketTaskRecordsAsync's display order on the group page.
+  // Catalog flow ordered SCTASK → RITM → REQ (richer detail first) to match
+  // the user-page USER_TABLE_ORDER convention.
   window.TASK_TABLES = [
     'incident', 'change_request', 'problem', 'problem_task',
-    'sc_request', 'sc_req_item', 'sc_task',
+    'sc_task', 'sc_req_item', 'sc_request',
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
     'sn_contract_renewal_task',

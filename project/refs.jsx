@@ -202,8 +202,9 @@ const USER_RELATIONS = [
   { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'] },
 ];
 // Stable display order for the per-table sections — top-down task volume,
-// then the catalog flow REQ → RITM → SCTASK, then asset-task siblings.
-const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'];
+// then catalog tasks first (richest detail) → requested items → requests
+// last, then asset-task siblings.
+const USER_TABLE_ORDER = ['incident', 'sc_task', 'sc_req_item', 'sc_request', 'sn_contract_renewal_task'];
 
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;

@@ -44,9 +44,13 @@ window.HomePage = function HomePage({ openPalette }) {
           Snapshot · {data.manifest.snapshot_date || '—'} {data.manifest.label || ''}
         </h1>
         <div style={{ color: 'var(--fg-3)', fontSize: 13.5, maxWidth: 720, lineHeight: 1.6 }}>
-          Read-only archive of <span className="mono" style={{ fontSize: 12.5 }}>northwind.service-now.com</span>.
+          Read-only archive of <span className="mono" style={{ fontSize: 12.5 }}>{data.manifest.instance || 'the source ServiceNow instance'}</span>.
           Incidents, change requests, and all referenced context (users, groups, CIs, choices) — captured for the
           archival exit. No writes. No backfill.
+          {' '}
+          <a href="/docs/" style={{ color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            API &amp; schema reference →
+          </a>
         </div>
       </div>
 

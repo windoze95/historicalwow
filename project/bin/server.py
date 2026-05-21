@@ -886,7 +886,18 @@ class Handler(BaseHTTPRequestHandler):
         # front of the HR gate. The spec *describes* HR-gated endpoints but
         # holds no row data; try-it-out from /docs still goes through the
         # gate on every individual request.
-        if path in ('/docs', '/docs/'):
+        if path == '/docs':
+            # 301 to /docs/ so the page's relative asset refs (./swagger-ui.css,
+            # ./swagger-ui-bundle.js, etc.) resolve under /docs/ rather than /.
+            # Without the trailing-slash redirect, the browser asks for
+            # /swagger-ui.css and the asset route 404s, leaving the page
+            # blank for anyone who typed the URL without the slash.
+            self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+            self.send_header('Location', '/docs/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if path == '/docs/':
             return _send_static(self, APP_DIR / 'docs' / 'swagger-ui' / 'index.html')
         if path in ('/openapi.yaml', '/openapi-schemas.yaml'):
             return _send_static(self, APP_DIR / 'docs' / path.lstrip('/'),

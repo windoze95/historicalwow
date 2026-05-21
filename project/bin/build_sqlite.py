@@ -135,6 +135,11 @@ SCHEMAS = {
     'change_task':         TASK_INDEXED_COLS,
     'sysapproval_group':   TASK_INDEXED_COLS,
     'asset_task':          TASK_INDEXED_COLS,
+    # asset_task itself is empty on this instance — every concrete
+    # asset-task record is a `sn_contract_renewal_task` (CMRTASK number
+    # prefix). Indexing them here lets the user / group pages surface
+    # them under "Asset tasks" once they fan out.
+    'sn_contract_renewal_task': TASK_INDEXED_COLS,
 
     # Identity
     'sys_user':            USER_INDEXED_COLS,
@@ -564,6 +569,24 @@ SCHEMAS = {
         ('location',      lambda r: _v(r.get('location'))),
         ('ci',            lambda r: _v(r.get('ci'))),
         ('warranty_expiration', lambda r: _v(r.get('warranty_expiration'))),
+        ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
+        ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
+    ],
+    # Facility-plugin assets — MAC-addressable hardware tracked alongside
+    # alm_hardware (security cameras, access control, IoT). Same column
+    # set as alm_hardware so the asset list view renders consistently.
+    'sn_ent_facility_asset': [
+        ('asset_tag',     lambda r: _v(r.get('asset_tag'))),
+        ('display_name',  lambda r: _v(r.get('display_name'))),
+        ('serial_number', lambda r: _v(r.get('serial_number'))),
+        ('model',         lambda r: _v(r.get('model'))),
+        ('model_category', lambda r: _v(r.get('model_category'))),
+        ('state',         lambda r: _v(r.get('install_status'))),
+        ('substatus',     lambda r: _v(r.get('substatus'))),
+        ('assigned_to',   lambda r: _v(r.get('assigned_to'))),
+        ('owned_by',      lambda r: _v(r.get('owned_by'))),
+        ('location',      lambda r: _v(r.get('location'))),
+        ('ci',            lambda r: _v(r.get('ci'))),
         ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
         ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
     ],

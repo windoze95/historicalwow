@@ -998,6 +998,7 @@ window.HistoricalWowData = (function () {
     'sc_request', 'sc_req_item', 'sc_task',
     'incident_task', 'change_task',
     'sysapproval_group', 'asset_task',
+    'sn_contract_renewal_task',
   ];
 
   const data = {
@@ -1365,11 +1366,13 @@ window.URL_TO_TABLE = {
   'catalog-items':   'sc_cat_item',
   'group-approvals': 'sysapproval_group',
   'asset-tasks':     'asset_task',
+  'contract-renewal-tasks': 'sn_contract_renewal_task',
   hardware:          'alm_hardware',
   licenses:          'alm_license',
   consumables:       'alm_consumable',
   facilities:        'alm_facility',
   stockrooms:        'alm_stockroom',
+  'facility-assets': 'sn_ent_facility_asset',
   assets:            'alm_asset',
   software:          'cmdb_ci_spkg',
   'software-installs': 'cmdb_software_instance',
@@ -1928,6 +1931,7 @@ window.TASK_LABELS = {
   sc_task:           { plural: 'Catalog tasks',     singular: 'Catalog task' },
   sysapproval_group: { plural: 'Group approvals',   singular: 'Group approval' },
   asset_task:        { plural: 'Asset tasks',       singular: 'Asset task' },
+  sn_contract_renewal_task: { plural: 'Contract renewal tasks', singular: 'Contract renewal task' },
   incident_task:     { plural: 'Incident tasks',    singular: 'Incident task' },
   change_task:       { plural: 'Change tasks',      singular: 'Change task' },
   alm_asset:           { plural: 'Assets',            singular: 'Asset' },
@@ -1937,6 +1941,7 @@ window.TASK_LABELS = {
   alm_consumable:      { plural: 'Consumables',       singular: 'Consumable' },
   alm_facility:        { plural: 'Facilities',        singular: 'Facility' },
   alm_stockroom:       { plural: 'Stockrooms',        singular: 'Stockroom' },
+  sn_ent_facility_asset:{ plural: 'Facility assets', singular: 'Facility asset' },
   cmdb_ci_spkg:        { plural: 'Software packages', singular: 'Software package' },
   cmdb_software_instance: { plural: 'Software installs', singular: 'Software install' },
 };
@@ -1952,6 +1957,7 @@ const PAGE_SIZE = 50;
 const ASSET_TABLES = [
   'alm_asset', 'alm_hardware', 'alm_software_license', 'alm_license',
   'alm_consumable', 'alm_facility', 'alm_stockroom',
+  'sn_ent_facility_asset',
   'cmdb_ci_spkg', 'cmdb_software_instance',
 ];
 
@@ -2118,6 +2124,13 @@ const ASSET_COLS = {
     { key: 'model',         label: 'Model',          ref: 'cmdb_ci' },
     { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
     { key: 'assigned_to',   label: 'Assigned to',    ref: 'user', w: 180 },
+  ],
+  sn_ent_facility_asset: [
+    { key: 'asset_tag',     label: 'Asset tag',      cls: 'mono', w: 160 },
+    { key: 'display_name',  label: 'Name',           grow: true },
+    { key: 'model',         label: 'Model',          ref: 'cmdb_ci' },
+    { key: 'state',         label: 'Status',         choice: ['alm_asset', 'install_status'], w: 110 },
+    { key: 'location',      label: 'Location',       ref: 'location', w: 180 },
   ],
   alm_software_license: [
     { key: 'asset_tag',     label: 'Asset tag',      cls: 'num',  w: 110 },
@@ -2484,6 +2497,7 @@ const CHILD_REL = {
 const ASSET_TABLES_SET = new Set([
   'alm_asset', 'alm_hardware', 'alm_software_license',
   'alm_consumable', 'alm_facility', 'alm_stockroom',
+  'sn_ent_facility_asset',
 ]);
 
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
@@ -3049,6 +3063,27 @@ const ASSET_FIELD_LAYOUT = {
         { key: 'display_name', label: 'Name',       render: (r) => <span>{r.display_name || '—'}</span> },
         { key: 'install_status', label: 'Status',   render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
         { key: 'location',     label: 'Location',   kind: 'location' },
+      ],
+    },
+  ],
+  sn_ent_facility_asset: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',     label: 'Asset tag',   render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',        label: 'sys_id',      render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name',  label: 'Name',        render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'serial_number', label: 'Serial',      render: (r) => <span className="mono">{r.serial_number || '—'}</span> },
+        { key: 'model',         label: 'Model',       kind: 'ci' },
+        { key: 'sys_class_name',label: 'Class',       render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.sys_class_name || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Lifecycle', fields: [
+        { key: 'install_status', label: 'Status',     render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+        { key: 'substatus',      label: 'Substatus',  render: (r) => <span>{r.__display_substatus || r.substatus || '—'}</span> },
+        { key: 'assigned_to',    label: 'Assigned to', kind: 'user' },
+        { key: 'owned_by',       label: 'Owned by',   kind: 'user' },
+        { key: 'location',       label: 'Location',   kind: 'location' },
       ],
     },
   ],
@@ -3835,15 +3870,16 @@ window.HomePage = function HomePage({ openPalette }) {
 
 // Per-user relationship × table fan-out for the user record page.
 // `tables` is the scoped allow-list for each relationship — `requested_for`
-// is only meaningful on catalog tables, so it's not queried on `incident`.
+// is only meaningful on catalog tables, so it's not queried on `incident`
+// or `sn_contract_renewal_task`.
 const USER_RELATIONS = [
-  { field: 'caller_id',     label: 'as caller',        tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'caller_id',     label: 'as caller',        tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'] },
   { field: 'requested_for', label: 'as requested for', tables: ['sc_request', 'sc_req_item', 'sc_task'] },
-  { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task'] },
+  { field: 'assigned_to',   label: 'as assignee',      tables: ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'] },
 ];
 // Stable display order for the per-table sections — top-down task volume,
-// then the catalog flow REQ → RITM → SCTASK.
-const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task'];
+// then the catalog flow REQ → RITM → SCTASK, then asset-task siblings.
+const USER_TABLE_ORDER = ['incident', 'sc_request', 'sc_req_item', 'sc_task', 'sn_contract_renewal_task'];
 
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
@@ -9613,8 +9649,10 @@ function Sidebar({ route }) {
     navItem('/licenses',        'file',     'Licenses',         'alm_license'),
     navItem('/consumables',     'archive',  'Consumables',      'alm_consumable'),
     navItem('/facilities',      'archive',  'Facilities',       'alm_facility'),
+    navItem('/facility-assets', 'ci',       'Facility assets',  'sn_ent_facility_asset'),
     navItem('/stockrooms',      'folder',   'Stockrooms',       'alm_stockroom'),
     navItem('/asset-tasks',     'archive',  'Asset tasks',      'asset_task'),
+    navItem('/contract-renewal-tasks', 'archive', 'Contract renewal tasks', 'sn_contract_renewal_task'),
     { sep: 'Software' },
     navItem('/software',          'book',  'Software packages', 'cmdb_ci_spkg'),
     navItem('/software-installs', 'db',    'Software installs', 'cmdb_software_instance'),
@@ -9642,8 +9680,10 @@ function Sidebar({ route }) {
       '/requested-items': 'sc_req_item', '/catalog-tasks': 'sc_task',
       '/catalog-items': 'sc_cat_item',
       '/group-approvals': 'sysapproval_group', '/asset-tasks': 'asset_task',
+      '/contract-renewal-tasks': 'sn_contract_renewal_task',
       '/hardware': 'alm_hardware', '/licenses': 'alm_license',
       '/consumables': 'alm_consumable', '/facilities': 'alm_facility',
+      '/facility-assets': 'sn_ent_facility_asset',
       '/stockrooms': 'alm_stockroom', '/assets': 'alm_asset',
       '/software': 'cmdb_ci_spkg', '/software-installs': 'cmdb_software_instance',
       '/users': 'sys_user', '/groups': 'sys_user_group', '/cis': 'cmdb_ci',

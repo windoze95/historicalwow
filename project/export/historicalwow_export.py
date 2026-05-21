@@ -212,6 +212,12 @@ ASSET_TABLES = [
     'alm_consumable',
     'alm_facility',
     'alm_stockroom',
+    # sn_ent_facility_asset is an alm_asset descendant carrying networked
+    # facility hardware (security cameras, IoT, door controllers — anything
+    # MAC-addressable that the facility/security plugin tracks). Pulled with
+    # `sys_class_name=sn_ent_facility_asset` like the others so the rows
+    # land in their own NDJSON file and don't double up against alm_asset.
+    'sn_ent_facility_asset',
 ]
 
 # Software inventory tables (Discovery / SAM-light). These aren't asset

@@ -18,6 +18,7 @@ const CHILD_REL = {
 const ASSET_TABLES_SET = new Set([
   'alm_asset', 'alm_hardware', 'alm_software_license',
   'alm_consumable', 'alm_facility', 'alm_stockroom',
+  'sn_ent_facility_asset',
 ]);
 
 window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
@@ -583,6 +584,27 @@ const ASSET_FIELD_LAYOUT = {
         { key: 'display_name', label: 'Name',       render: (r) => <span>{r.display_name || '—'}</span> },
         { key: 'install_status', label: 'Status',   render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
         { key: 'location',     label: 'Location',   kind: 'location' },
+      ],
+    },
+  ],
+  sn_ent_facility_asset: [
+    {
+      heading: 'Identification', fields: [
+        { key: 'asset_tag',     label: 'Asset tag',   render: (r) => <span className="mono">{r.asset_tag || '—'}</span> },
+        { key: 'sys_id',        label: 'sys_id',      render: (r) => <span className="mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{r.sys_id}</span> },
+        { key: 'display_name',  label: 'Name',        render: (r) => <span>{r.display_name || '—'}</span> },
+        { key: 'serial_number', label: 'Serial',      render: (r) => <span className="mono">{r.serial_number || '—'}</span> },
+        { key: 'model',         label: 'Model',       kind: 'ci' },
+        { key: 'sys_class_name',label: 'Class',       render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.sys_class_name || '—'}</span> },
+      ],
+    },
+    {
+      heading: 'Lifecycle', fields: [
+        { key: 'install_status', label: 'Status',     render: (r) => <span>{r.__display_install_status || r.install_status || '—'}</span> },
+        { key: 'substatus',      label: 'Substatus',  render: (r) => <span>{r.__display_substatus || r.substatus || '—'}</span> },
+        { key: 'assigned_to',    label: 'Assigned to', kind: 'user' },
+        { key: 'owned_by',       label: 'Owned by',   kind: 'user' },
+        { key: 'location',       label: 'Location',   kind: 'location' },
       ],
     },
   ],

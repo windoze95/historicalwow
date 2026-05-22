@@ -155,7 +155,7 @@ function App() {
         </div>
       </div>
 
-      <div className="body">
+      <div className="app-shell-body">
         <Sidebar route={route} />
         <main className="main">
           {route.view === 'home' && <window.HomePage openPalette={() => setPaletteOpen(true)} />}

@@ -35,6 +35,7 @@ window.URL_TO_TABLE = {
   'software-installs': 'cmdb_software_instance',
   users:             'sys_user',
   groups:            'sys_user_group',
+  delegations:       'sys_user_delegate',
   cis:               'cmdb_ci',
   audit:             'audit_log',
   'business-rules':  'sys_script',

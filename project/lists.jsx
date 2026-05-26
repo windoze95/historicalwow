@@ -48,6 +48,7 @@ const ASSET_TABLES = [
 const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sys_user')        return <UserList />;
   if (table === 'sys_user_group')  return <GroupList />;
+  if (table === 'sys_user_delegate') return <DelegateList />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -470,6 +471,90 @@ function GroupList() {
               <td className="muted">{g.description}</td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---- Delegations ----------------------------------------------------------
+// sys_user_delegate isn't eager-loaded, so fetch it from the API. Paginated
+// like CIList so a snapshot with more delegations than one page still shows
+// every row (no silent truncation). Renders the same delegator → delegate /
+// window / scopes shape as the user-page panel.
+
+function DelegateList() {
+  const data = window.HistoricalWowData;
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList('sys_user_delegate', {
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      order_by: 'starts', dir: 'desc',
+    }).then(r => {
+      if (cancelled) return;
+      setResp(r); setLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setResp({ rows: [], total: 0 }); setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === 'sys_user_delegate')?.source_rows;
+  const scopes = window.DELEGATION_SCOPES || [];
+  const on = window.delegationOn || (v => v === true || v === 'true' || v === 1 || v === '1');
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Delegations <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user_delegate</span> · who acts on whose behalf, and for what · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar">
+          <div className="spacer" />
+          <Pager page={page} setPage={setPage} lastPage={lastPage} />
+        </div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          <th>Delegator</th><th>Delegate</th>
+          <th style={{ width: 150 }}>Starts</th><th style={{ width: 150 }}>Ends</th>
+          <th>Scopes</th>
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={5} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No delegations in this snapshot.</td></tr>
+          )}
+          {(resp.rows || []).map(d => {
+            const active = scopes.filter(([k]) => on(d[k]));
+            return (
+              <tr key={d.sys_id}>
+                <td>{d.user ? <window.UserCell sys_id={d.user} displayName={d.__display_user} /> : <span className="muted">—</span>}</td>
+                <td>{d.delegate ? <window.UserCell sys_id={d.delegate} displayName={d.__display_delegate} /> : <span className="muted">—</span>}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{d.starts || '—'}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{d.ends || 'open'}</td>
+                <td>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {active.length === 0
+                      ? <span className="muted" style={{ fontSize: 11.5 }}>—</span>
+                      : active.map(([k, label]) => <span key={k} className="chip" style={{ fontSize: 10.5 }}>{label}</span>)}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

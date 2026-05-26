@@ -210,6 +210,53 @@ const USER_RELATIONS = [
 // last, then asset-task siblings.
 const USER_TABLE_ORDER = ['incident', 'sc_task', 'sc_req_item', 'sc_request', 'sn_contract_renewal_task'];
 
+// sys_user_delegate scope flags, in display order. ServiceNow lets a delegation
+// cover any subset of these four. The viewer shows whichever are flagged on.
+const DELEGATION_SCOPES = [
+  ['approval',     'Approvals'],
+  ['assignment',  'Assignments'],
+  ['notification', 'CC notifications'],
+  ['invitation',  'Meeting invitations'],
+];
+// Robust truthiness for the scope flags: the merged envelope gives a real
+// boolean (flatten coerces 'true'/'false'), but a row served straight from the
+// indexed column would be the string '1'/'0' — and '0' is truthy. Normalise.
+const delegationOn = v => v === true || v === 'true' || v === 1 || v === '1';
+
+// One direction of a user's delegations. `otherField` is the column holding the
+// *other* party — 'delegate' when this user is delegating out, 'user' when this
+// user is receiving. Each card shows that party, the active window, and scopes.
+function DelegationList({ rows, otherField }) {
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</div>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {rows.map(d => {
+        const scopes = DELEGATION_SCOPES.filter(([k]) => delegationOn(d[k]));
+        return (
+          <div key={d.sys_id}
+               style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <window.UserCell sys_id={d[otherField]} displayName={d['__display_' + otherField]} />
+              <span className="mono" style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--fg-3)' }}>
+                {d.starts || '—'} → {d.ends || 'open'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {scopes.length === 0
+                ? <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>no scopes flagged</span>
+                : scopes.map(([k, label]) => (
+                    <span key={k} className="chip" style={{ fontSize: 10.5 }}>{label}</span>
+                  ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
@@ -217,12 +264,15 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
   const [relations, setRelations]   = React.useState(null);
   const [hwAssigned, setHwAssigned] = React.useState(null);
   const [hwOwned, setHwOwned]       = React.useState(null);
+  // delegations: null while loading; otherwise { given: {rows,total}, received: {rows,total} }
+  const [delegations, setDelegations] = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
     let cancel = false;
     setRelations(null);
     setHwAssigned(null); setHwOwned(null);
+    setDelegations(null);
     // Fan out across (relation × table) in parallel. Each promise resolves to
     // [field, buckets[]]; collect into a {field: buckets[]} map.
     Promise.all(USER_RELATIONS.map(({ field, tables }) =>
@@ -238,6 +288,13 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       .then(r => { if (!cancel) setHwAssigned(r); }).catch(() => { if (!cancel) setHwAssigned({ rows: [], total: 0 }); });
     data.fetchTaskList('alm_hardware', { limit: 24, filters: { owned_by: sys_id }, order_by: 'sys_updated_on', dir: 'desc' })
       .then(r => { if (!cancel) setHwOwned(r); }).catch(() => { if (!cancel) setHwOwned({ rows: [], total: 0 }); });
+    // Delegations in both directions: `user`=this user → they delegate out;
+    // `delegate`=this user → they receive someone else's delegation.
+    const noRows = { rows: [], total: 0 };
+    Promise.all([
+      data.fetchTaskList('sys_user_delegate', { limit: 100, filters: { user: sys_id },     order_by: 'starts', dir: 'desc' }).catch(() => noRows),
+      data.fetchTaskList('sys_user_delegate', { limit: 100, filters: { delegate: sys_id }, order_by: 'starts', dir: 'desc' }).catch(() => noRows),
+    ]).then(([given, received]) => { if (!cancel) setDelegations({ given, received }); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -296,6 +353,28 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
           {groupMembership.length === 0 && <span style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</span>}
         </div>
       </div>
+
+      {delegations != null && (delegations.given.total > 0 || delegations.received.total > 0) && (
+        <div className="ref-section">
+          <h2>Delegations <span className="count">{(delegations.given.total + delegations.received.total).toLocaleString()}</span></h2>
+          {delegations.given.total > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 6, fontWeight: 500 }}>
+                · delegating to others <span className="count">{delegations.given.total.toLocaleString()}</span>
+              </div>
+              <DelegationList rows={delegations.given.rows} otherField="delegate" />
+            </div>
+          )}
+          {delegations.received.total > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 6, fontWeight: 500 }}>
+                · receiving from others <span className="count">{delegations.received.total.toLocaleString()}</span>
+              </div>
+              <DelegationList rows={delegations.received.rows} otherField="user" />
+            </div>
+          )}
+        </div>
+      )}
 
       {relations == null && (
         <div className="ref-section">

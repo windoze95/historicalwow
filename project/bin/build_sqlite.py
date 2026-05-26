@@ -264,6 +264,20 @@ SCHEMAS = {
         ('sys_created_by', lambda r: _v(r.get('sys_created_by'))),
         ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
     ],
+    # Email correspondence. `instance` is the related record's sys_id — default
+    # to '' (not NULL) so unlinked emails aren't swept up by the HR `NOT IN`
+    # gate. body / body_text / headers stay in raw (large).
+    'sys_email':           [
+        ('instance',       lambda r: _v(r.get('instance')) or ''),
+        ('target_table',   lambda r: _v(r.get('target_table'))),
+        ('type',           lambda r: _v(r.get('type'))),
+        ('mailbox',        lambda r: _v(r.get('mailbox'))),
+        ('state',          lambda r: _v(r.get('state'))),
+        ('subject',        lambda r: _v(r.get('subject'))),
+        ('recipients',     lambda r: _v(r.get('recipients'))),
+        ('user',           lambda r: _v(r.get('user'))),
+        ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
+    ],
     'task_ci':             [
         ('task', lambda r: _v(r.get('task'))),
         ('ci',   lambda r: _v(r.get('ci'))),

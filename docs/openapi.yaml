@@ -514,6 +514,7 @@ paths:
               - sys_data_policy_rule
               - sys_dictionary
               - sys_dictionary_override
+              - sys_email
               - sys_group_has_role
               - sys_hub_flow
               - sys_journal_field

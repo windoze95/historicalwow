@@ -637,6 +637,27 @@ Filterable columns:
 | `sys_created_by` | string |  |
 | `sys_created_on` | string |  |
 
+### `sys_email`
+
+Tags: `hr-gated`
+
+> Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `instance` | string |  |
+| `target_table` | string |  |
+| `type` | string |  |
+| `mailbox` | string |  |
+| `state` | string |  |
+| `subject` | string |  |
+| `recipients` | string |  |
+| `user` | string |  |
+| `sys_created_on` | string |  |
+
 ### `task_ci`
 
 Tags: `cache-5min` `hr-gated`

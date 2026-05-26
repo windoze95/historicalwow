@@ -309,6 +309,26 @@ def _schema_name_for(table):
     return ''.join(p.capitalize() for p in table.split('_')) + 'Row'
 
 
+def check_openapi_table_enum():
+    """The /api/{table} enum in docs/openapi.yaml is hand-authored but must list
+    exactly server.ALL_TABLES. It has drifted before (tables added to the server
+    without updating the enum), so enforce it here. openapi.yaml isn't generated
+    from SCHEMAS, so we report mismatches rather than rewrite the spec. Returns a
+    list of human-readable problems (empty when in sync)."""
+    spec = (REPO_ROOT / 'docs' / 'openapi.yaml').read_text(encoding='utf-8')
+    m = re.search(r'/api/\{table\}:.*?\n\s+enum:\n((?:\s+-\s+\w+\n)+)', spec, re.DOTALL)
+    if not m:
+        return ['could not locate the /api/{table} enum in docs/openapi.yaml']
+    listed = set(re.findall(r'-\s+(\w+)', m.group(1)))
+    expected = set(server.ALL_TABLES)
+    problems = []
+    if expected - listed:
+        problems.append('missing from enum: ' + ', '.join(sorted(expected - listed)))
+    if listed - expected:
+        problems.append('in enum but not served: ' + ', '.join(sorted(listed - expected)))
+    return problems
+
+
 # --- main -------------------------------------------------------------------
 
 def main():
@@ -327,19 +347,24 @@ def main():
         (DOCS / 'tables.md', md),
         (DOCS / 'openapi-schemas.yaml', yml),
     ]
+    enum_problems = check_openapi_table_enum()
+
     if args.check:
         drift = []
         for path, content in targets:
             existing = path.read_text(encoding='utf-8') if path.is_file() else ''
             if existing != content:
                 drift.append(path)
-        if drift:
-            paths = ', '.join(str(p.relative_to(REPO_ROOT)) for p in drift)
-            print(
-                f'gen_table_catalog: {paths} is out of date. '
-                'Run `make docs` (or `python3 project/bin/gen_table_catalog.py`) and commit the result.',
-                file=sys.stderr,
-            )
+        if drift or enum_problems:
+            if drift:
+                paths = ', '.join(str(p.relative_to(REPO_ROOT)) for p in drift)
+                print(
+                    f'gen_table_catalog: {paths} is out of date. '
+                    'Run `make docs` (or `python3 project/bin/gen_table_catalog.py`) and commit the result.',
+                    file=sys.stderr,
+                )
+            for p in enum_problems:
+                print(f'gen_table_catalog: docs/openapi.yaml /api/{{table}} enum {p}', file=sys.stderr)
             sys.exit(1)
         print('gen_table_catalog: all docs are up to date.')
         return
@@ -347,6 +372,8 @@ def main():
     DOCS.mkdir(parents=True, exist_ok=True)
     for path, content in targets:
         path.write_text(content, encoding='utf-8')
+    for p in enum_problems:
+        print(f'gen_table_catalog: WARNING — docs/openapi.yaml /api/{{table}} enum {p}', file=sys.stderr)
         print(f'wrote {path.relative_to(REPO_ROOT)} ({len(content):,} bytes)')
 
 

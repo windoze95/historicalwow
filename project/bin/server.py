@@ -245,6 +245,8 @@ TASK_TABLES = {
 }
 REFERENCE_TABLES = {
     'sys_user', 'sys_user_group', 'sys_user_grmember', 'sys_user_delegate',
+    'sys_user_has_role', 'sys_user_role', 'sys_group_has_role',
+    'kb_knowledge',
     'cmdb_ci', 'cmdb_rel_ci',
     'sys_choice', 'core_company', 'cmn_department', 'cmn_location', 'cmn_cost_center',
     'sys_journal_field', 'sys_audit', 'sys_attachment',
@@ -285,6 +287,8 @@ REFERENCE_TABLES = {
     'sys_dictionary', 'sys_dictionary_override',
     'sys_hub_flow',
     'sys_security_acl',
+    # Inbound email actions — rules that turn an inbound email into a record action.
+    'sysevent_in_email_action',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 

@@ -246,6 +246,14 @@ DEFAULT_TABLES = [
     # already capture who actually approved; this captures the *rule* that
     # explains a delegated approval after the source instance is gone.
     'sys_user_delegate',
+    # Role assignments — which roles each user/group holds (incl. inherited),
+    # plus the role catalog. Answers "what could this account actually do?"
+    # once the instance is gone (we already have group membership).
+    'sys_user_has_role',
+    'sys_user_role',
+    'sys_group_has_role',
+    # Knowledge base articles — the reference content users were pointed at.
+    'kb_knowledge',
     # CMDB
     'cmdb_ci',
     'cmdb_rel_ci',
@@ -314,6 +322,10 @@ DEFAULT_TABLES = [
     'sys_dictionary_override',
     'sys_hub_flow',
     'sys_security_acl',
+    # Inbound email actions — the rules that turn an inbound email into a
+    # record action (create/update on a target table). Often the *how* behind
+    # a ticket that originated from email.
+    'sysevent_in_email_action',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',
@@ -336,6 +348,9 @@ TABLE_PAGE_SIZE = {
     'sys_journal_field':   2000,
     'sys_audit':           2000,
     'sysapproval_group':   1000,  # wide rows, byte-capped at ~3.8k in early runs
+    'kb_knowledge':         200,  # full article bodies (display_value=all, can embed
+                                  # images) — small pages so a byte-capped short page
+                                  # can't end the offset scan early and drop rows
 }
 
 # Append-only tables don't populate sys_updated_on (records are inserted, never

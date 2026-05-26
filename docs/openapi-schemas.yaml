@@ -582,6 +582,88 @@ components:
           description: ServiceNow boolean stored as 0 or 1.
       required: [sys_id]
       additionalProperties: true
+    SysUserHasRoleRow:
+      type: object
+      description: 'Row from the `sys_user_has_role` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        user:
+          type: string
+        role:
+          type: string
+        state:
+          type: string
+        granted_by:
+          type: string
+        inherited:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    SysUserRoleRow:
+      type: object
+      description: 'Row from the `sys_user_role` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        description:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SysGroupHasRoleRow:
+      type: object
+      description: 'Row from the `sys_group_has_role` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        group:
+          type: string
+        role:
+          type: string
+        granted_by:
+          type: string
+        inherits:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    KbKnowledgeRow:
+      type: object
+      description: 'Row from the `kb_knowledge` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        number:
+          type: string
+        short_description:
+          type: string
+        kb_knowledge_base:
+          type: string
+        kb_category:
+          type: string
+        workflow_state:
+          type: string
+        author:
+          type: string
+        article_type:
+          type: string
+        valid_to:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     CmdbCiRow:
       type: object
       description: 'Row from the `cmdb_ci` table (reference).'
@@ -1503,6 +1585,35 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    SyseventInEmailActionRow:
+      type: object
+      description: 'Row from the `sysevent_in_email_action` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        type:
+          type: string
+        table:
+          type: string
+        action:
+          type: string
+        event_name:
+          type: string
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        stop_processing:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     AlmAssetRow:
       type: object
       description: 'Row from the `alm_asset` table (reference).'
@@ -1813,6 +1924,10 @@ x-filterable-columns:
   sys_user_group: [sys_id, name, manager, description, active]
   sys_user_grmember: [sys_id, group, user]
   sys_user_delegate: [sys_id, user, delegate, starts, ends, approvals, assignments, notifications, invitations]
+  sys_user_has_role: [sys_id, user, role, state, granted_by, inherited]
+  sys_user_role: [sys_id, name, description]
+  sys_group_has_role: [sys_id, group, role, granted_by, inherits]
+  kb_knowledge: [sys_id, number, short_description, kb_knowledge_base, kb_category, workflow_state, author, article_type, valid_to, active]
   cmdb_ci: [sys_id, name, sys_class_name, operational_status, owned_by, short_description]
   cmdb_rel_ci: [sys_id, parent, child, type]
   sys_choice: [sys_id, name, table, element, value, label]
@@ -1858,6 +1973,7 @@ x-filterable-columns:
   sys_dictionary_override: [sys_id, name, element, base_table, mandatory_override, read_only_override, default_value_override]
   sys_hub_flow: [sys_id, name, internal_name, active, type, sys_class_name, description]
   sys_security_acl: [sys_id, name, operation, type, active, admin_overrides, decision_type, sys_class_name]
+  sysevent_in_email_action: [sys_id, name, type, table, action, event_name, order, active, stop_processing]
   alm_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, company, cost_center, sys_class_name, sys_created_on, sys_updated_on]
   alm_hardware: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, warranty_expiration, sys_created_on, sys_updated_on]
   sn_ent_facility_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, sys_created_on, sys_updated_on]

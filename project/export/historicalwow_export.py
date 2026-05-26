@@ -348,6 +348,9 @@ TABLE_PAGE_SIZE = {
     'sys_journal_field':   2000,
     'sys_audit':           2000,
     'sysapproval_group':   1000,  # wide rows, byte-capped at ~3.8k in early runs
+    'kb_knowledge':         200,  # full article bodies (display_value=all, can embed
+                                  # images) — small pages so a byte-capped short page
+                                  # can't end the offset scan early and drop rows
 }
 
 # Append-only tables don't populate sys_updated_on (records are inserted, never

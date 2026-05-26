@@ -489,6 +489,7 @@ paths:
               - io_set_item
               - item_option_new
               - item_option_new_set
+              - kb_knowledge
               - problem
               - problem_task
               - question
@@ -503,6 +504,8 @@ paths:
               - sc_req_item
               - sc_request
               - sc_task
+              - sn_contract_renewal_task
+              - sn_ent_facility_asset
               - std_change_proposal
               - sys_attachment
               - sys_audit
@@ -511,6 +514,7 @@ paths:
               - sys_data_policy_rule
               - sys_dictionary
               - sys_dictionary_override
+              - sys_group_has_role
               - sys_hub_flow
               - sys_journal_field
               - sys_properties
@@ -522,11 +526,15 @@ paths:
               - sys_ui_policy
               - sys_ui_policy_action
               - sys_user
+              - sys_user_delegate
               - sys_user_grmember
               - sys_user_group
+              - sys_user_has_role
+              - sys_user_role
               - sysapproval_approver
               - sysapproval_group
               - sysauto_script
+              - sysevent_in_email_action
               - task_ci
               - task_sla
               - topic

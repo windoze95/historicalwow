@@ -3908,10 +3908,10 @@ const USER_TABLE_ORDER = ['incident', 'sc_task', 'sc_req_item', 'sc_request', 's
 // sys_user_delegate scope flags, in display order. ServiceNow lets a delegation
 // cover any subset of these four. The viewer shows whichever are flagged on.
 const DELEGATION_SCOPES = [
-  ['approval',     'Approvals'],
-  ['assignment',  'Assignments'],
-  ['notification', 'CC notifications'],
-  ['invitation',  'Meeting invitations'],
+  ['approvals',     'Approvals'],
+  ['assignments',   'Assignments'],
+  ['notifications', 'CC notifications'],
+  ['invitations',   'Meeting invitations'],
 ];
 // Robust truthiness for the scope flags: the merged envelope gives a real
 // boolean (flatten coerces 'true'/'false'), but a row served straight from the

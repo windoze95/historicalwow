@@ -371,6 +371,61 @@ def delta_field_for(table):
 def page_size_for(table):
     return TABLE_PAGE_SIZE.get(table, PAGE_SIZE)
 
+# sys_email bodies (body / body_text / headers) are huge across ~half a million
+# rows. Capture metadata only for now; backfill bodies after the disk grows by
+# setting SN_SKIP_EMAIL_BODIES=0 and resetting the sys_email watermark + NDJSON
+# for a full re-pull. Mirrors the deferred attachment-body download. Default is
+# to skip, so a routine run can't accidentally pull tens of GB of bodies.
+SKIP_EMAIL_BODIES = os.environ.get('SN_SKIP_EMAIL_BODIES', '1').strip().lower() not in ('0', 'false', 'no')
+# Metadata allowlist for sys_email when bodies are skipped — every field except
+# body / body_text / headers. Must include sys_id and the delta cursor field.
+EMAIL_METADATA_FIELDS = (
+    'sys_id,sys_created_on,sys_created_by,sys_updated_on,sys_updated_by,sys_mod_count,'
+    'instance,target_table,type,mailbox,state,status,subject,recipients,reply_to,'
+    'user,user_id,message_id,content_type,importance,direct,copied,blind_copied,'
+    'receive_type,notification_type,weight,uid,error_string,deleted,checkpoint'
+)
+
+_EFFECTIVE_SKIP_EMAIL_BODIES = None
+
+def _email_body_skip_active():
+    """SKIP_EMAIL_BODIES, but auto-disabled (once, with a warning) if the
+    existing sys_email.ndjson already holds bodies. The delta merge replaces
+    matched rows wholesale by sys_id, so stripping body fields on a later
+    metadata-only run would silently clobber a previous body backfill. Once
+    bodies are on disk we keep fetching them; to go metadata-only again, delete
+    sys_email.ndjson and reset its watermark for a clean re-pull."""
+    global _EFFECTIVE_SKIP_EMAIL_BODIES
+    if _EFFECTIVE_SKIP_EMAIL_BODIES is None:
+        eff = SKIP_EMAIL_BODIES
+        if eff:
+            p = OUT_DIR / 'sys_email.ndjson'
+            try:
+                with p.open(encoding='utf-8') as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        if field(json.loads(line), 'body'):
+                            log.warning('sys_email.ndjson already contains bodies — '
+                                        'ignoring SN_SKIP_EMAIL_BODIES this run so a '
+                                        'metadata-only delta cannot clobber them on merge. '
+                                        'Delete the file + reset its watermark to go '
+                                        'metadata-only again.')
+                            eff = False
+                        break
+            except (OSError, json.JSONDecodeError):
+                pass
+        _EFFECTIVE_SKIP_EMAIL_BODIES = eff
+    return _EFFECTIVE_SKIP_EMAIL_BODIES
+
+def fields_for(table):
+    """sysparm_fields allowlist for a table, or None to fetch all fields.
+    sys_email drops its large body fields unless SN_SKIP_EMAIL_BODIES=0 (or
+    bodies are already on disk — see _email_body_skip_active)."""
+    if table == 'sys_email' and _email_body_skip_active():
+        return EMAIL_METADATA_FIELDS
+    return None
+
 
 # Per-table query filter ANDed onto every fetch (full + delta). Trims out
 # audit/journal/attachment entries attached to tables the viewer doesn't
@@ -647,6 +702,8 @@ def fetch_pages_offset(table, query):
             'sysparm_display_value': 'all',
             'sysparm_exclude_reference_link': 'true',
         }
+        _flds = fields_for(table)
+        if _flds: params['sysparm_fields'] = _flds
         try:
             payload = api_get_json(f'/api/now/table/{table}', params)
         except urllib.error.HTTPError as e:
@@ -716,6 +773,8 @@ def export_table_full(table):
                 'sysparm_display_value': 'all',
                 'sysparm_exclude_reference_link': 'true',
             }
+            _flds = fields_for(table)
+            if _flds: params['sysparm_fields'] = _flds
             try:
                 payload = api_get_json(f'/api/now/table/{table}', params)
             except urllib.error.HTTPError as e:
@@ -984,6 +1043,8 @@ def _fetch_shard(table, prefix):
                 'sysparm_display_value': 'all',
                 'sysparm_exclude_reference_link': 'true',
             }
+            _flds = fields_for(table)
+            if _flds: params['sysparm_fields'] = _flds
 
             try:
                 payload = api_get_json(f'/api/now/table/{table}', params)

@@ -167,6 +167,40 @@ SCHEMAS = {
         ('notifications', lambda r: 1 if str(_v(r.get('notifications')) or 'false').lower() == 'true' else 0),
         ('invitations',   lambda r: 1 if str(_v(r.get('invitations')) or 'false').lower() == 'true' else 0),
     ],
+    # Role assignments. sys_user_has_role / sys_group_has_role are the m2m
+    # grants — note the user table uses `inherited`, the group table uses
+    # `inherits` (verified against the instance). sys_user_role is the role
+    # catalog (name resolves a role sys_id).
+    'sys_user_has_role':   [
+        ('user',       lambda r: _v(r.get('user'))),
+        ('role',       lambda r: _v(r.get('role'))),
+        ('state',      lambda r: _v(r.get('state'))),
+        ('granted_by', lambda r: _v(r.get('granted_by'))),
+        ('inherited',  lambda r: 1 if str(_v(r.get('inherited')) or 'false').lower() == 'true' else 0),
+    ],
+    'sys_user_role':       [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('description', lambda r: _v(r.get('description'))),
+    ],
+    'sys_group_has_role':  [
+        ('group',      lambda r: _v(r.get('group'))),
+        ('role',       lambda r: _v(r.get('role'))),
+        ('granted_by', lambda r: _v(r.get('granted_by'))),
+        ('inherits',   lambda r: 1 if str(_v(r.get('inherits')) or 'false').lower() == 'true' else 0),
+    ],
+    # Knowledge base articles. Body (text/wiki) stays in raw — big and not a
+    # lookup key; index the fields the list/record views filter on.
+    'kb_knowledge':        [
+        ('number',            lambda r: _v(r.get('number'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('kb_knowledge_base', lambda r: _v(r.get('kb_knowledge_base'))),
+        ('kb_category',       lambda r: _v(r.get('kb_category'))),
+        ('workflow_state',    lambda r: _v(r.get('workflow_state'))),
+        ('author',            lambda r: _v(r.get('author'))),
+        ('article_type',      lambda r: _v(r.get('article_type'))),
+        ('valid_to',          lambda r: _v(r.get('valid_to'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
 
     # CMDB
     'cmdb_ci':             CMDB_INDEXED_COLS,
@@ -549,6 +583,19 @@ SCHEMAS = {
         ('admin_overrides', lambda r: 1 if str(_v(r.get('admin_overrides')) or 'false').lower() == 'true' else 0),
         ('decision_type',   lambda r: _v(r.get('decision_type'))),
         ('sys_class_name',  lambda r: _v(r.get('sys_class_name'))),
+    ],
+    # Inbound email actions. `table` is the target table the action runs
+    # against (verified — NOT `target_table`); script/condition fields stay
+    # in raw.
+    'sysevent_in_email_action': [
+        ('name',            lambda r: _v(r.get('name'))),
+        ('type',            lambda r: _v(r.get('type'))),
+        ('table',           lambda r: _v(r.get('table'))),
+        ('action',          lambda r: _v(r.get('action'))),
+        ('event_name',      lambda r: _v(r.get('event_name'))),
+        ('order',           lambda r: _v(r.get('order'))),
+        ('active',          lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('stop_processing', lambda r: 1 if str(_v(r.get('stop_processing')) or 'false').lower() == 'true' else 0),
     ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific

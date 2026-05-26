@@ -418,6 +418,66 @@ Filterable columns:
 | `notifications` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `invitations` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
+### `sys_user_has_role`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `user` | string |  |
+| `role` | string |  |
+| `state` | string |  |
+| `granted_by` | string |  |
+| `inherited` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `sys_user_role`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `description` | string |  |
+
+### `sys_group_has_role`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `group` | string |  |
+| `role` | string |  |
+| `granted_by` | string |  |
+| `inherits` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `kb_knowledge`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `number` | string |  |
+| `short_description` | string |  |
+| `kb_knowledge_base` | string |  |
+| `kb_category` | string |  |
+| `workflow_state` | string |  |
+| `author` | string |  |
+| `article_type` | string |  |
+| `valid_to` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
 ### `cmdb_ci`
 
 Tags: `reference`
@@ -1179,6 +1239,24 @@ Filterable columns:
 | `admin_overrides` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `decision_type` | string |  |
 | `sys_class_name` | string |  |
+
+### `sysevent_in_email_action`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `type` | string |  |
+| `table` | string |  |
+| `action` | string |  |
+| `event_name` | string |  |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `stop_processing` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `alm_asset`
 

@@ -400,6 +400,24 @@ Filterable columns:
 | `group` | string |  |
 | `user` | string |  |
 
+### `sys_user_delegate`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `user` | string |  |
+| `delegate` | string |  |
+| `starts` | string |  |
+| `ends` | string |  |
+| `approval` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `assignment` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `notification` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `invitation` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
 ### `cmdb_ci`
 
 Tags: `reference`

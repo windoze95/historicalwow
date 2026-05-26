@@ -244,7 +244,7 @@ TASK_TABLES = {
     'sn_contract_renewal_task',
 }
 REFERENCE_TABLES = {
-    'sys_user', 'sys_user_group', 'sys_user_grmember',
+    'sys_user', 'sys_user_group', 'sys_user_grmember', 'sys_user_delegate',
     'cmdb_ci', 'cmdb_rel_ci',
     'sys_choice', 'core_company', 'cmn_department', 'cmn_location', 'cmn_cost_center',
     'sys_journal_field', 'sys_audit', 'sys_attachment',
@@ -305,6 +305,19 @@ def get_conn():
         conn.row_factory = sqlite3.Row
         _local.conn = conn
     return conn
+
+
+def _table_exists(conn, table):
+    """True once the physical table has been built into the DB. A table can be
+    in ALL_TABLES (allowed by the API) yet absent from the DB during the window
+    after this code deploys and before the next export/build loads it —
+    build_sqlite skips creating a table whose NDJSON file doesn't exist yet.
+    Querying a missing table raises `no such table` → HTTP 500 (which the
+    viewer's apiGet then retries), so callers gate on this and treat an
+    allowed-but-unbuilt table as empty."""
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
 
 
 # --- helpers --------------------------------------------------------------
@@ -522,6 +535,11 @@ def list_table(handler, table, params):
 
     # Whitelist order_by to actual columns to prevent SQL injection.
     conn = get_conn()
+    if not _table_exists(conn, table):
+        # Allowed but not yet built into the DB (see _table_exists) — return an
+        # empty page instead of 500-ing on every caller during the rollout
+        # window before the next export/build loads the table.
+        return _json_response(handler, {'rows': [], 'total': 0, 'limit': limit, 'offset': offset})
     cols = [r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')]
     order_by = order_by_param if (order_by_param in cols) else 'sys_id'
 
@@ -596,6 +614,10 @@ def get_record(handler, table, sys_id):
         if table in HR_PARENT_COLUMN and _hr_record_parent_locked(table, sys_id):
             return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
     conn = get_conn()
+    if not _table_exists(conn, table):
+        # Allowed table not yet built into the DB (see _table_exists) — no
+        # record can exist, so 404 rather than 500 on "no such table".
+        return _send_error(handler, HTTPStatus.NOT_FOUND, f'{table}/{sys_id} not in archive')
     row = conn.execute(f'SELECT * FROM "{table}" WHERE sys_id = ?', (sys_id,)).fetchone()
     if not row:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'{table}/{sys_id} not in archive')

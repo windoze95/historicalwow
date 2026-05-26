@@ -241,6 +241,11 @@ DEFAULT_TABLES = [
     'sys_user',
     'sys_user_group',
     'sys_user_grmember',
+    # Delegation rules: who delegates approvals/assignments/CC/invitations to
+    # whom, for what date window. The approval records in sysapproval_approver
+    # already capture who actually approved; this captures the *rule* that
+    # explains a delegated approval after the source instance is gone.
+    'sys_user_delegate',
     # CMDB
     'cmdb_ci',
     'cmdb_rel_ci',

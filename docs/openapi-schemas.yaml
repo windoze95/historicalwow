@@ -549,6 +549,39 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    SysUserDelegateRow:
+      type: object
+      description: 'Row from the `sys_user_delegate` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        user:
+          type: string
+        delegate:
+          type: string
+        starts:
+          type: string
+        ends:
+          type: string
+        approval:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        assignment:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        notification:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        invitation:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     CmdbCiRow:
       type: object
       description: 'Row from the `cmdb_ci` table (reference).'
@@ -1779,6 +1812,7 @@ x-filterable-columns:
   sys_user: [sys_id, user_name, name, email, title, department, location, active]
   sys_user_group: [sys_id, name, manager, description, active]
   sys_user_grmember: [sys_id, group, user]
+  sys_user_delegate: [sys_id, user, delegate, starts, ends, approval, assignment, notification, invitation]
   cmdb_ci: [sys_id, name, sys_class_name, operational_status, owned_by, short_description]
   cmdb_rel_ci: [sys_id, parent, child, type]
   sys_choice: [sys_id, name, table, element, value, label]

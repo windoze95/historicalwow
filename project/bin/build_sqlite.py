@@ -153,6 +153,20 @@ SCHEMAS = {
         ('group',  lambda r: _v(r.get('group'))),
         ('user',   lambda r: _v(r.get('user'))),
     ],
+    # sys_user_delegate: who delegates to whom, and what is delegated. Both
+    # ends are indexed (user = delegator, delegate = delegatee) so the user
+    # page can fan out in either direction; the date window and the four
+    # scope flags say *when* and *what* was delegated.
+    'sys_user_delegate':   [
+        ('user',         lambda r: _v(r.get('user'))),
+        ('delegate',     lambda r: _v(r.get('delegate'))),
+        ('starts',       lambda r: _v(r.get('starts'))),
+        ('ends',         lambda r: _v(r.get('ends'))),
+        ('approval',     lambda r: 1 if str(_v(r.get('approval')) or 'false').lower() == 'true' else 0),
+        ('assignment',   lambda r: 1 if str(_v(r.get('assignment')) or 'false').lower() == 'true' else 0),
+        ('notification', lambda r: 1 if str(_v(r.get('notification')) or 'false').lower() == 'true' else 0),
+        ('invitation',   lambda r: 1 if str(_v(r.get('invitation')) or 'false').lower() == 'true' else 0),
+    ],
 
     # CMDB
     'cmdb_ci':             CMDB_INDEXED_COLS,

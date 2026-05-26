@@ -244,7 +244,7 @@ TASK_TABLES = {
     'sn_contract_renewal_task',
 }
 REFERENCE_TABLES = {
-    'sys_user', 'sys_user_group', 'sys_user_grmember',
+    'sys_user', 'sys_user_group', 'sys_user_grmember', 'sys_user_delegate',
     'cmdb_ci', 'cmdb_rel_ci',
     'sys_choice', 'core_company', 'cmn_department', 'cmn_location', 'cmn_cost_center',
     'sys_journal_field', 'sys_audit', 'sys_attachment',

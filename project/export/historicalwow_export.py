@@ -386,10 +386,43 @@ EMAIL_METADATA_FIELDS = (
     'receive_type,notification_type,weight,uid,error_string,deleted,checkpoint'
 )
 
+_EFFECTIVE_SKIP_EMAIL_BODIES = None
+
+def _email_body_skip_active():
+    """SKIP_EMAIL_BODIES, but auto-disabled (once, with a warning) if the
+    existing sys_email.ndjson already holds bodies. The delta merge replaces
+    matched rows wholesale by sys_id, so stripping body fields on a later
+    metadata-only run would silently clobber a previous body backfill. Once
+    bodies are on disk we keep fetching them; to go metadata-only again, delete
+    sys_email.ndjson and reset its watermark for a clean re-pull."""
+    global _EFFECTIVE_SKIP_EMAIL_BODIES
+    if _EFFECTIVE_SKIP_EMAIL_BODIES is None:
+        eff = SKIP_EMAIL_BODIES
+        if eff:
+            p = OUT_DIR / 'sys_email.ndjson'
+            try:
+                with p.open(encoding='utf-8') as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        if field(json.loads(line), 'body'):
+                            log.warning('sys_email.ndjson already contains bodies — '
+                                        'ignoring SN_SKIP_EMAIL_BODIES this run so a '
+                                        'metadata-only delta cannot clobber them on merge. '
+                                        'Delete the file + reset its watermark to go '
+                                        'metadata-only again.')
+                            eff = False
+                        break
+            except (OSError, json.JSONDecodeError):
+                pass
+        _EFFECTIVE_SKIP_EMAIL_BODIES = eff
+    return _EFFECTIVE_SKIP_EMAIL_BODIES
+
 def fields_for(table):
     """sysparm_fields allowlist for a table, or None to fetch all fields.
-    sys_email drops its large body fields unless SN_SKIP_EMAIL_BODIES=0."""
-    if table == 'sys_email' and SKIP_EMAIL_BODIES:
+    sys_email drops its large body fields unless SN_SKIP_EMAIL_BODIES=0 (or
+    bodies are already on disk — see _email_body_skip_active)."""
+    if table == 'sys_email' and _email_body_skip_active():
         return EMAIL_METADATA_FIELDS
     return None
 

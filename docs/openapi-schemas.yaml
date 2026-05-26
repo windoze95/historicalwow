@@ -841,6 +841,33 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    SysEmailRow:
+      type: object
+      description: 'Row from the `sys_email` table (hr-gated). Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        instance:
+          type: string
+        target_table:
+          type: string
+        type:
+          type: string
+        mailbox:
+          type: string
+        state:
+          type: string
+        subject:
+          type: string
+        recipients:
+          type: string
+        user:
+          type: string
+        sys_created_on:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
     TaskCiRow:
       type: object
       description: 'Row from the `task_ci` table (cache-5min, hr-gated). Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
@@ -1938,6 +1965,7 @@ x-filterable-columns:
   sys_journal_field: [sys_id, name, element_id, element, value, sys_created_by, sys_created_on]
   sys_audit: [sys_id, tablename, documentkey, fieldname, fieldlabel, oldvalue, newvalue, user, sys_created_on]
   sys_attachment: [sys_id, table_name, table_sys_id, file_name, content_type, size_bytes, sys_created_by, sys_created_on]
+  sys_email: [sys_id, instance, target_table, type, mailbox, state, subject, recipients, user, sys_created_on]
   task_ci: [sys_id, task, ci]
   task_sla: [sys_id, task, sla_definition, stage, business_percentage]
   sysapproval_approver: [sys_id, sysapproval, approver, state, sys_created_on]
@@ -2058,6 +2086,7 @@ x-hr-parent-columns:
   incident_task: parent
   sys_attachment: table_sys_id
   sys_audit: documentkey
+  sys_email: instance
   sys_journal_field: element_id
   task_ci: task
   task_sla: task

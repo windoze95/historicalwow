@@ -78,6 +78,8 @@ PARALLEL_TABLES = (
         'cmdb_ci',
         'cmdb_rel_ci',
         'sys_attachment',
+        'sys_email',          # 500k+ rows with bodies — shard for speed, and
+                              # keyset paging is immune to byte-capped pages
         # Asset tables — typically tens-to-hundreds-of-thousands of rows
         # for hardware in a mid-size company, so worth sharded fetches.
         # ASSET_TABLES is defined later in the module; inline the names
@@ -329,6 +331,9 @@ DEFAULT_TABLES = [
     # Activity (large)
     'sys_journal_field',
     'sys_audit',
+    # Email correspondence (inbound + outbound), tied to records via `instance`.
+    # Large + heavy PII; HR-gated in the viewer (see server HR_PARENT_COLUMN).
+    'sys_email',
     # Attachment metadata (file bodies handled separately, LAST)
     'sys_attachment',
 ]

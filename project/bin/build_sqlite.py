@@ -162,10 +162,10 @@ SCHEMAS = {
         ('delegate',     lambda r: _v(r.get('delegate'))),
         ('starts',       lambda r: _v(r.get('starts'))),
         ('ends',         lambda r: _v(r.get('ends'))),
-        ('approval',     lambda r: 1 if str(_v(r.get('approval')) or 'false').lower() == 'true' else 0),
-        ('assignment',   lambda r: 1 if str(_v(r.get('assignment')) or 'false').lower() == 'true' else 0),
-        ('notification', lambda r: 1 if str(_v(r.get('notification')) or 'false').lower() == 'true' else 0),
-        ('invitation',   lambda r: 1 if str(_v(r.get('invitation')) or 'false').lower() == 'true' else 0),
+        ('approvals',     lambda r: 1 if str(_v(r.get('approvals')) or 'false').lower() == 'true' else 0),
+        ('assignments',   lambda r: 1 if str(_v(r.get('assignments')) or 'false').lower() == 'true' else 0),
+        ('notifications', lambda r: 1 if str(_v(r.get('notifications')) or 'false').lower() == 'true' else 0),
+        ('invitations',   lambda r: 1 if str(_v(r.get('invitations')) or 'false').lower() == 'true' else 0),
     ],
 
     # CMDB

@@ -48,6 +48,7 @@ const ASSET_TABLES = [
 const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sys_user')        return <UserList />;
   if (table === 'sys_user_group')  return <GroupList />;
+  if (table === 'sys_user_delegate') return <DelegateList />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -472,6 +473,71 @@ function GroupList() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ---- Delegations ----------------------------------------------------------
+// sys_user_delegate isn't eager-loaded, so fetch it on mount. The table is
+// small (a few hundred rows), so one unpaginated fetch is fine. Renders the
+// same delegator → delegate / window / scopes shape as the user-page panel.
+
+function DelegateList() {
+  const data = window.HistoricalWowData;
+  const [rows, setRows] = React.useState(null);  // null = loading
+  React.useEffect(() => {
+    let cancel = false;
+    data.fetchTaskList('sys_user_delegate', { limit: 2000, order_by: 'starts', dir: 'desc' })
+      .then(r => { if (!cancel) setRows(r.rows || []); })
+      .catch(() => { if (!cancel) setRows([]); });
+    return () => { cancel = true; };
+  }, []);
+
+  const total = data.manifest.tables.find(t => t.table === 'sys_user_delegate')?.source_rows;
+  const scopes = window.DELEGATION_SCOPES || [];
+  const on = window.delegationOn || (v => v === true || v === 'true' || v === 1 || v === '1');
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Delegations <span className="count mono">{total?.toLocaleString() || (rows ? rows.length : '—')}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_user_delegate</span> · who acts on whose behalf, and for what</div>
+      </div>
+      {rows == null ? (
+        <div style={{ color: 'var(--fg-4)', fontSize: 12.5, padding: '12px 2px' }}>
+          <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="empty"><div className="glyph"><window.Icon name="info" /></div>No delegations in this snapshot.</div>
+      ) : (
+        <table className="dt">
+          <thead><tr>
+            <th>Delegator</th><th>Delegate</th>
+            <th style={{ width: 150 }}>Starts</th><th style={{ width: 150 }}>Ends</th>
+            <th>Scopes</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(d => {
+              const active = scopes.filter(([k]) => on(d[k]));
+              return (
+                <tr key={d.sys_id}>
+                  <td>{d.user ? <window.UserCell sys_id={d.user} displayName={d.__display_user} /> : <span className="muted">—</span>}</td>
+                  <td>{d.delegate ? <window.UserCell sys_id={d.delegate} displayName={d.__display_delegate} /> : <span className="muted">—</span>}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{d.starts || '—'}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{d.ends || 'open'}</td>
+                  <td>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {active.length === 0
+                        ? <span className="muted" style={{ fontSize: 11.5 }}>—</span>
+                        : active.map(([k, label]) => <span key={k} className="chip" style={{ fontSize: 10.5 }}>{label}</span>)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

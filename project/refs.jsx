@@ -212,7 +212,10 @@ const USER_TABLE_ORDER = ['incident', 'sc_task', 'sc_req_item', 'sc_request', 's
 
 // sys_user_delegate scope flags, in display order. ServiceNow lets a delegation
 // cover any subset of these four. The viewer shows whichever are flagged on.
-const DELEGATION_SCOPES = [
+// Exposed on window so the standalone delegations list (lists.jsx) shares this
+// one definition — the field names are instance-specific (plural here), so a
+// second copy would be a divergence waiting to happen.
+const DELEGATION_SCOPES = window.DELEGATION_SCOPES = [
   ['approvals',     'Approvals'],
   ['assignments',   'Assignments'],
   ['notifications', 'CC notifications'],
@@ -221,7 +224,7 @@ const DELEGATION_SCOPES = [
 // Robust truthiness for the scope flags: the merged envelope gives a real
 // boolean (flatten coerces 'true'/'false'), but a row served straight from the
 // indexed column would be the string '1'/'0' — and '0' is truthy. Normalise.
-const delegationOn = v => v === true || v === 'true' || v === 1 || v === '1';
+const delegationOn = window.delegationOn = v => v === true || v === 'true' || v === 1 || v === '1';
 
 // One direction of a user's delegations. `otherField` is the column holding the
 // *other* party — 'delegate' when this user is delegating out, 'user' when this

@@ -633,6 +633,43 @@ def get_record(handler, table, sys_id):
     _json_response(handler, _row_to_dict(row))
 
 
+def get_sla_stats(handler, kind, sys_id):
+    """SLA performance for a user's or group's incidents. Joins task_sla to
+    incident on task=sys_id (incidents are the primary SLA-bearing table),
+    counting breaches (has_breached lives in the raw envelope, read via
+    json_extract) and grouping by stage. HR-gated: HR-assigned incidents are
+    excluded when the gate is locked, matching the incident list route.
+    Returns {total, breached, by_stage:{stage:count}}."""
+    col = 'assigned_to' if kind == 'user' else 'assignment_group'
+    conn = get_conn()
+    empty = {'total': 0, 'breached': 0, 'by_stage': {}}
+    if not _table_exists(conn, 'task_sla') or not _table_exists(conn, 'incident'):
+        return _json_response(handler, empty)
+    where = [f'i."{col}" = ?']
+    args = [sys_id]
+    if not is_hr_unlocked(handler):
+        # IS NOT (not !=) so incidents with a NULL assignment_group aren't
+        # dropped — `NULL != ?` is unknown and would fail the WHERE.
+        where.append('i.assignment_group IS NOT ?')
+        args.append(HR_GROUP_SYS_ID)
+    try:
+        rows = conn.execute(
+            f'''SELECT ts.stage AS stage, COUNT(*) AS n,
+                       SUM(CASE WHEN lower(json_extract(ts.raw, '$.has_breached.value')) IN ('true', '1')
+                                THEN 1 ELSE 0 END) AS breached
+                FROM task_sla ts JOIN incident i ON i.sys_id = ts.task
+                WHERE {' AND '.join(where)}
+                GROUP BY ts.stage''',
+            args,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return _json_response(handler, empty)
+    total = sum(r['n'] for r in rows)
+    breached = sum((r['breached'] or 0) for r in rows)
+    by_stage = {(r['stage'] or 'unknown'): r['n'] for r in rows}
+    _json_response(handler, {'total': total, 'breached': breached, 'by_stage': by_stage})
+
+
 def get_journal_for(handler, element_id):
     if not is_hr_unlocked(handler) and is_hr_record(element_id):
         return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
@@ -1168,6 +1205,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r'^/api/variables/([^/]+)$', path)
         if m:
             return get_variables_for(self, m.group(1))
+        m = re.match(r'^/api/sla-stats/(user|group)/([a-f0-9]{1,32})$', path)
+        if m:
+            return get_sla_stats(self, m.group(1), m.group(2))
 
         m = re.match(r'^/api/([a-z_][a-z_0-9]*)$', path)
         if m:

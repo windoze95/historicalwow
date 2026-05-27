@@ -393,6 +393,37 @@ window.TemplateRecordPage = function TemplateRecordPage({ sys_id }) {
   );
 };
 
+// SLA performance for a user (their incidents) or group (its incidents) — from
+// the /api/sla-stats endpoint (task_sla joined to incident). Hidden when the
+// record has no incident SLAs.
+function SlaStatsSection({ kind, sys_id }) {
+  const [stats, setStats] = React.useState(null);
+  React.useEffect(() => {
+    let cancel = false; setStats(null);
+    window.HistoricalWowData.fetchSlaStats(kind, sys_id)
+      .then(s => { if (!cancel) setStats(s); })
+      .catch(() => { if (!cancel) setStats({ total: 0, breached: 0, by_stage: {} }); });
+    return () => { cancel = true; };
+  }, [kind, sys_id]);
+  if (!stats || !stats.total) return null;
+  const rate = stats.total ? Math.round((stats.breached / stats.total) * 100) : 0;
+  const stages = Object.entries(stats.by_stage).sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="ref-section">
+      <h2>SLA performance <span className="count">{stats.total.toLocaleString()}</span></h2>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>incident SLAs ·</span>
+        {stats.breached > 0
+          ? <span className="chip red" style={{ fontSize: 10.5 }}>{stats.breached.toLocaleString()} breached ({rate}%)</span>
+          : <span className="chip green" style={{ fontSize: 10.5 }}>none breached</span>}
+        {stages.map(([stage, n]) => (
+          <span key={stage} className="chip" style={{ fontSize: 10.5 }}>{stage}: {n.toLocaleString()}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
@@ -554,6 +585,8 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>{c.sys_class_name || ''}</span>
           </RefRow>
         )} />
+
+      <SlaStatsSection kind="user" sys_id={sys_id} />
 
       {relations == null && (
         <div className="ref-section">
@@ -758,6 +791,8 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
       </div>
 
       {roles != null && <RolesSection resp={roles} inheritedField="inherits" title="Roles granted" />}
+
+      <SlaStatsSection kind="group" sys_id={sys_id} />
 
       {taskBuckets == null && (
         <div className="ref-section">

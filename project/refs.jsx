@@ -385,8 +385,20 @@ window.TemplateRecordPage = function TemplateRecordPage({ sys_id }) {
         <h2>Sets fields <span className="count">{pairs.length}</span></h2>
         {pairs.length === 0
           ? <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No field values parsed from this template.</div>
-          : <table className="dt"><thead><tr><th style={{ width: 240 }}>Field</th><th>Value</th></tr></thead>
-              <tbody>{pairs.map(([k, v], i) => (<tr key={i}><td className="mono" style={{ fontSize: 12 }}>{k}</td><td>{v || '—'}</td></tr>))}</tbody>
+          // table-layout:fixed keeps the table inside the .ref-page width cap;
+          // each value renders on one line (no wrap = faithful to the stored
+          // value) inside a box that scrolls horizontally, so a long value
+          // can't stretch the column — and therefore the page — to fit.
+          : <table className="dt" style={{ tableLayout: 'fixed' }}>
+              <thead><tr><th style={{ width: 220 }}>Field</th><th>Value</th></tr></thead>
+              <tbody>{pairs.map(([k, v], i) => (
+                <tr key={i} style={{ cursor: 'default' }}>
+                  <td className="mono" style={{ fontSize: 12, verticalAlign: 'top' }}>{k}</td>
+                  <td style={{ padding: 0 }}>
+                    <div className="mono" style={{ overflowX: 'auto', whiteSpace: 'pre', fontSize: 11.5, color: 'var(--fg-2)', padding: '10px 12px' }}>{v || '—'}</div>
+                  </td>
+                </tr>
+              ))}</tbody>
             </table>}
       </div>
     </div>

@@ -269,6 +269,8 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
   const [hwOwned, setHwOwned]       = React.useState(null);
   // delegations: null while loading; otherwise { given: {rows,total}, received: {rows,total} }
   const [delegations, setDelegations] = React.useState(null);
+  // roles: null while loading; otherwise this user's sys_user_has_role rows
+  const [roles, setRoles] = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
@@ -276,6 +278,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
     setRelations(null);
     setHwAssigned(null); setHwOwned(null);
     setDelegations(null);
+    setRoles(null);
     // Fan out across (relation × table) in parallel. Each promise resolves to
     // [field, buckets[]]; collect into a {field: buckets[]} map.
     Promise.all(USER_RELATIONS.map(({ field, tables }) =>
@@ -298,6 +301,10 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       data.fetchTaskList('sys_user_delegate', { limit: 100, filters: { user: sys_id },     order_by: 'starts', dir: 'desc' }).catch(() => noRows),
       data.fetchTaskList('sys_user_delegate', { limit: 100, filters: { delegate: sys_id }, order_by: 'starts', dir: 'desc' }).catch(() => noRows),
     ]).then(([given, received]) => { if (!cancel) setDelegations({ given, received }); });
+    // Roles held (direct + inherited). Non-slim so the role name arrives as the
+    // reference display value (__display_role).
+    data.fetchTaskList('sys_user_has_role', { limit: 1000, filters: { user: sys_id }, order_by: 'role', dir: 'asc' })
+      .then(r => { if (!cancel) setRoles(r.rows || []); }).catch(() => { if (!cancel) setRoles([]); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -356,6 +363,34 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
           {groupMembership.length === 0 && <span style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>None.</span>}
         </div>
       </div>
+
+      {roles != null && roles.length > 0 && (() => {
+        const named = roles
+          .map(r => ({ name: r.__display_role || r.role, inherited: delegationOn(r.inherited) }))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        const direct = named.filter(r => !r.inherited);
+        const inh = named.filter(r => r.inherited);
+        return (
+          <div className="ref-section">
+            <h2>Roles <span className="count">{roles.length}</span></h2>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {direct.map((r, i) => (
+                <span key={'d' + i} className="chip" style={{ fontSize: 11.5 }}>
+                  <window.Icon name="shield" size={11} />{r.name}
+                </span>
+              ))}
+              {inh.map((r, i) => (
+                <span key={'i' + i} className="chip" title="inherited" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{r.name}</span>
+              ))}
+            </div>
+            {inh.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>
+                {direct.length} direct · {inh.length} inherited (dimmed)
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {delegations != null && (delegations.given.total > 0 || delegations.received.total > 0) && (
         <div className="ref-section">
@@ -521,13 +556,17 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const g = window.findGroup(sys_id);
   const [taskBuckets, setTaskBuckets] = React.useState(null);  // null = loading
+  const [roles, setRoles] = React.useState(null);              // roles this group grants
   React.useEffect(() => {
     if (g) window.AuditLog.push('view', `sys_user_group/${g.name}`, g.name);
     let cancel = false;
     setTaskBuckets(null);
+    setRoles(null);
     bucketTaskRecordsAsync('assignment_group', sys_id)
       .then(b => { if (!cancel) setTaskBuckets(b); })
       .catch(() => { if (!cancel) setTaskBuckets([]); });
+    data.fetchTaskList('sys_group_has_role', { limit: 1000, filters: { group: sys_id }, order_by: 'role', dir: 'asc' })
+      .then(r => { if (!cancel) setRoles(r.rows || []); }).catch(() => { if (!cancel) setRoles([]); });
     return () => { cancel = true; };
   }, [sys_id]);
   if (!g) return <div className="empty">Group not in snapshot.</div>;
@@ -576,6 +615,34 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
           })}
         </div>
       </div>
+
+      {roles != null && roles.length > 0 && (() => {
+        const named = roles
+          .map(r => ({ name: r.__display_role || r.role, inherited: delegationOn(r.inherits) }))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        const direct = named.filter(r => !r.inherited);
+        const inh = named.filter(r => r.inherited);
+        return (
+          <div className="ref-section">
+            <h2>Roles granted <span className="count">{roles.length}</span></h2>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {direct.map((r, i) => (
+                <span key={'d' + i} className="chip" style={{ fontSize: 11.5 }}>
+                  <window.Icon name="shield" size={11} />{r.name}
+                </span>
+              ))}
+              {inh.map((r, i) => (
+                <span key={'i' + i} className="chip" title="inherited" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{r.name}</span>
+              ))}
+            </div>
+            {inh.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>
+                {direct.length} direct · {inh.length} inherited (dimmed)
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {taskBuckets == null && (
         <div className="ref-section">

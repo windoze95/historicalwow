@@ -83,6 +83,7 @@ python3 -m recon.test_recon
 | `MATCH` (display drift) | Values identical; a referenced record's label changed | WARN |
 | `CORRUPTION` | Same revision, a stored value differs | **FAIL** |
 | `MISSING_FIELD` | Live record has a field the archive dropped | **FAIL** |
+| `STALE_IN_SNAPSHOT` | Live revision is newer but at/before the watermark — the archive missed an in-snapshot update a delta won't repair | **FAIL** |
 | `CHANGED_SINCE` | Record edited after the snapshot; immutables still agree | INFO |
 | `CHANGED_SINCE` (immutable) | An immutable field (created/number) differs | **FAIL** |
 | `DELETED_SINCE` | Source deleted the record after capture | INFO |

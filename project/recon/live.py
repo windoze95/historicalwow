@@ -173,9 +173,10 @@ def refetch_live(table, sys_ids, chunk):
     return out, attempted
 
 
-def deep_check(table, arch_rows, chunk):
+def deep_check(table, arch_rows, chunk, cutoff=None):
     """Re-fetch the sampled records from live and classify each. Returns
-    (summary, live_map) so population_parity can reuse the live rows."""
+    (summary, live_map) so population_parity can reuse the live rows. cutoff is
+    the table's snapshot watermark, used to fail in-snapshot staleness."""
     e = get_ex()
     sys_ids = [sid for sid, _ in arch_rows]
     if not sys_ids:
@@ -193,7 +194,7 @@ def deep_check(table, arch_rows, chunk):
             results.append(('FETCH_ERROR', WARN, {}))
             continue
         results.append(compare.classify_record(
-            arch, live_map.get(sid), delta_field=delta_field,
+            arch, live_map.get(sid), delta_field=delta_field, cutoff=cutoff,
             compare_keys=compare_keys, intentional_omissions=omissions))
     summary = compare.summarize_deep(results)
     summary['sampled'] = len(sys_ids)
@@ -248,6 +249,7 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     derives archive coverage from the sample."""
     db_count = common.table_count(conn, table)
     checks = {'count_parity': count_parity(table, manifest, state, db_count)}
+    cutoff, _ = common.snapshot_cutoff(table, manifest, state)
 
     sample_n = min(opts.sample, db_count) if db_count else 0
     sample = common.sample_rows(conn, table, sample_n) if sample_n else []
@@ -258,7 +260,7 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
         archive_keys |= set(raw.keys())
     checks['field_set'] = field_set(table, archive_keys)
 
-    deep, live_map = deep_check(table, arch_rows, opts.chunk)
+    deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff)
     checks['deep_check'] = deep
     checks['population_parity'] = population_parity(
         arch_rows, live_map.values(), archive_profile)

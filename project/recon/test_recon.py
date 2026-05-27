@@ -137,6 +137,21 @@ def test_classify_changed_since_immutable_fail():
     assert (cat, v) == ('CHANGED_SINCE', FAIL), (cat, v)
 
 
+def test_classify_stale_in_snapshot():
+    # archive holds an older revision; live was updated again BEFORE the
+    # watermark -> the archive missed an in-snapshot update -> FAIL
+    a = row('a', updated='2026-04-10 00:00:00', state='2')
+    b = row('a', updated='2026-04-20 00:00:00', state='7')
+    cat, v, _ = compare.classify_record(a, b, cutoff='2026-04-30 00:00:00')
+    assert (cat, v) == ('STALE_IN_SNAPSHOT', FAIL), (cat, v)
+    # same rows, but the live update is AFTER the cutoff -> benign post-snapshot
+    cat2, v2, _ = compare.classify_record(a, b, cutoff='2026-04-15 00:00:00')
+    assert (cat2, v2) == ('CHANGED_SINCE', INFO), (cat2, v2)
+    # no cutoff known -> falls back to treating newer live as benign drift
+    cat3, v3, _ = compare.classify_record(a, b)
+    assert (cat3, v3) == ('CHANGED_SINCE', INFO), (cat3, v3)
+
+
 def test_classify_archive_newer():
     a = row('a', updated='2026-05-20 00:00:00')
     b = row('a', updated='2026-05-01 00:00:00')   # live older than archive

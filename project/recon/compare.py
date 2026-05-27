@@ -55,7 +55,7 @@ def compare_fields(arch, live, keys=None, ignore=()):
     return res
 
 
-def classify_record(arch, live, delta_field='sys_updated_on',
+def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
                     compare_keys=None, intentional_omissions=()):
     """Classify one sampled archived row against its live re-fetch.
 
@@ -64,13 +64,18 @@ def classify_record(arch, live, delta_field='sys_updated_on',
     delta_field: revision axis — 'sys_updated_on', or 'sys_created_on' for the
       append-only tables (sys_audit / sys_journal_field) which have no
       sys_updated_on and are immutable.
+    cutoff: the table's snapshot watermark. When the live revision is newer than
+      the archived one but still at/before the cutoff, the archive missed an
+      in-snapshot update (and a delta export keyed on >= watermark will not
+      repair it) — that is a failing staleness, not benign post-snapshot drift.
     compare_keys: restrict the same-revision full compare to these field names
       (the exporter's sysparm_fields allowlist for sys_email); None = all keys.
     intentional_omissions: field names that are deliberately not archived (e.g.
       sys_email body/body_text/headers) and so must not count as MISSING_FIELD.
 
     Returns (category, verdict, detail). Categories:
-      DELETED_SINCE | MATCH | CHANGED_SINCE | MISSING_FIELD | CORRUPTION
+      DELETED_SINCE | MATCH | CHANGED_SINCE | STALE_IN_SNAPSHOT |
+      MISSING_FIELD | CORRUPTION
     """
     if live is None:
         # Source deleted the record after capture. The archive faithfully
@@ -96,11 +101,18 @@ def classify_record(arch, live, delta_field='sys_updated_on',
         return ('MATCH', PASS, cmp)
 
     if au and lu and lu > au:
-        # Record was edited after the snapshot — expected drift. Mutable fields
-        # may legitimately differ; the immutables must still agree.
+        # Live revision is newer than the archived one.
         cmp = compare_fields(arch, live, keys=IMMUTABLE_FIELDS)
         if cmp['value_mismatches']:
-            return ('CHANGED_SINCE', FAIL, cmp)
+            return ('CHANGED_SINCE', FAIL, cmp)        # immutable mismatch
+        if cutoff and lu <= cutoff:
+            # The update happened at/before the table's snapshot boundary, so the
+            # archive should hold this revision but doesn't — and a delta export
+            # keyed on >= watermark won't re-fetch it. Stale in-snapshot data.
+            full = compare_fields(arch, live, keys=compare_keys,
+                                  ignore=intentional_omissions)
+            return ('STALE_IN_SNAPSHOT', FAIL, full)
+        # Edited after the snapshot — expected drift; immutables agree.
         return ('CHANGED_SINCE', INFO, cmp)
 
     if au and lu and lu < au:

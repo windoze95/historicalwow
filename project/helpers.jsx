@@ -45,6 +45,7 @@ window.URL_TO_TABLE = {
   'scheduled-jobs':  'sysauto_script',
   'ui-policies':     'sys_ui_policy',
   'data-policies':   'sys_data_policy2',
+  'sla-definitions': 'contract_sla',
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
 };

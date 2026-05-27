@@ -648,7 +648,9 @@ def get_sla_stats(handler, kind, sys_id):
     where = [f'i."{col}" = ?']
     args = [sys_id]
     if not is_hr_unlocked(handler):
-        where.append('i.assignment_group != ?')
+        # IS NOT (not !=) so incidents with a NULL assignment_group aren't
+        # dropped — `NULL != ?` is unknown and would fail the WHERE.
+        where.append('i.assignment_group IS NOT ?')
         args.append(HR_GROUP_SYS_ID)
     try:
         rows = conn.execute(

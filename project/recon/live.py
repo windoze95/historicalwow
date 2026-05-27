@@ -72,11 +72,13 @@ def _stats_count(table, query):
 
 
 # ---- checks ----------------------------------------------------------------
-def count_parity(table, manifest, state, db_count):
+def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     """Live count as-of the snapshot watermark vs the DB count, using the same
-    filter the exporter applied. db < live_asof = real loss (FAIL); db >
-    live_asof = source deletes since capture (reported, PASS); live_now > db =
-    creates since capture (reported, PASS)."""
+    filter the exporter applied. db > live_asof = source deletes since capture
+    (reported, PASS); live_now > db = creates since capture (reported, PASS). A
+    db < live_asof shortfall within tolerance_pct is WARN (rows created during
+    the non-instantaneous export, between a table's pull and its watermark);
+    beyond tolerance it's FAIL (real loss / stale DB)."""
     base = _base_filter(table)
     cutoff, src = common.snapshot_cutoff(table, manifest, state)
     res = {'verdict': PASS, 'db': db_count, 'cutoff': cutoff, 'cutoff_source': src}
@@ -97,11 +99,21 @@ def count_parity(table, manifest, state, db_count):
     res['live_asof'] = asof
 
     if asof is not None:
-        tol = max(2, int(asof * 0.0001))
-        if db_count < asof - tol:
-            res['verdict'] = FAIL
-            res['missing_vs_asof'] = asof - db_count
-        elif db_count > asof + tol:
+        abs_tol = max(2, int(asof * 0.0001))
+        shortfall = asof - db_count
+        if shortfall > abs_tol:
+            rel = shortfall / asof if asof else 1.0
+            if rel <= tolerance_pct / 100.0:
+                # rows created during the export window (between a table's pull
+                # and its watermark) — expected on a live instance, not loss.
+                res['verdict'] = WARN
+                res['short_vs_asof'] = shortfall
+                res['note'] = ('short %.2f%% (<= %.3g%% tol) — export-window churn'
+                               % (rel * 100, tolerance_pct))
+            else:
+                res['verdict'] = FAIL
+                res['missing_vs_asof'] = shortfall
+        elif db_count > asof + abs_tol:
             res['deletes_since'] = db_count - asof          # expected; not a failure
     if res.get('live_now') is not None and res['live_now'] > db_count:
         res['creates_since'] = res['live_now'] - db_count   # expected; not a failure
@@ -170,10 +182,13 @@ def refetch_live(table, sys_ids, chunk):
     return out, attempted
 
 
-def deep_check(table, arch_rows, chunk, cutoff=None):
+def deep_check(table, arch_rows, chunk, cutoff=None, volatile_fields=None):
     """Re-fetch the sampled records from live and classify each. Returns
     (summary, live_map) so population_parity can reuse the live rows. cutoff is
-    the table's snapshot watermark, used to fail in-snapshot staleness."""
+    the table's snapshot watermark, used to fail in-snapshot staleness;
+    volatile_fields are excluded from the same-revision corruption check."""
+    if volatile_fields is None:
+        volatile_fields = compare.DEFAULT_VOLATILE_FIELDS
     e = get_ex()
     sys_ids = [sid for sid, _ in arch_rows]
     if not sys_ids:
@@ -192,7 +207,8 @@ def deep_check(table, arch_rows, chunk, cutoff=None):
             continue
         results.append(compare.classify_record(
             arch, live_map.get(sid), delta_field=delta_field, cutoff=cutoff,
-            compare_keys=compare_keys, intentional_omissions=omissions))
+            compare_keys=compare_keys, intentional_omissions=omissions,
+            volatile_fields=volatile_fields))
     summary = compare.summarize_deep(results)
     summary['sampled'] = len(sys_ids)
     summary['fetched_live'] = len(live_map)
@@ -239,7 +255,10 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     field_profile result when available (phase=all); otherwise population parity
     derives archive coverage from the sample."""
     db_count = common.table_count(conn, table)
-    checks = {'count_parity': count_parity(table, manifest, state, db_count)}
+    tol = getattr(opts, 'count_tolerance_pct', 1.0)
+    volatile = compare.DEFAULT_VOLATILE_FIELDS | set(getattr(opts, 'ignore_fields', ()) or ())
+    checks = {'count_parity': count_parity(table, manifest, state, db_count,
+                                           tolerance_pct=tol)}
     cutoff, _ = common.snapshot_cutoff(table, manifest, state)
 
     sample_n = min(opts.sample, db_count) if db_count else 0
@@ -249,7 +268,8 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     # Deep-fetch the sampled records first; its live rows (≈--sample random rows)
     # serve as the live field inventory for the checks below — far more coverage
     # than a handful of rows, and no extra API calls.
-    deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff)
+    deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff,
+                                volatile_fields=volatile)
     checks['deep_check'] = deep
 
     # Archive field inventory: prefer the offline profile (a full/large-sample

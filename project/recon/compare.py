@@ -9,6 +9,15 @@ from .common import (PASS, INFO, WARN, FAIL, worst, uv, udv, is_empty, norm)
 # archive defect (wrong lineage / mis-keyed record), not benign drift.
 IMMUTABLE_FIELDS = ('sys_id', 'sys_created_on', 'sys_created_by', 'number')
 
+# Fields that legitimately change WITHOUT bumping sys_updated_on (counters,
+# recompile/derived metadata). A same-revision value difference on these is not
+# corruption — the archive faithfully captured the row at its sys_updated_on and
+# the field drifted afterward — so they're excluded from the value comparison.
+DEFAULT_VOLATILE_FIELDS = frozenset({
+    'sys_mod_count', 'sys_view_count', 'compiler_build', 'latest_snapshot',
+    'sizeclass',
+})
+
 
 def _keys(row):
     return set(row.keys()) if isinstance(row, dict) else set()
@@ -56,7 +65,8 @@ def compare_fields(arch, live, keys=None, ignore=()):
 
 
 def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
-                    compare_keys=None, intentional_omissions=()):
+                    compare_keys=None, intentional_omissions=(),
+                    volatile_fields=DEFAULT_VOLATILE_FIELDS):
     """Classify one sampled archived row against its live re-fetch.
 
     arch: dict parsed from the DB `raw` column.
@@ -72,6 +82,8 @@ def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
       (the exporter's sysparm_fields allowlist for sys_email); None = all keys.
     intentional_omissions: field names that are deliberately not archived (e.g.
       sys_email body/body_text/headers) and so must not count as MISSING_FIELD.
+    volatile_fields: fields that change without bumping sys_updated_on; excluded
+      from the same-revision value comparison so they don't read as corruption.
 
     Returns (category, verdict, detail). Categories:
       DELETED_SINCE | MATCH | CHANGED_SINCE | STALE_IN_SNAPSHOT |
@@ -84,12 +96,12 @@ def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
 
     au = norm(uv(arch.get(delta_field)))
     lu = norm(uv(live.get(delta_field)))
+    ignore = set(intentional_omissions) | set(volatile_fields)
 
     if au and lu and au == lu:
         # Same revision: the stored row must equal the live row byte-for-byte
         # on the value side. Any difference is a recording error.
-        cmp = compare_fields(arch, live, keys=compare_keys,
-                             ignore=intentional_omissions)
+        cmp = compare_fields(arch, live, keys=compare_keys, ignore=ignore)
         if cmp['missing_in_archive']:
             return ('MISSING_FIELD', FAIL, cmp)
         if cmp['value_mismatches']:
@@ -109,8 +121,7 @@ def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
             # The update happened at/before the table's snapshot boundary, so the
             # archive should hold this revision but doesn't — and a delta export
             # keyed on >= watermark won't re-fetch it. Stale in-snapshot data.
-            full = compare_fields(arch, live, keys=compare_keys,
-                                  ignore=intentional_omissions)
+            full = compare_fields(arch, live, keys=compare_keys, ignore=ignore)
             return ('STALE_IN_SNAPSHOT', FAIL, full)
         # Edited after the snapshot — expected drift; immutables agree.
         return ('CHANGED_SINCE', INFO, cmp)
@@ -122,8 +133,7 @@ def classify_record(arch, live, delta_field='sys_updated_on', cutoff=None,
                 {'reason': 'archive_newer_than_live', 'archived': au, 'live': lu})
 
     # One side lacks the delta stamp — compare at face value and stay cautious.
-    cmp = compare_fields(arch, live, keys=compare_keys,
-                         ignore=intentional_omissions)
+    cmp = compare_fields(arch, live, keys=compare_keys, ignore=ignore)
     if cmp['missing_in_archive'] or cmp['value_mismatches']:
         return ('CHANGED_SINCE', WARN, cmp)
     return ('MATCH', PASS, cmp)

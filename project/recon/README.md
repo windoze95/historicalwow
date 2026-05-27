@@ -68,7 +68,10 @@ python3 -m recon.test_recon
 **Phase B — live (calls the source instance):**
 
 6. **count_parity** — live count *as-of the snapshot watermark*, using the same
-   per-table filter the exporter applied, vs the DB count.
+   per-table filter the exporter applied, vs the DB count. A shortfall within
+   `--count-tolerance-pct` is WARN (rows created during the non-instantaneous
+   export); beyond it is FAIL. Records created *after* the watermark are
+   reported as `creates_since` (INFO) — expected while the source is still live.
 7. **field_set** — every field the live record carries is present in the archive.
 8. **deep_check** — re-fetches a random sample (`--sample`, default 200) by
    sys_id and classifies each record (see below).
@@ -120,6 +123,9 @@ outside a `data/` directory unless `--allow-unsafe-out` is passed.
 --profile-limit N            row threshold above which the profile samples (default: 50000)
 --sample-raw N               rows for the raw parse/envelope check (default: 500)
 --sample-extractor N         rows for the extractor-fidelity check (default: 5000)
+--count-tolerance-pct P      count shortfall within P% is WARN (export-window churn),
+                             beyond it FAIL (default: 1.0; use 0 for the final gate)
+--ignore-fields a,b          extra volatile fields excluded from the corruption check
 --db PATH                    archive DB (default: project/data/historicalwow.db)
 --out PATH                   report dir (default: <data>/recon_<timestamp>)
 --strict                     exit non-zero on WARN as well as FAIL
@@ -137,5 +143,14 @@ outside a `data/` directory unless `--allow-unsafe-out` is passed.
   `sys_attachment`) carry the exporter's `tablenameIN…`/`nameIN…`/`table_nameIN…`
   filter on both the count and the re-fetch.
 - `sys_email` bodies are excluded from the compare when the export skipped them.
+- Volatile fields that change without bumping `sys_updated_on` (`sys_mod_count`,
+  `sys_view_count`, `compiler_build`, `latest_snapshot`, `sizeclass`) are excluded
+  from the same-revision corruption check; extend with `--ignore-fields`.
+- The "should be in the DB" set is `build_sqlite.SCHEMAS`. A SCHEMAS table missing
+  from the DB is a FAIL; tables exported to NDJSON but not in SCHEMAS are reported
+  as *exported-but-not-built* (informational) — add them to SCHEMAS if you want
+  them in the served archive.
 - Live calls are sequential and reuse the exporter's retry/backoff; lower
   `--sample` to go gentler on the instance.
+- **For the final, frozen pre-shutdown gate** (source quiesced, no new writes),
+  run with `--count-tolerance-pct 0 --strict` so any shortfall or warning blocks.

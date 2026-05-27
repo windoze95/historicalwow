@@ -1851,6 +1851,26 @@ flagging the omission.
       }
     }
 
+    // SLA definitions — start/stop/pause conditions, target, and duration that
+    // govern the timers on this table. Active only, like the rule types above.
+    const sla = activeRows(d.sla).slice().sort(byOrder);
+    push('');
+    push(`## SLA definitions — ${sla.length} active`);
+    for (const s of sla) {
+      push('');
+      const meta = [
+        s.type ? `type=${s.type}` : null,
+        s.target ? `target=${s.target}` : null,
+        s.duration ? `duration=${s.duration}` : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${s.name || '(unnamed)'}" — ${meta}`);
+      if (s.start_condition)  push(`Start: \`${s.start_condition}\``);
+      if (s.stop_condition)   push(`Stop: \`${s.stop_condition}\``);
+      if (s.pause_condition)  push(`Pause: \`${s.pause_condition}\``);
+      if (s.reset_condition)  push(`Reset: \`${s.reset_condition}\``);
+      if (s.cancel_condition) push(`Cancel: \`${s.cancel_condition}\``);
+    }
+
     // ACLs — name covers <table>, <table>.<field>, <table>.<action>. Sort
     // by name so the dotted hierarchy reads top-down (incident, then
     // incident.assigned_to, then incident.action_x).
@@ -2037,6 +2057,7 @@ flagging the omission.
       { id: 'uipa',    label: 'UI policy actions',     table: 'sys_ui_policy_action',    filters: { table: name },      columns: 'uipa' },
       { id: 'dp',      label: 'Data policies',         table: 'sys_data_policy2',        filters: { model_table: name }, columns: 'dp' },
       { id: 'dpr',     label: 'Data policy rules',     table: 'sys_data_policy_rule',    filters: { table: name },      columns: 'dpr' },
+      { id: 'sla',     label: 'SLAs',                  table: 'contract_sla',            filters: { collection: name }, columns: 'sla' },
       { id: 'acls',    label: 'ACLs',                  table: 'sys_security_acl',                                       columns: 'acls', special: 'acls' },
       { id: 'uiact',   label: 'UI Actions',            table: 'sys_ui_action',           filters: { table: name },      columns: 'uiact' },
       { id: 'dict',    label: 'Dictionary',            table: 'sys_dictionary',                                         columns: 'dict',  special: 'dict' },
@@ -2892,6 +2913,30 @@ flagging the omission.
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      );
+    }
+    if (columns === 'sla') {
+      return (
+        <table className="dt">
+          <thead><tr>
+            <th>Name</th>
+            <th style={{ width: 90 }}>Type</th>
+            <th style={{ width: 130 }}>Target</th>
+            <th style={{ width: 130 }}>Duration</th>
+            <th style={{ width: 80 }}>Active</th>
+          </tr></thead>
+          <tbody>
+            {r.rows.map(row => (
+              <tr key={row.sys_id}>
+                <td><strong style={{ fontWeight: 500 }}>{flat(row.name) || '—'}</strong></td>
+                <td className="muted">{flat(row.type) || '—'}</td>
+                <td className="muted">{flat(row.target) || '—'}</td>
+                <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.duration) || '—'}</td>
+                <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       );

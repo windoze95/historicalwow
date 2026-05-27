@@ -4308,13 +4308,16 @@ function RefRow({ onClick, children }) {
 // User-page section: fetch <table> where <field> = the user, render each row
 // via renderRow. Hidden while loading and when empty; keeps the API total to
 // flag truncation.
-function RelatedRecordsSection({ title, table, field, sys_id, slim, orderBy, renderRow }) {
+function RelatedRecordsSection({ title, table, field, sys_id, slim, orderBy, dir, renderRow }) {
   const data = window.HistoricalWowData;
   const [resp, setResp] = React.useState(null);
   React.useEffect(() => {
     let cancel = false; setResp(null);
     const opts = { limit: 100, filters: { [field]: sys_id } };
-    if (orderBy) { opts.order_by = orderBy; opts.dir = 'desc'; }
+    // orderBy must be an indexed column — the server ignores non-indexed
+    // order_by and falls back to sys_id, which would make the truncated
+    // first-100 arbitrary rather than ordered.
+    if (orderBy) { opts.order_by = orderBy; opts.dir = dir || 'desc'; }
     if (slim) opts.slim = 1;
     data.fetchTaskList(table, opts)
       .then(r => { if (!cancel) setResp(r); })
@@ -4516,7 +4519,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
         </div>
       )}
 
-      <RelatedRecordsSection title="Templates" table="sys_template" field="user" sys_id={sys_id} slim orderBy="sys_updated_on"
+      <RelatedRecordsSection title="Templates" table="sys_template" field="user" sys_id={sys_id} slim orderBy="name" dir="asc"
         renderRow={t => (
           <RefRow key={t.sys_id} onClick={() => window.navigate(window.recordUrl('sys_template', t.sys_id))}>
             <window.Icon name="file" size={13} />
@@ -4525,7 +4528,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
           </RefRow>
         )} />
 
-      <RelatedRecordsSection title="Knowledge authored" table="kb_knowledge" field="author" sys_id={sys_id} slim orderBy="sys_updated_on"
+      <RelatedRecordsSection title="Knowledge authored" table="kb_knowledge" field="author" sys_id={sys_id} slim orderBy="number"
         renderRow={a => (
           <RefRow key={a.sys_id} onClick={() => window.navigate(`/knowledge/${a.sys_id}`)}>
             <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{a.number}</span>
@@ -4541,7 +4544,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
           </RefRow>
         )} />
 
-      <RelatedRecordsSection title="CIs owned" table="cmdb_ci" field="owned_by" sys_id={sys_id} slim orderBy="sys_updated_on"
+      <RelatedRecordsSection title="CIs owned" table="cmdb_ci" field="owned_by" sys_id={sys_id} slim orderBy="name" dir="asc"
         renderRow={c => (
           <RefRow key={c.sys_id} onClick={() => window.navigate(`/cis/${c.sys_id}`)}>
             <window.Icon name="ci" size={12} />

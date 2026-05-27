@@ -328,6 +328,14 @@ DEFAULT_TABLES = [
     # record action (create/update on a target table). Often the *how* behind
     # a ticket that originated from email.
     'sysevent_in_email_action',
+    # Outbound notification definitions (sibling of the inbound actions above).
+    'sysevent_email_action',
+    # Record templates, CI outages, standard-change record producers, and SLA
+    # definitions — operational/reference context.
+    'sys_template',
+    'cmdb_ci_outage',
+    'std_change_record_producer',
+    'contract_sla',
     # Activity (large)
     'sys_journal_field',
     'sys_audit',

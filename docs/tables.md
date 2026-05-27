@@ -1279,6 +1279,89 @@ Filterable columns:
 | `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `stop_processing` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
+### `sysevent_email_action`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `collection` | string |  |
+| `type` | string |  |
+| `event_name` | string |  |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `action_insert` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `action_update` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `sys_template`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `table` | string |  |
+| `short_description` | string |  |
+| `user` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `global` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `cmdb_ci_outage`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `number` | string |  |
+| `cmdb_ci` | string |  |
+| `type` | string |  |
+| `begin` | string |  |
+| `end` | string |  |
+| `short_description` | string |  |
+| `u_outage_status` | string |  |
+| `task_number` | string |  |
+
+### `std_change_record_producer`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `short_description` | string |  |
+| `table_name` | string |  |
+| `category` | string |  |
+| `sys_class_name` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `contract_sla`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `collection` | string |  |
+| `type` | string |  |
+| `target` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
 ### `alm_asset`
 
 Tags: `reference`

@@ -289,6 +289,10 @@ REFERENCE_TABLES = {
     'sys_security_acl',
     # Inbound email actions — rules that turn an inbound email into a record action.
     'sysevent_in_email_action',
+    # Outbound notifications, record templates, CI outages, standard-change
+    # record producers, and SLA definitions.
+    'sysevent_email_action', 'sys_template', 'cmdb_ci_outage',
+    'std_change_record_producer', 'contract_sla',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 

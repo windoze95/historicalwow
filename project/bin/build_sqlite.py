@@ -611,6 +611,58 @@ SCHEMAS = {
         ('active',          lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
         ('stop_processing', lambda r: 1 if str(_v(r.get('stop_processing')) or 'false').lower() == 'true' else 0),
     ],
+    # Outbound notifications. `collection` is the target table (verified — not
+    # `table`/`target_table`); message bodies stay in raw.
+    'sysevent_email_action': [
+        ('name',          lambda r: _v(r.get('name'))),
+        ('collection',    lambda r: _v(r.get('collection'))),
+        ('type',          lambda r: _v(r.get('type'))),
+        ('event_name',    lambda r: _v(r.get('event_name'))),
+        ('order',         lambda r: _v(r.get('order'))),
+        ('active',        lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('action_insert', lambda r: 1 if str(_v(r.get('action_insert')) or 'false').lower() == 'true' else 0),
+        ('action_update', lambda r: 1 if str(_v(r.get('action_update')) or 'false').lower() == 'true' else 0),
+    ],
+    # Record templates. `table` is the target table; the field-values payload
+    # (`template`) stays in raw.
+    'sys_template': [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('table',             lambda r: _v(r.get('table'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('user',              lambda r: _v(r.get('user'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('global',            lambda r: 1 if str(_v(r.get('global')) or 'false').lower() == 'true' else 0),
+    ],
+    # CI outages — when a CI was down/degraded.
+    'cmdb_ci_outage': [
+        ('number',            lambda r: _v(r.get('number'))),
+        ('cmdb_ci',           lambda r: _v(r.get('cmdb_ci'))),
+        ('type',              lambda r: _v(r.get('type'))),
+        ('begin',             lambda r: _v(r.get('begin'))),
+        ('end',               lambda r: _v(r.get('end'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('u_outage_status',   lambda r: _v(r.get('u_outage_status'))),
+        ('task_number',       lambda r: _v(r.get('task_number'))),
+    ],
+    # Standard-change record producers — the templates behind standard changes.
+    # `table_name` is the produced record's table; script/description stay in raw.
+    'std_change_record_producer': [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('short_description', lambda r: _v(r.get('short_description'))),
+        ('table_name',        lambda r: _v(r.get('table_name'))),
+        ('category',          lambda r: _v(r.get('category'))),
+        ('sys_class_name',    lambda r: _v(r.get('sys_class_name'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # SLA definitions. `collection` is the target table; `target` is
+    # response/resolution. Condition scripts stay in raw.
+    'contract_sla': [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('collection',  lambda r: _v(r.get('collection'))),
+        ('type',        lambda r: _v(r.get('type'))),
+        ('target',      lambda r: _v(r.get('target'))),
+        ('active',      lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
 
     # Assets (alm_* family). Common alm_asset fields plus subtype-specific
     # additions on top so the list views can filter on what they care about.

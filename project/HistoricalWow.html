@@ -4656,22 +4656,24 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       </div>
 
       <div className="ref-grid">
-        <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(r.department)?.name || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(r.location)?.name || '—'}</div></div>
-        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(r.company)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Manager</div><div className="val">{r.manager ? <window.UserCell sys_id={r.manager} displayName={r.__display_manager} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(r.department)?.name || r.__display_department || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(r.location)?.name || r.__display_location || '—'}</div></div>
         {(() => {
           const cc = window.findCostCenter(r.cost_center) ||
                      window.findCostCenter(window.findDepartment(r.department)?.cost_center);
           return (
             <div className="cell">
               <div className="label">Cost center</div>
-              <div className="val">{cc ? `${cc.name}${cc.code ? ` · ${cc.code}` : ''}` : '—'}</div>
+              <div className="val">{cc ? `${cc.name}${cc.code ? ` · ${cc.code}` : ''}` : (r.__display_cost_center || '—')}</div>
             </div>
           );
         })()}
+        <div className="cell"><div className="label">Mobile</div><div className="val">{r.mobile_phone || r.phone || '—'}</div></div>
         <div className="cell"><div className="label">Active</div><div className="val">{fullReady ? (r.active ? 'true' : 'false') : '…'}</div></div>
-        <div className="cell"><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{u.sys_id}</div></div>
+        <div className="cell"><div className="label">Created</div><div className="val">{r.sys_created_on || '—'}</div></div>
         <div className="cell"><div className="label">Last updated</div><div className="val">{r.sys_updated_on || '—'}</div></div>
+        <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{u.sys_id}</div></div>
       </div>
 
       <div className="ref-section">

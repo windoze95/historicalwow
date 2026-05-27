@@ -2512,7 +2512,10 @@ function KBListPage() {
   React.useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    data.fetchTaskList('kb_knowledge', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'number', dir: 'desc' })
+    // slim=1 → indexed columns only, skipping the raw envelope (which for
+    // kb_knowledge carries the full article `text` body). The list only shows
+    // metadata; the body is fetched lazily in KBRecordPage.
+    data.fetchTaskList('kb_knowledge', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'number', dir: 'desc', slim: 1 })
       .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
       .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
     return () => { cancelled = true; };
@@ -2532,23 +2535,22 @@ function KBListPage() {
       <table className="dt">
         <thead><tr>
           <th style={{ width: 130 }}>Number</th><th>Short description</th>
-          <th>Knowledge base</th><th style={{ width: 130 }}>State</th><th style={{ width: 180 }}>Author</th>
+          <th style={{ width: 140 }}>State</th><th style={{ width: 220 }}>Author</th>
         </tr></thead>
         <tbody>
           {loading && resp.rows == null && (
-            <tr><td colSpan={5} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+            <tr><td colSpan={4} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
               <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
             </td></tr>
           )}
           {!loading && resp.rows && resp.rows.length === 0 && (
-            <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No articles.</td></tr>
+            <tr><td colSpan={4} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No articles.</td></tr>
           )}
           {(resp.rows || []).map(a => (
             <tr key={a.sys_id} onClick={() => window.navigate(`/knowledge/${a.sys_id}`)}>
               <td className="num mono" style={{ fontSize: 12 }}>{a.number}</td>
               <td><strong style={{ fontWeight: 500 }}>{a.short_description}</strong></td>
-              <td className="muted">{a.__display_kb_knowledge_base || a.kb_knowledge_base || '—'}</td>
-              <td>{a.workflow_state ? <span className="chip" style={{ fontSize: 10.5 }}>{a.__display_workflow_state || a.workflow_state}</span> : <span className="muted">—</span>}</td>
+              <td>{a.workflow_state ? <span className="chip" style={{ fontSize: 10.5 }}>{a.workflow_state}</span> : <span className="muted">—</span>}</td>
               <td>{a.author ? <window.UserCell sys_id={a.author} displayName={a.__display_author} /> : <span className="muted">—</span>}</td>
             </tr>
           ))}

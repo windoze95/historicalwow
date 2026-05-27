@@ -1407,6 +1407,8 @@ window.URL_TO_TABLE = {
   'scheduled-jobs':  'sysauto_script',
   'ui-policies':     'sys_ui_policy',
   'data-policies':   'sys_data_policy2',
+  'inbound-email-actions': 'sysevent_in_email_action',
+  'notifications':   'sysevent_email_action',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])
@@ -1987,6 +1989,8 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sys_user_group')  return <GroupList />;
   if (table === 'sys_user_delegate') return <DelegateList />;
   if (table === 'kb_knowledge')    return <KBListPage />;
+  if (table === 'sysevent_in_email_action') return <EmailActionList table="sysevent_in_email_action" targetField="table" title="Inbound email actions" />;
+  if (table === 'sysevent_email_action')    return <EmailActionList table="sysevent_email_action" targetField="collection" title="Notifications" />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -2611,6 +2615,65 @@ window.KBRecordPage = function KBRecordPage({ sys_id }) {
     </div>
   );
 };
+
+// ---- Email actions (inbound rules + outbound notifications) ---------------
+// Shared list for sysevent_in_email_action (targetField 'table') and
+// sysevent_email_action (targetField 'collection'). slim — only indexed
+// metadata is shown, skipping the (large) message/script bodies in raw.
+function EmailActionList({ table, targetField, title }) {
+  const data = window.HistoricalWowData;
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList(table, { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'name', dir: 'asc', slim: 1 })
+      .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [table, page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === table)?.source_rows;
+  const isOn = v => v === true || v === 'true' || v === 1 || v === '1';
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>{title} <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar"><div className="spacer" /><Pager page={page} setPage={setPage} lastPage={lastPage} /></div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          <th>Name</th><th style={{ width: 120 }}>Type</th><th>Target table</th><th>Event</th><th style={{ width: 90 }}>Active</th>
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={5} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>None in this snapshot.</td></tr>
+          )}
+          {(resp.rows || []).map(a => (
+            <tr key={a.sys_id} onClick={() => window.navigate(window.recordUrl(table, a.sys_id))}>
+              <td><strong style={{ fontWeight: 500 }}>{a.name}</strong></td>
+              <td className="muted">{a.type || '—'}</td>
+              <td className="mono" style={{ fontSize: 12 }}>{a[targetField] || '—'}</td>
+              <td className="muted mono" style={{ fontSize: 11.5 }}>{a.event_name || '—'}</td>
+              <td>{isOn(a.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ---- CIs (paginated via API since cmdb_ci has 1M+ records) ---------------
 
@@ -7191,6 +7254,7 @@ Object.assign(window, {
         'sys_script', 'sys_script_client', 'sys_script_include',
         'sysauto_script', 'sys_ui_policy', 'sys_ui_policy_action',
         'sys_data_policy2', 'sys_data_policy_rule',
+        'sysevent_in_email_action', 'sysevent_email_action',
       ].map(t => L.fetchTotalCount(t).then(r => [t, r]))).then(pairs => {
         if (cancel) return;
         const m = {};
@@ -7276,6 +7340,8 @@ Object.assign(window, {
           {tile('Scheduled jobs',  'sysauto_script',      '/scheduled-jobs')}
           {tile('UI policies',     'sys_ui_policy',       '/ui-policies')}
           {tile('Data policies',   'sys_data_policy2',    '/data-policies')}
+          {tile('Inbound email actions', 'sysevent_in_email_action', '/inbound-email-actions')}
+          {tile('Notifications',   'sysevent_email_action', '/notifications')}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
@@ -7748,6 +7814,58 @@ Object.assign(window, {
   }
 
   // =========================================================================
+  // Email action records (inbound rules + outbound notifications)
+  // =========================================================================
+  window.InboundEmailActionRecordPage = function InboundEmailActionRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_in_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Inbound email actions', href: '/inbound-email-actions' }]}
+      tableField="table"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+        <span key="order" style={chip}>order {flat(r.order) ?? '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.table)],
+        ['Action', flat(r.action)],
+        ['Event', flat(r.event_name)],
+        ['Order', flat(r.order) ?? '—'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Stop processing', isTrue(flat(r.stop_processing)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="filter_condition"
+    />;
+  };
+
+  window.NotificationRecordPage = function NotificationRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Notifications', href: '/notifications' }]}
+      tableField="collection"
+      scriptField="message_html"
+      scriptLabel="Message body"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.collection)],
+        ['Subject', flat(r.subject)],
+        ['Event', flat(r.event_name)],
+        ['On insert', isTrue(flat(r.action_insert)) ? 'true' : 'false'],
+        ['On update', isTrue(flat(r.action_update)) ? 'true' : 'false'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="condition"
+    />;
+  };
+
+  // =========================================================================
   // Business rule record
   // =========================================================================
   window.BusinessRuleRecordPage = function BusinessRuleRecordPage({ sys_id }) {
@@ -8085,7 +8203,7 @@ Object.assign(window, {
   // Renders the same crumbs / chips / detail-grid / script body /
   // condition / "Script includes referenced" pattern.
   // =========================================================================
-  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField }) {
+  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField, scriptField, scriptLabel }) {
     const [rec, setRec] = useState(null);
     const [includes, setIncludes] = useState(null);
     useEffect(() => {
@@ -8108,7 +8226,7 @@ Object.assign(window, {
     if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not in snapshot.</div>;
 
     const name = title(rec);
-    const script = flat(rec.script) || '';
+    const script = flat(rec[scriptField || 'script']) || '';
     const active = isTrue(flat(rec.active));
     const targetTable = tableField ? flat(rec[tableField]) : null;
 
@@ -8163,8 +8281,8 @@ Object.assign(window, {
           )}
 
           <div className="section">
-            <h3>Script</h3>
-            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text="No script body on this record." />}
+            <h3>{scriptLabel || 'Script'}</h3>
+            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text={`No ${(scriptLabel || 'script').toLowerCase()} on this record.`} />}
           </div>
 
           <IncludeRefsSection includes={includes} />
@@ -9773,6 +9891,7 @@ const LOGIC_LIST_TABLES = new Set([
 ]);
 const LOGIC_RECORD_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
+  'sysevent_in_email_action', 'sysevent_email_action',
 ]);
 
 function applyTweaks(t) {
@@ -9924,6 +10043,8 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
@@ -10072,6 +10193,8 @@ function Sidebar({ route }) {
     navItem('/script-includes', 'book',     'Script includes',  'sys_script_include'),
     navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
     navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
+    navItem('/inbound-email-actions', 'arrow_right', 'Inbound email actions', 'sysevent_in_email_action'),
+    navItem('/notifications',   'change',   'Notifications',    'sysevent_email_action'),
   ].filter(it => it !== null);
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
@@ -10095,6 +10218,7 @@ function Sidebar({ route }) {
       '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
       '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
+      '/inbound-email-actions': 'sysevent_in_email_action', '/notifications': 'sysevent_email_action',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||
            (route.view === 'record' && map[id] === route.table) ||

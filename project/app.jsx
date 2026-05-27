@@ -25,6 +25,7 @@ const LOGIC_LIST_TABLES = new Set([
 ]);
 const LOGIC_RECORD_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
+  'sysevent_in_email_action', 'sysevent_email_action',
 ]);
 
 function applyTweaks(t) {
@@ -176,6 +177,8 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
@@ -324,6 +327,8 @@ function Sidebar({ route }) {
     navItem('/script-includes', 'book',     'Script includes',  'sys_script_include'),
     navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
     navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
+    navItem('/inbound-email-actions', 'arrow_right', 'Inbound email actions', 'sysevent_in_email_action'),
+    navItem('/notifications',   'change',   'Notifications',    'sysevent_email_action'),
   ].filter(it => it !== null);
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
@@ -347,6 +352,7 @@ function Sidebar({ route }) {
       '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
       '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
+      '/inbound-email-actions': 'sysevent_in_email_action', '/notifications': 'sysevent_email_action',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||
            (route.view === 'record' && map[id] === route.table) ||

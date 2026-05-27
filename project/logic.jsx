@@ -579,6 +579,7 @@
         'sys_script', 'sys_script_client', 'sys_script_include',
         'sysauto_script', 'sys_ui_policy', 'sys_ui_policy_action',
         'sys_data_policy2', 'sys_data_policy_rule',
+        'sysevent_in_email_action', 'sysevent_email_action',
       ].map(t => L.fetchTotalCount(t).then(r => [t, r]))).then(pairs => {
         if (cancel) return;
         const m = {};
@@ -664,6 +665,8 @@
           {tile('Scheduled jobs',  'sysauto_script',      '/scheduled-jobs')}
           {tile('UI policies',     'sys_ui_policy',       '/ui-policies')}
           {tile('Data policies',   'sys_data_policy2',    '/data-policies')}
+          {tile('Inbound email actions', 'sysevent_in_email_action', '/inbound-email-actions')}
+          {tile('Notifications',   'sysevent_email_action', '/notifications')}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
@@ -1136,6 +1139,58 @@
   }
 
   // =========================================================================
+  // Email action records (inbound rules + outbound notifications)
+  // =========================================================================
+  window.InboundEmailActionRecordPage = function InboundEmailActionRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_in_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Inbound email actions', href: '/inbound-email-actions' }]}
+      tableField="table"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+        <span key="order" style={chip}>order {flat(r.order) ?? '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.table)],
+        ['Action', flat(r.action)],
+        ['Event', flat(r.event_name)],
+        ['Order', flat(r.order) ?? '—'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Stop processing', isTrue(flat(r.stop_processing)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="filter_condition"
+    />;
+  };
+
+  window.NotificationRecordPage = function NotificationRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Notifications', href: '/notifications' }]}
+      tableField="collection"
+      scriptField="message_html"
+      scriptLabel="Message body"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.collection)],
+        ['Subject', flat(r.subject)],
+        ['Event', flat(r.event_name)],
+        ['On insert', isTrue(flat(r.action_insert)) ? 'true' : 'false'],
+        ['On update', isTrue(flat(r.action_update)) ? 'true' : 'false'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="condition"
+    />;
+  };
+
+  // =========================================================================
   // Business rule record
   // =========================================================================
   window.BusinessRuleRecordPage = function BusinessRuleRecordPage({ sys_id }) {
@@ -1473,7 +1528,7 @@
   // Renders the same crumbs / chips / detail-grid / script body /
   // condition / "Script includes referenced" pattern.
   // =========================================================================
-  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField }) {
+  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField, scriptField, scriptLabel }) {
     const [rec, setRec] = useState(null);
     const [includes, setIncludes] = useState(null);
     useEffect(() => {
@@ -1496,7 +1551,7 @@
     if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not in snapshot.</div>;
 
     const name = title(rec);
-    const script = flat(rec.script) || '';
+    const script = flat(rec[scriptField || 'script']) || '';
     const active = isTrue(flat(rec.active));
     const targetTable = tableField ? flat(rec[tableField]) : null;
 
@@ -1551,8 +1606,8 @@
           )}
 
           <div className="section">
-            <h3>Script</h3>
-            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text="No script body on this record." />}
+            <h3>{scriptLabel || 'Script'}</h3>
+            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text={`No ${(scriptLabel || 'script').toLowerCase()} on this record.`} />}
           </div>
 
           <IncludeRefsSection includes={includes} />

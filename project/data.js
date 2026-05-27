@@ -235,6 +235,9 @@ window.HistoricalWowData = (function () {
     const res = await apiGet(`/api/journal/${sys_id}`);
     return (res.rows || []).map(flatten);
   };
+  data.fetchSlaStats = async function (kind, sys_id) {
+    return apiGet(`/api/sla-stats/${kind}/${sys_id}`);
+  };
   data.fetchAuditFor = async function (sys_id) {
     const res = await apiGet(`/api/audit/${sys_id}`);
     return (res.rows || []).map(flatten);

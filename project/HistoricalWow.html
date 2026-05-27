@@ -4581,6 +4581,11 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
   const [delegations, setDelegations] = React.useState(null);
   // roles: null while loading; otherwise this user's sys_user_has_role rows
   const [roles, setRoles] = React.useState(null);
+  // Full envelope record. findUser() returns the compact lookup map, which
+  // only carries name/user_name/title/department/location — so email,
+  // company, cost_center, active and sys_updated_on have to come from the
+  // full record fetch (same pattern as CIRefPage), or they render blank/false.
+  const [full, setFull] = React.useState(null);
 
   React.useEffect(() => {
     if (u) window.AuditLog.push('view', `sys_user/${u.user_name}`, u.name);
@@ -4589,6 +4594,8 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
     setHwAssigned(null); setHwOwned(null);
     setDelegations(null);
     setRoles(null);
+    setFull(null);
+    data.fetchRecord('sys_user', sys_id).then(rec => { if (!cancel) setFull(rec); }).catch(() => {});
     // Fan out across (relation × table) in parallel. Each promise resolves to
     // [field, buckets[]]; collect into a {field: buckets[]} map.
     Promise.all(USER_RELATIONS.map(({ field, tables }) =>
@@ -4620,6 +4627,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
 
   if (!u) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>User not in snapshot.</div>;
 
+  const r = full || u;  // prefer the full envelope once it loads; u gives instant header fields
   const groupMembership = data.sys_user_group.filter(g => (g.member_sys_ids || []).includes(sys_id));
 
   return (
@@ -4638,18 +4646,18 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
             <span style={{ color: 'var(--fg-4)' }}>·</span>
             <span className="mono">{u.user_name}</span>
             <span style={{ color: 'var(--fg-4)' }}>·</span>
-            <span>{u.email}</span>
+            <span>{r.email}</span>
           </div>
         </div>
       </div>
 
       <div className="ref-grid">
-        <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(u.department)?.name || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(u.location)?.name || '—'}</div></div>
-        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(u.company)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(r.department)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(r.location)?.name || '—'}</div></div>
+        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(r.company)?.name || '—'}</div></div>
         {(() => {
-          const cc = window.findCostCenter(u.cost_center) ||
-                     window.findCostCenter(window.findDepartment(u.department)?.cost_center);
+          const cc = window.findCostCenter(r.cost_center) ||
+                     window.findCostCenter(window.findDepartment(r.department)?.cost_center);
           return (
             <div className="cell">
               <div className="label">Cost center</div>
@@ -4657,9 +4665,9 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
             </div>
           );
         })()}
-        <div className="cell"><div className="label">Active</div><div className="val">{u.active ? 'true' : 'false'}</div></div>
+        <div className="cell"><div className="label">Active</div><div className="val">{full ? (full.active ? 'true' : 'false') : '…'}</div></div>
         <div className="cell"><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{u.sys_id}</div></div>
-        <div className="cell"><div className="label">Last updated</div><div className="val">{u.sys_updated_on}</div></div>
+        <div className="cell"><div className="label">Last updated</div><div className="val">{r.sys_updated_on || '—'}</div></div>
       </div>
 
       <div className="ref-section">

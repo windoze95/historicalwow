@@ -23,6 +23,10 @@ def build_report(meta, results):
         for phase in ('offline', 'live'):
             if phase in phases:
                 checks.update(phases[phase])
+        if 'error' in phases:
+            # a runner exception means the table was NOT reconciled — it must
+            # participate in the verdict, not be silently dropped to PASS.
+            checks['runner_error'] = phases['error']
         verdict = compare.rollup_table(checks)          # INFO collapses to PASS
         table_verdicts[table] = verdict
         counts[verdict] = counts.get(verdict, 0) + 1
@@ -30,6 +34,8 @@ def build_report(meta, results):
         for phase in ('offline', 'live'):
             if phase in phases:
                 entry[phase] = phases[phase]
+        if 'error' in phases:
+            entry['error'] = phases['error']
         out_tables[table] = entry
 
     report = dict(meta)
@@ -46,6 +52,9 @@ def _table_signals(entry):
     bits = []
     off = entry.get('offline', {})
     live = entry.get('live', {})
+
+    if entry.get('error'):
+        bits.append('RUNNER_ERROR:' + str(entry['error'].get('message', ''))[:60])
 
     ca = off.get('count_agreement')
     if ca and ca.get('note'):
@@ -131,6 +140,9 @@ def _detail_lines(entry):
     """Human bullets explaining why a table is WARN/FAIL."""
     out = []
     off, live = entry.get('offline', {}), entry.get('live', {})
+    if entry.get('error'):
+        out.append('runner error (table not reconciled): %s'
+                   % entry['error'].get('message'))
     ef = off.get('extractor_fidelity', {})
     for col in ef.get('degenerate_columns', []):
         out.append('extractor degenerate: column "%s" empty though source populated' % col)

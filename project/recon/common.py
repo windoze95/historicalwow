@@ -113,22 +113,25 @@ def manifest_by_table(manifest):
 
 
 def snapshot_cutoff(table, manifest, state):
-    """Resolve the as-of cutoff timestamp for a table and where it came from.
+    """Resolve the creation cutoff for the as-of live count.
 
-    Existence is keyed on creation, so the live count is constrained with
-    ``sys_created_on<=<cutoff>`` regardless of a table's delta field. Prefer the
-    per-table watermark (authoritative high-water mark in _state.json), then the
-    manifest table entry's watermark, then the global manifest captured_at.
+    A live row existed in the snapshot iff it was created on or before the
+    export captured the data, so the count is constrained with
+    ``sys_created_on<=<cutoff>``. Use the manifest capture time (export
+    completion) — NOT the per-table delta watermark. The watermark is
+    ``max(sys_updated_on)`` and can predate completion, so a row created between
+    the last update and capture would be wrongly excluded from live_asof, and a
+    DB missing those rows could still pass the gate. Fall back to the per-table
+    watermark only when captured_at is absent (flagged approximate).
     Returns (cutoff_string_or_None, source_label).
     """
-    wm = (state.get('watermarks') or {}).get(table)
-    if not wm:
-        wm = manifest_by_table(manifest).get(table, {}).get('watermark')
-    if wm:
-        return wm, 'watermark'
     cap = manifest.get('captured_at')           # e.g. 2026-05-01T15:09:00Z
     if cap:
         return cap.replace('T', ' ').replace('Z', '').strip()[:19], 'captured_at'
+    wm = ((state.get('watermarks') or {}).get(table)
+          or manifest_by_table(manifest).get(table, {}).get('watermark'))
+    if wm:
+        return wm, 'watermark_approx'
     return None, 'none'
 
 

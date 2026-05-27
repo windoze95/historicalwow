@@ -84,8 +84,15 @@ def main(argv=None):
     run_offline = args.phase in ('offline', 'all')
     run_live = args.phase in ('live', 'all')
     if run_live and not live.env_ready():
-        print('SN_* env not set — skipping live phase (source the exporter .env '
-              'to enable). Running offline only.', file=sys.stderr)
+        if args.phase == 'live':
+            # A live-only run with no creds would otherwise emit an all-PASS
+            # report having reconciled nothing — fail loudly instead.
+            print('SN_* env not set — cannot run a live-only reconciliation. '
+                  'Source the exporter .env first (set -a; . ./.env; set +a).',
+                  file=sys.stderr)
+            return 2
+        print('SN_* env not set — skipping live phase; running offline only.',
+              file=sys.stderr)
         run_live = False
 
     phases_run = []

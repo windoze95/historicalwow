@@ -307,6 +307,27 @@ def test_info_does_not_escalate():
     assert rep['overall_verdict'] == PASS, rep['overall_verdict']
 
 
+def test_report_includes_runner_error():
+    # a table whose runner threw must roll up to its error verdict, not PASS
+    results = {'t': {'error': {'verdict': WARN, 'message': 'boom'}}}
+    rep = report.build_report({'phases_run': ['offline'], 'params': {}}, results)
+    assert rep['tables']['t']['verdict'] == WARN, rep['tables']['t']
+    assert rep['overall_verdict'] == WARN
+    assert 'boom' in report.render_text(rep)
+
+
+def test_snapshot_cutoff_prefers_captured_at():
+    manifest = {'captured_at': '2026-05-01T15:09:00Z',
+                'tables': [{'table': 't', 'watermark': '2026-04-01 00:00:00'}]}
+    state = {'watermarks': {'t': '2026-04-01 00:00:00'}}
+    cut, src = common.snapshot_cutoff('t', manifest, state)
+    assert (cut, src) == ('2026-05-01 15:09:00', 'captured_at'), (cut, src)
+    # fall back to the watermark (flagged approximate) only without captured_at
+    cut2, src2 = common.snapshot_cutoff(
+        't', {'tables': [{'table': 't', 'watermark': '2026-04-01 00:00:00'}]}, state)
+    assert src2 == 'watermark_approx', src2
+
+
 # ---- runner ----------------------------------------------------------------
 def _run():
     tests = sorted((n, f) for n, f in globals().items()

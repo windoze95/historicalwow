@@ -52,6 +52,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'kb_knowledge')    return <KBListPage />;
   if (table === 'sysevent_in_email_action') return <EmailActionList table="sysevent_in_email_action" targetField="table" title="Inbound email actions" />;
   if (table === 'sysevent_email_action')    return <EmailActionList table="sysevent_email_action" targetField="collection" title="Notifications" />;
+  if (table === 'contract_sla')    return <SLADefinitionList />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -728,6 +729,68 @@ function EmailActionList({ table, targetField, title }) {
               <td className="mono" style={{ fontSize: 12 }}>{a[targetField] || '—'}</td>
               <td className="muted mono" style={{ fontSize: 11.5 }}>{a.event_name || '—'}</td>
               <td>{isOn(a.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// SLA definitions (contract_sla). Global cross-table list — the per-table
+// view lives in the logic inspector's SLAs tab; this exists so SLAs that
+// target tables other than incident are discoverable in one place. slim —
+// only indexed columns; condition scripts stay in raw and aren't shown.
+// `collection` (the target table) links to that table's logic inspector.
+function SLADefinitionList() {
+  const data = window.HistoricalWowData;
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList('contract_sla', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'name', dir: 'asc', slim: 1 })
+      .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === 'contract_sla')?.source_rows;
+  const isOn = v => v === true || v === 'true' || v === 1 || v === '1';
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>SLA definitions <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>contract_sla</span> · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar"><div className="spacer" /><Pager page={page} setPage={setPage} lastPage={lastPage} /></div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          <th>Name</th><th style={{ width: 180 }}>Applies to</th><th style={{ width: 90 }}>Type</th><th style={{ width: 120 }}>Measures</th><th style={{ width: 90 }}>Active</th>
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={5} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>None in this snapshot.</td></tr>
+          )}
+          {(resp.rows || []).map(s => (
+            <tr key={s.sys_id}>
+              <td><strong style={{ fontWeight: 500 }}>{s.name || '—'}</strong></td>
+              <td>{s.collection
+                ? <a className="mono" style={{ fontSize: 12 }} onClick={() => window.navigate(`/sn-table/${s.collection}`)}>{s.collection}</a>
+                : <span className="muted">—</span>}</td>
+              <td className="muted">{s.type || '—'}</td>
+              <td className="muted">{s.target || '—'}</td>
+              <td>{isOn(s.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
             </tr>
           ))}
         </tbody>

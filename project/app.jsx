@@ -328,6 +328,7 @@ function Sidebar({ route }) {
     navItem('/script-includes', 'book',     'Script includes',  'sys_script_include'),
     navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
     navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
+    navItem('/sla-definitions', 'history',  'SLA definitions',  'contract_sla'),
     navItem('/inbound-email-actions', 'arrow_right', 'Inbound email actions', 'sysevent_in_email_action'),
     navItem('/notifications',   'change',   'Notifications',    'sysevent_email_action'),
   ].filter(it => it !== null);
@@ -353,6 +354,7 @@ function Sidebar({ route }) {
       '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
       '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
+      '/sla-definitions': 'contract_sla',
       '/inbound-email-actions': 'sysevent_in_email_action', '/notifications': 'sysevent_email_action',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||

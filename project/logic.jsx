@@ -2482,7 +2482,7 @@ flagging the omission.
     // props/flows are derived after BR/CS/UIP settle, so they finish last —
     // including them in the readiness gate keeps the user from copying a
     // partial prompt that's missing the references-by-scan sections.
-    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr', 'acls', 'uiact', 'dict', 'choices', 'props', 'flows'].map(k => {
+    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr', 'sla', 'acls', 'uiact', 'dict', 'choices', 'props', 'flows'].map(k => {
       const e = d[k];
       return !!(e && Array.isArray(e.rows));
     });

@@ -278,32 +278,42 @@ def test_live_deep_check_categories():
     assert len(live_map) == 3
 
 
-def test_field_set_uses_full_inventory_not_sample():
-    # a live field present in the full archive inventory must NOT be flagged
-    # missing just because a small deep sample happened to omit it
-    live.ex = FakeEx([row('a', subclass_field=env('x'))])
+def test_field_set_missing_vs_present():
+    live.ex = FakeEx([])
     try:
-        full_keys = set(row('a', subclass_field=env('x')).keys())
-        ok = live.field_set('cmdb_ci', full_keys)
-    finally:
-        live.ex = None
-    assert ok['verdict'] == PASS, ok
-    # but a populated live field genuinely absent from the inventory still fails
-    live.ex = FakeEx([row('a', subclass_field=env('x'))])
-    try:
-        bad = live.field_set('cmdb_ci', set(row('a').keys()))   # no subclass_field
+        # a live field absent from the archive inventory -> FAIL
+        bad = live.field_set('cmdb_ci', {'sys_id', 'name'},
+                             {'sys_id', 'name', 'subclass_field'})
+        # live fields all covered by the inventory -> PASS (extra archive fields ok)
+        ok = live.field_set('cmdb_ci', {'sys_id', 'name', 'subclass_field'},
+                            {'sys_id', 'name'})
+        # no live rows sampled -> WARN, not a false PASS
+        warn = live.field_set('cmdb_ci', {'sys_id'}, set())
     finally:
         live.ex = None
     assert bad['verdict'] == FAIL and 'subclass_field' in bad['missing_from_archive'], bad
+    assert ok['verdict'] == PASS, ok
+    assert warn['verdict'] == WARN, warn
 
 
 def test_live_population_parity_gap():
-    # a field populated in every live row but empty in the archive profile = gap
-    live_rows = [row(str(i), wanted=env('v%d' % i)) for i in range(4)]
-    arch_rows = [(str(i), row(str(i), wanted=env(''))) for i in range(4)]
-    archive_profile = {'fields': {'wanted': {'coverage': 0.0}}}
-    res = live.population_parity(arch_rows, live_rows, archive_profile)
+    # a field populated in the live copy but empty in the archived copy of the
+    # SAME records = real gap
+    ids = [str(i) for i in range(4)]
+    arch_rows = [(i, row(i, wanted=env(''))) for i in ids]
+    live_map = {i: row(i, wanted=env('v' + i)) for i in ids}
+    res = live.population_parity(arch_rows, live_map)
     assert res['verdict'] == FAIL and 'wanted' in res['gap_fields'], res
+
+
+def test_population_parity_no_false_gap_on_sampled_subtype_field():
+    # a subtype field populated in the sampled records on BOTH sides must not be
+    # a gap, even though it would be sparse table-wide
+    ids = [str(i) for i in range(3)]
+    arch_rows = [(i, row(i, subtype=env('x'))) for i in ids]
+    live_map = {i: row(i, subtype=env('x')) for i in ids}
+    res = live.population_parity(arch_rows, live_map)
+    assert res['verdict'] == PASS and not res['gap_fields'], res
 
 
 def test_live_env_guard():

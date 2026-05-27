@@ -108,31 +108,17 @@ def count_parity(table, manifest, state, db_count):
     return res
 
 
-def field_set(table, archive_keys):
-    """Compare the live field set to the archive's. Any live field absent from
-    the archive (minus intentional omissions) is a capture gap."""
+def field_set(table, archive_keys, live_keys):
+    """Compare the live field inventory to the archive's. live_keys is the union
+    of field names over the sampled live rows (the deep-check's ~--sample random
+    rows, far more than a handful, so heterogeneous-table fields are covered);
+    archive_keys is the archive's full/large-sample inventory. Any field present
+    live but absent from the archive (minus intentional omissions) is a gap;
+    fields only in the archive are reported as extra, not a failure."""
     e = get_ex()
-    flds = e.fields_for(table)
-    params = {'sysparm_display_value': 'all', 'sysparm_exclude_reference_link': 'true',
-              'sysparm_limit': 5}
-    base = _base_filter(table)
-    if base:
-        params['sysparm_query'] = '^'.join(base)
-    if flds:
-        params['sysparm_fields'] = flds
-    try:
-        resp = e.api_get_json('/api/now/table/%s' % table, params)
-    except Exception as err:                                    # noqa: BLE001
-        return {'verdict': WARN, 'error': str(err)[:140]}
-    result = resp.get('result') if isinstance(resp, dict) else None
-    if not isinstance(result, list) or not result:
-        return {'verdict': WARN, 'note': 'no live sample rows', 'live_fields': 0}
-
-    live_keys = set()
-    for r in result:
-        if isinstance(r, dict):
-            live_keys |= set(r.keys())
-    intentional = _intentional_omissions(table, flds)
+    intentional = _intentional_omissions(table, e.fields_for(table))
+    if not live_keys:
+        return {'verdict': WARN, 'note': 'no live rows sampled', 'live_fields': 0}
     missing = sorted(k for k in live_keys
                      if k not in archive_keys and k not in intentional)
     extra = sorted(k for k in archive_keys if k not in live_keys)
@@ -213,43 +199,37 @@ def deep_check(table, arch_rows, chunk, cutoff=None):
     return summary, live_map
 
 
-def population_parity(arch_rows, live_rows, archive_profile):
-    """Per-field non-empty rate, live vs archive, over the sampled records. A
-    field populated live but ~never in the archive is a real export gap."""
-    live_rows = list(live_rows)
-    nlive = len(live_rows)
-    if nlive == 0:
-        return {'verdict': PASS, 'note': 'no live rows fetched', 'gap_fields': []}
+def population_parity(arch_rows, live_map):
+    """Per-field non-empty rate, live vs archive, over the SAME sampled records
+    (those present on both sides). Compared like-for-like rather than against
+    whole-table coverage — a subtype field that's sparse table-wide but
+    populated in these sampled rows must not look like a gap. A field populated
+    live but empty in the archived copy of the same records is a real export gap.
+    """
+    arch_by_id = {sid: raw for sid, raw in arch_rows if raw is not None}
+    pairs = [(arch_by_id[sid], lrow) for sid, lrow in live_map.items()
+             if sid in arch_by_id]
+    n = len(pairs)
+    if n == 0:
+        return {'verdict': PASS, 'note': 'no comparable rows', 'gap_fields': []}
 
-    live_ne = {}
-    for r in live_rows:
-        for k, v in r.items():
+    arch_ne, live_ne = {}, {}
+    for arch, lrow in pairs:
+        for k, v in arch.items():
+            if not common.is_empty(common.uv(v)):
+                arch_ne[k] = arch_ne.get(k, 0) + 1
+        for k, v in lrow.items():
             if not common.is_empty(common.uv(v)):
                 live_ne[k] = live_ne.get(k, 0) + 1
 
-    arch_cov = {}
-    if archive_profile and archive_profile.get('fields'):
-        for k, info in archive_profile['fields'].items():
-            arch_cov[k] = info.get('coverage', 0.0)
-    else:
-        narch = sum(1 for _, raw in arch_rows if raw is not None) or 1
-        counts = {}
-        for _, raw in arch_rows:
-            if raw is None:
-                continue
-            for k, v in raw.items():
-                if not common.is_empty(common.uv(v)):
-                    counts[k] = counts.get(k, 0) + 1
-        arch_cov = {k: c / narch for k, c in counts.items()}
-
     fields, gaps = {}, []
-    for k, ne in sorted(live_ne.items()):
-        lc, ac = ne / nlive, arch_cov.get(k, 0.0)
+    for k in sorted(set(live_ne) | set(arch_ne)):
+        lc, ac = live_ne.get(k, 0) / n, arch_ne.get(k, 0) / n
         fields[k] = {'live_rate': round(lc, 4), 'archive_rate': round(ac, 4)}
         if lc >= 0.5 and ac <= 0.001:
             fields[k]['gap'] = True
             gaps.append(k)
-    return {'verdict': FAIL if gaps else PASS, 'live_rows': nlive,
+    return {'verdict': FAIL if gaps else PASS, 'compared_rows': n,
             'gap_fields': gaps, 'fields': fields}
 
 
@@ -266,18 +246,24 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     sample = common.sample_rows(conn, table, sample_n) if sample_n else []
     arch_rows = [(sid, raw) for sid, raw in sample if raw is not None]
 
-    # Field-set inventory: prefer the offline profile (a full/large-sample scan)
-    # so subclass-specific fields on heterogeneous tables (cmdb_ci, task) aren't
-    # falsely flagged missing from the small random deep-check sample. Without a
-    # profile (live-only run), scan a dedicated, larger sample.
+    # Deep-fetch the sampled records first; its live rows (≈--sample random rows)
+    # serve as the live field inventory for the checks below — far more coverage
+    # than a handful of rows, and no extra API calls.
+    deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff)
+    checks['deep_check'] = deep
+
+    # Archive field inventory: prefer the offline profile (a full/large-sample
+    # scan) so subclass-specific fields on heterogeneous tables (cmdb_ci, task)
+    # aren't falsely flagged missing. Without a profile (live-only run), scan a
+    # dedicated, larger sample.
     if archive_profile and archive_profile.get('fields'):
         archive_keys = set(archive_profile['fields'].keys())
     else:
         archive_keys = _archive_field_keys(conn, table, db_count)
-    checks['field_set'] = field_set(table, archive_keys)
+    live_keys = set()
+    for lrow in live_map.values():
+        live_keys |= set(lrow.keys())
+    checks['field_set'] = field_set(table, archive_keys, live_keys)
 
-    deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff)
-    checks['deep_check'] = deep
-    checks['population_parity'] = population_parity(
-        arch_rows, live_map.values(), archive_profile)
+    checks['population_parity'] = population_parity(arch_rows, live_map)
     return checks

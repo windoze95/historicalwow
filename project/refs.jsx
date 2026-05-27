@@ -493,7 +493,11 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
 
   if (!u) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>User not in snapshot.</div>;
 
-  const r = full || u;  // prefer the full envelope once it loads; u gives instant header fields
+  // Only trust `full` when it's this user's record: navigating A→B reuses the
+  // component, so `full` still holds A until the [sys_id] effect re-runs after
+  // paint — guarding on its own sys_id stops B's page flashing A's details.
+  const fullReady = full && full.sys_id === sys_id;
+  const r = fullReady ? full : u;
   const groupMembership = data.sys_user_group.filter(g => (g.member_sys_ids || []).includes(sys_id));
 
   return (
@@ -531,7 +535,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
             </div>
           );
         })()}
-        <div className="cell"><div className="label">Active</div><div className="val">{full ? (full.active ? 'true' : 'false') : '…'}</div></div>
+        <div className="cell"><div className="label">Active</div><div className="val">{fullReady ? (r.active ? 'true' : 'false') : '…'}</div></div>
         <div className="cell"><div className="label">sys_id</div><div className="val mono" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{u.sys_id}</div></div>
         <div className="cell"><div className="label">Last updated</div><div className="val">{r.sys_updated_on || '—'}</div></div>
       </div>
@@ -864,7 +868,9 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
     return () => { cancel = true; };
   }, [sys_id]);
 
-  const c = full || slim;
+  // Same cross-record guard as UserRefPage: ignore a prior CI's full record
+  // while navigating between CIs until the [sys_id] effect re-runs.
+  const c = (full && full.sys_id === sys_id) ? full : slim;
   if (!c) return <div className="empty">CI not in snapshot.</div>;
   const upstream   = relations.upstream   || [];
   const downstream = relations.downstream || [];

@@ -1983,6 +1983,45 @@ flagging the omission.
       if (s.cancel_condition) push(`Cancel: \`${s.cancel_condition}\``);
     }
 
+    // Inbound email actions — scripts that create/update records on this
+    // table from incoming email. Active only; include the processing script.
+    const iea = activeRows(d.iea).slice().sort(byOrder);
+    push('');
+    push(`## Inbound email actions — ${iea.length} active`);
+    for (const r of iea) {
+      push('');
+      const meta = [
+        r.type ? `type=${r.type}` : null,
+        r.action ? `action=${r.action}` : null,
+        r.order != null ? `order=${r.order}` : null,
+        isTrue(r.stop_processing) ? 'stop_processing=true' : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${r.name || '(unnamed)'}" — ${meta}`);
+      if (r.filter_condition) push(`Condition (encoded query): \`${r.filter_condition}\``);
+      push(code(r.script || ''));
+    }
+
+    // Notifications — outbound email triggered by this table's events. Active
+    // only. The HTML message body is omitted on purpose (it's content, not
+    // logic, and large); the trigger, condition, and subject are what matter.
+    const notif = activeRows(d.notif).slice().sort(byOrder);
+    push('');
+    push(`## Notifications — ${notif.length} active`);
+    for (const n of notif) {
+      push('');
+      const meta = [
+        n.type ? `type=${n.type}` : null,
+        isTrue(n.action_insert) ? 'on_insert' : null,
+        isTrue(n.action_update) ? 'on_update' : null,
+        n.event_name ? `event=${n.event_name}` : null,
+        n.order != null ? `order=${n.order}` : null,
+      ].filter(Boolean).join(', ');
+      push(`### "${n.name || '(unnamed)'}" — ${meta}`);
+      if (n.subject)            push(`Subject: ${n.subject}`);
+      if (n.condition)          push(`Condition: \`${n.condition}\``);
+      if (n.advanced_condition) push(`Advanced condition: \`${n.advanced_condition}\``);
+    }
+
     // ACLs — name covers <table>, <table>.<field>, <table>.<action>. Sort
     // by name so the dotted hierarchy reads top-down (incident, then
     // incident.assigned_to, then incident.action_x).
@@ -2170,6 +2209,8 @@ flagging the omission.
       { id: 'dp',      label: 'Data policies',         table: 'sys_data_policy2',        filters: { model_table: name }, columns: 'dp' },
       { id: 'dpr',     label: 'Data policy rules',     table: 'sys_data_policy_rule',    filters: { table: name },      columns: 'dpr' },
       { id: 'sla',     label: 'SLAs',                  table: 'contract_sla',            filters: { collection: name }, columns: 'sla' },
+      { id: 'iea',     label: 'Inbound email',         table: 'sysevent_in_email_action', filters: { table: name },     columns: 'iea' },
+      { id: 'notif',   label: 'Notifications',         table: 'sysevent_email_action',   filters: { collection: name }, columns: 'notif' },
       { id: 'acls',    label: 'ACLs',                  table: 'sys_security_acl',                                       columns: 'acls', special: 'acls' },
       { id: 'uiact',   label: 'UI Actions',            table: 'sys_ui_action',           filters: { table: name },      columns: 'uiact' },
       { id: 'dict',    label: 'Dictionary',            table: 'sys_dictionary',                                         columns: 'dict',  special: 'dict' },
@@ -2255,20 +2296,24 @@ flagging the omission.
       const uipReady   = !!(d.uip   && Array.isArray(d.uip.rows));
       const aclsReady  = !!(d.acls  && Array.isArray(d.acls.rows));
       const uiactReady = !!(d.uiact && Array.isArray(d.uiact.rows));
-      if (!brReady || !csReady || !uipReady || !aclsReady || !uiactReady) return;
+      const ieaReady   = !!(d.iea   && Array.isArray(d.iea.rows));
+      const notifReady = !!(d.notif && Array.isArray(d.notif.rows));
+      if (!brReady || !csReady || !uipReady || !aclsReady || !uiactReady || !ieaReady || !notifReady) return;
       let cancel = false;
       const setProps = (v) => { if (!cancel) setD(prev => ({ ...prev, props: v })); };
       const setFlows = (v) => { if (!cancel) setD(prev => ({ ...prev, flows: v })); };
-      // Collect every script body in scope on this table. ACL + UI-action
-      // scripts are now in the prompt too, so a property or flow referenced
-      // only from one of those would otherwise be missing from the
-      // resolved sections — include them in the scan inputs.
+      // Collect every script body in scope on this table. ACL, UI-action,
+      // and email-action scripts are in the prompt too, so a property or
+      // flow referenced only from one of those would otherwise be missing
+      // from the resolved sections — include them all in the scan inputs.
       const bodies = [];
       for (const r of (d.br?.rows    || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); if (r.filter_condition) bodies.push(String(r.filter_condition)); }
       for (const r of (d.cs?.rows    || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); }
       for (const p of (d.uip?.rows   || [])) { if (p.script_true) bodies.push(String(p.script_true)); if (p.script_false) bodies.push(String(p.script_false)); }
       for (const r of (d.acls?.rows  || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); }
       for (const r of (d.uiact?.rows || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); if (r.onclick) bodies.push(String(r.onclick)); }
+      for (const r of (d.iea?.rows   || [])) { if (r.script) bodies.push(String(r.script)); if (r.filter_condition) bodies.push(String(r.filter_condition)); }
+      for (const r of (d.notif?.rows || [])) { if (r.advanced_condition) bodies.push(String(r.advanced_condition)); if (r.condition) bodies.push(String(r.condition)); }
 
       const propNames = new Set();
       const flowNames = new Set();
@@ -2327,7 +2372,7 @@ flagging the omission.
       })();
 
       return () => { cancel = true; };
-    }, [d.br, d.cs, d.uip, d.acls, d.uiact]);
+    }, [d.br, d.cs, d.uip, d.acls, d.uiact, d.iea, d.notif]);
 
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 
@@ -2367,6 +2412,8 @@ flagging the omission.
               {tab === 'dp'      && <InspectorRows r={r('dp')}      columns="dp"      table="sys_data_policy2" />}
               {tab === 'dpr'     && <InspectorRows r={r('dpr')}     columns="dpr"     table="sys_data_policy_rule" />}
               {tab === 'sla'     && <InspectorRows r={r('sla')}     columns="sla"     table="contract_sla" />}
+              {tab === 'iea'     && <InspectorRows r={r('iea')}     columns="iea"     table="sysevent_in_email_action" />}
+              {tab === 'notif'   && <InspectorRows r={r('notif')}   columns="notif"   table="sysevent_email_action" />}
               {tab === 'acls'    && <InspectorRows r={r('acls')}    columns="acls"    table="sys_security_acl" />}
               {tab === 'uiact'   && <InspectorRows r={r('uiact')}   columns="uiact"   table="sys_ui_action" />}
               {tab === 'dict'    && <InspectorRows r={r('dict')}    columns="dict"    table="sys_dictionary" />}
@@ -2573,6 +2620,15 @@ flagging the omission.
       push(`UIA/${r.name}/condition`, r.condition);
       push(`UIA/${r.name}/onclick`,   r.onclick);
     }
+    // Email-action scripts are shown in the prompt too — seed the cascade
+    // from them so the includes they call are resolved like any other.
+    for (const r of active(d.iea)) {
+      push(`IEA/${r.name}`,        r.script);
+      push(`IEA/${r.name}/filter`, r.filter_condition);
+    }
+    for (const r of active(d.notif)) {
+      push(`NOTIF/${r.name}/advanced`, r.advanced_condition);
+    }
     return out;
   }
 
@@ -2595,7 +2651,7 @@ flagging the omission.
     // props/flows are derived after BR/CS/UIP settle, so they finish last —
     // including them in the readiness gate keeps the user from copying a
     // partial prompt that's missing the references-by-scan sections.
-    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr', 'sla', 'acls', 'uiact', 'dict', 'choices', 'props', 'flows'].map(k => {
+    const readiness = ['br', 'cs', 'uip', 'uipa', 'dp', 'dpr', 'sla', 'iea', 'notif', 'acls', 'uiact', 'dict', 'choices', 'props', 'flows'].map(k => {
       const e = d[k];
       return !!(e && Array.isArray(e.rows));
     });
@@ -3054,6 +3110,58 @@ flagging the omission.
         </table>
       );
     }
+    if (columns === 'iea') {
+      return (
+        <table className="dt">
+          <thead><tr>
+            <th>Name</th>
+            <th style={{ width: 90 }}>Type</th>
+            <th style={{ width: 110 }}>Action</th>
+            <th style={{ width: 70 }} className="num">Order</th>
+            <th style={{ width: 80 }}>Active</th>
+          </tr></thead>
+          <tbody>
+            {r.rows.map(row => (
+              <tr key={row.sys_id} onClick={() => window.navigate(`/inbound-email-actions/${row.sys_id}`)}>
+                <td><strong style={{ fontWeight: 500 }}>{flat(row.name) || '—'}</strong></td>
+                <td className="muted">{flat(row.type) || dv(row, 'type') || '—'}</td>
+                <td className="muted">{flat(row.action) || dv(row, 'action') || '—'}</td>
+                <td className="num mono">{flat(row.order) ?? '—'}</td>
+                <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    if (columns === 'notif') {
+      return (
+        <table className="dt">
+          <thead><tr>
+            <th>Name</th>
+            <th style={{ width: 90 }}>Type</th>
+            <th style={{ width: 150 }}>When</th>
+            <th style={{ width: 80 }}>Active</th>
+          </tr></thead>
+          <tbody>
+            {r.rows.map(row => {
+              const ins = isTrue(flat(row.action_insert));
+              const upd = isTrue(flat(row.action_update));
+              const ev  = flat(row.event_name);
+              const when = [ins ? 'insert' : null, upd ? 'update' : null].filter(Boolean).join(' / ') || (ev ? `event: ${ev}` : '—');
+              return (
+                <tr key={row.sys_id} onClick={() => window.navigate(`/notifications/${row.sys_id}`)}>
+                  <td><strong style={{ fontWeight: 500 }}>{flat(row.name) || '—'}</strong></td>
+                  <td className="muted">{flat(row.type) || dv(row, 'type') || '—'}</td>
+                  <td className="muted" style={{ fontSize: 11.5 }}>{when}</td>
+                  <td>{isTrue(flat(row.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      );
+    }
     if (columns === 'acls') {
       // ACLs: name carries the dotted hierarchy (table, table.field, table.action).
       // Highlight operation + a "scripted?" chip; truncate long conditions.
@@ -3333,6 +3441,9 @@ flagging the omission.
       sys_ui_policy_action: 'UI policy actions',
       sys_data_policy2: 'data policies',
       sys_data_policy_rule: 'data policy rules',
+      contract_sla: 'SLA definitions',
+      sysevent_in_email_action: 'inbound email actions',
+      sysevent_email_action: 'notifications',
       sys_security_acl: 'ACLs',
       sys_ui_action: 'UI actions',
       sys_dictionary: 'dictionary entries',

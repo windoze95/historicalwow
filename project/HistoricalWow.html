@@ -9097,17 +9097,42 @@ flagging the omission.${excludedNote}
       }
     }
 
+    // Properties/flows are scanned from rule bodies. Re-scan here over only
+    // the INCLUDED script-bearing sections, so excluding a section (e.g.
+    // business rules) doesn't leak its referenced properties/flows into a
+    // filtered prompt. With nothing excluded this reproduces the inspector's
+    // full scan — same body set as the derived-scan effect — so these
+    // sections are byte-identical to before.
+    const refBodies = [];
+    const addRefBodies = (id, rows, fields) => {
+      if (exclude[id]) return;
+      for (const row of (rows || [])) for (const f of fields) if (row[f]) refBodies.push(String(row[f]));
+    };
+    addRefBodies('br',    d.br?.rows,    ['script', 'condition', 'filter_condition']);
+    addRefBodies('cs',    d.cs?.rows,    ['script', 'condition']);
+    addRefBodies('uip',   d.uip?.rows,   ['script_true', 'script_false']);
+    addRefBodies('acls',  d.acls?.rows,  ['script', 'condition']);
+    addRefBodies('uiact', d.uiact?.rows, ['script', 'condition', 'onclick']);
+    addRefBodies('iea',   d.iea?.rows,   ['script', 'filter_condition']);
+    addRefBodies('notif', d.notif?.rows, ['advanced_condition', 'condition']);
+    const refPropNames = new Set();
+    const refFlowNames = new Set();
+    for (const body of refBodies) {
+      for (const n of L.scanForProperties(body)) refPropNames.add(n);
+      for (const n of L.scanForFlows(body))      refFlowNames.add(n);
+    }
+
     // System properties referenced by scan. The inspector resolved each
     // scanned name against /api/sys_properties and dropped misses (likely
     // OOTB platform properties not in the snapshot). Header notes the gap
     // so the model knows the section is intentionally non-exhaustive.
-    const propRows = (d.props?.rows || []).slice()
+    const propRows = (d.props?.rows || []).filter(p => refPropNames.has(p.name)).slice()
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     mark('props');
     push('');
     push(`## System properties referenced — ${propRows.length}`);
-    if (d.props?.scanned != null && d.props.scanned > propRows.length) {
-      push(`_(${d.props.scanned} property name(s) found in rule bodies; ${d.props.scanned - propRows.length} not present in this snapshot — assume OOTB defaults.)_`);
+    if (refPropNames.size > propRows.length) {
+      push(`_(${refPropNames.size} property name(s) found in rule bodies; ${refPropNames.size - propRows.length} not present in this snapshot — assume OOTB defaults.)_`);
     }
     for (const p of propRows) {
       push('');
@@ -9121,13 +9146,13 @@ flagging the omission.${excludedNote}
     // Flows referenced by scan. One line per flow — we deliberately don't
     // embed the flow JSON; it's huge and the model can reason from name +
     // description for almost every diagnostic question.
-    const flowRows = (d.flows?.rows || []).slice()
+    const flowRows = (d.flows?.rows || []).filter(f => refFlowNames.has(f.name) || refFlowNames.has(f.internal_name)).slice()
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     mark('flows');
     push('');
     push(`## Flows referenced — ${flowRows.length}`);
-    if (d.flows?.scanned != null && d.flows.scanned > flowRows.length) {
-      push(`_(${d.flows.scanned} flow name(s) found in rule bodies; ${d.flows.scanned - flowRows.length} not present in this snapshot — assume OOTB.)_`);
+    if (refFlowNames.size > flowRows.length) {
+      push(`_(${refFlowNames.size} flow name(s) found in rule bodies; ${refFlowNames.size - flowRows.length} not present in this snapshot — assume OOTB.)_`);
     }
     for (const f of flowRows) {
       push('');

@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import common, offline, live, report
-from .common import FAIL, WARN
+from .common import FAIL
 
 
 def parse_args(argv):
@@ -84,16 +84,15 @@ def main(argv=None):
     run_offline = args.phase in ('offline', 'all')
     run_live = args.phase in ('live', 'all')
     if run_live and not live.env_ready():
-        if args.phase == 'live':
-            # A live-only run with no creds would otherwise emit an all-PASS
-            # report having reconciled nothing — fail loudly instead.
-            print('SN_* env not set — cannot run a live-only reconciliation. '
-                  'Source the exporter .env first (set -a; . ./.env; set +a).',
-                  file=sys.stderr)
-            return 2
-        print('SN_* env not set — skipping live phase; running offline only.',
+        # Missing creds means the DB<->live checks cannot run. Any run that
+        # requested live (including the default --phase all gate) must fail
+        # loudly rather than emit a green report that proves nothing about the
+        # archive vs ServiceNow. Offline-only must be requested explicitly.
+        print('SN_* env not set — cannot run the live phase. Source the '
+              'exporter .env first (set -a; . ./.env; set +a), or pass '
+              '--phase offline for an explicit offline-only check.',
               file=sys.stderr)
-        run_live = False
+        return 2
 
     phases_run = []
     if run_offline:
@@ -125,7 +124,9 @@ def main(argv=None):
                 per['live'] = live.run_table(conn, t, manifest, state, args_to_opts(args),
                                              archive_profile=ap_profile)
         except Exception as err:                                 # noqa: BLE001
-            per['error'] = {'verdict': WARN, 'message': str(err)[:200]}
+            # An unreconciled table must FAIL the gate, not merely warn — we did
+            # not prove it matches source, so the default run must exit non-zero.
+            per['error'] = {'verdict': FAIL, 'message': str(err)[:200]}
         results[t] = per
         print('[%d/%d] %-32s %s' % (i, len(tables), t,
               _quick_verdict(per)), file=sys.stderr)

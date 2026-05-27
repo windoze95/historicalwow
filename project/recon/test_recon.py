@@ -308,12 +308,38 @@ def test_info_does_not_escalate():
 
 
 def test_report_includes_runner_error():
-    # a table whose runner threw must roll up to its error verdict, not PASS
-    results = {'t': {'error': {'verdict': WARN, 'message': 'boom'}}}
+    # a table whose runner threw must FAIL the gate, not roll up as PASS/WARN
+    results = {'t': {'error': {'verdict': FAIL, 'message': 'boom'}}}
     rep = report.build_report({'phases_run': ['offline'], 'params': {}}, results)
-    assert rep['tables']['t']['verdict'] == WARN, rep['tables']['t']
-    assert rep['overall_verdict'] == WARN
+    assert rep['tables']['t']['verdict'] == FAIL, rep['tables']['t']
+    assert rep['overall_verdict'] == FAIL
     assert 'boom' in report.render_text(rep)
+
+
+def test_main_live_without_creds_returns_nonzero():
+    # a live or all run with no SN_* must exit non-zero, never a green report
+    import os
+    import shutil
+    import sqlite3
+    import tempfile
+    from recon import reconcile
+    d = tempfile.mkdtemp()
+    dbp = os.path.join(d, 'historicalwow.db')
+    c = sqlite3.connect(dbp)
+    c.execute('CREATE TABLE t (sys_id TEXT PRIMARY KEY, raw TEXT)')
+    c.execute("INSERT INTO t VALUES ('a', '{}')")
+    c.commit()
+    c.close()
+    saved = {k: os.environ.pop(k, None) for k in live.REQUIRED_ENV}
+    live.ex = None
+    try:
+        assert reconcile.main(['--phase', 'live', '--db', dbp]) == 2
+        assert reconcile.main(['--phase', 'all', '--db', dbp]) == 2
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_snapshot_cutoff_prefers_captured_at():

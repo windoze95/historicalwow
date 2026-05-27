@@ -36,6 +36,7 @@ window.URL_TO_TABLE = {
   users:             'sys_user',
   groups:            'sys_user_group',
   delegations:       'sys_user_delegate',
+  knowledge:         'kb_knowledge',
   cis:               'cmdb_ci',
   audit:             'audit_log',
   'business-rules':  'sys_script',

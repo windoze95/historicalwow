@@ -579,6 +579,7 @@
         'sys_script', 'sys_script_client', 'sys_script_include',
         'sysauto_script', 'sys_ui_policy', 'sys_ui_policy_action',
         'sys_data_policy2', 'sys_data_policy_rule',
+        'sysevent_in_email_action', 'sysevent_email_action',
       ].map(t => L.fetchTotalCount(t).then(r => [t, r]))).then(pairs => {
         if (cancel) return;
         const m = {};
@@ -664,6 +665,8 @@
           {tile('Scheduled jobs',  'sysauto_script',      '/scheduled-jobs')}
           {tile('UI policies',     'sys_ui_policy',       '/ui-policies')}
           {tile('Data policies',   'sys_data_policy2',    '/data-policies')}
+          {tile('Inbound email actions', 'sysevent_in_email_action', '/inbound-email-actions')}
+          {tile('Notifications',   'sysevent_email_action', '/notifications')}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>

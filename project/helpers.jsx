@@ -45,6 +45,8 @@ window.URL_TO_TABLE = {
   'scheduled-jobs':  'sysauto_script',
   'ui-policies':     'sys_ui_policy',
   'data-policies':   'sys_data_policy2',
+  'inbound-email-actions': 'sysevent_in_email_action',
+  'notifications':   'sysevent_email_action',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])

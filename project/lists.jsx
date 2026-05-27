@@ -53,6 +53,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sysevent_in_email_action') return <EmailActionList table="sysevent_in_email_action" targetField="table" title="Inbound email actions" />;
   if (table === 'sysevent_email_action')    return <EmailActionList table="sysevent_email_action" targetField="collection" title="Notifications" />;
   if (table === 'contract_sla')    return <SLADefinitionList />;
+  if (table === 'sys_template')    return <TemplateList />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -791,6 +792,73 @@ function SLADefinitionList() {
               <td className="muted">{s.type || '—'}</td>
               <td className="muted">{s.target || '—'}</td>
               <td>{isOn(s.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Record templates (sys_template). Global cross-user list — a template is
+// otherwise only reachable from the owning user's record (its "Templates"
+// related list), so this surfaces every template, personal and global, in
+// one place with its owner and the table it applies to. slim — indexed
+// columns only; the encoded field-values payload stays in raw and is shown
+// on the record page. `table` links to that table's logic inspector.
+function TemplateList() {
+  const data = window.HistoricalWowData;
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList('sys_template', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'name', dir: 'asc', slim: 1 })
+      .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === 'sys_template')?.source_rows;
+  const isOn = v => v === true || v === 'true' || v === 1 || v === '1';
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Templates <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>sys_template</span> · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar"><div className="spacer" /><Pager page={page} setPage={setPage} lastPage={lastPage} /></div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          <th>Name</th><th style={{ width: 200 }}>Applies to</th><th style={{ width: 200 }}>Owner</th><th style={{ width: 100 }}>Scope</th><th style={{ width: 80 }}>Active</th>
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={5} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>None in this snapshot.</td></tr>
+          )}
+          {(resp.rows || []).map(t => (
+            <tr key={t.sys_id} onClick={() => window.navigate(window.recordUrl('sys_template', t.sys_id))}>
+              <td><strong style={{ fontWeight: 500 }}>{t.name || '—'}</strong></td>
+              <td>{t.table
+                ? <a className="mono" style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); window.navigate(`/sn-table/${t.table}`); }}>{t.table}</a>
+                : <span className="muted">—</span>}</td>
+              <td>{t.user
+                ? <window.UserCell sys_id={t.user} />
+                : <span className="muted">—</span>}</td>
+              <td>{isOn(t.global)
+                ? <span className="chip" style={{ fontSize: 10.5 }}>global</span>
+                : <span className="muted" style={{ fontSize: 11.5 }}>personal</span>}</td>
+              <td>{isOn(t.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
             </tr>
           ))}
         </tbody>

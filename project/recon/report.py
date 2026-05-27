@@ -80,6 +80,8 @@ def _table_signals(entry):
             bits.append('count_err')
         if 'missing_vs_asof' in cp:
             bits.append('MISSING_VS_SOURCE=%d' % cp['missing_vs_asof'])
+        if 'short_vs_asof' in cp:
+            bits.append('short=%d' % cp['short_vs_asof'])
         if cp.get('deletes_since'):
             bits.append('del_since=%d' % cp['deletes_since'])
         if cp.get('creates_since'):
@@ -160,6 +162,10 @@ def _detail_lines(entry):
     if 'missing_vs_asof' in cp:
         out.append('count: DB=%s but live had %s as-of snapshot (missing %s)'
                    % (cp.get('db'), cp.get('live_asof'), cp['missing_vs_asof']))
+    if 'short_vs_asof' in cp:
+        out.append('count: DB=%s vs live as-of %s — short %s (%s)'
+                   % (cp.get('db'), cp.get('live_asof'), cp['short_vs_asof'],
+                      cp.get('note', 'within tolerance')))
     if cp.get('error'):
         out.append('count parity error: %s' % cp['error'])
     fs = live.get('field_set', {})

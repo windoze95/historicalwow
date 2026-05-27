@@ -362,6 +362,17 @@ def test_report_rollup_overall_fail():
     assert 'OVERALL: FAIL' in text
 
 
+def test_report_renders_short_vs_asof():
+    # a within-tolerance count WARN must show its shortfall + reason in the text
+    results = {'t': {'live': {'count_parity': {
+        'verdict': WARN, 'db': 995, 'live_asof': 1000, 'short_vs_asof': 5,
+        'note': 'short 0.500% (<= 1% tol) — export-window churn'}}}}
+    rep = report.build_report({'phases_run': ['live'], 'params': {}}, results)
+    text = report.render_text(rep)
+    assert 'short=5' in text, text
+    assert 'export-window churn' in text, text
+
+
 def test_info_does_not_escalate():
     results = {'t': {'live': {'count_parity': {'verdict': INFO},
                               'deep_check': {'verdict': INFO}}}}

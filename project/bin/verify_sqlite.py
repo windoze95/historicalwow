@@ -56,13 +56,15 @@ def main():
 
     # --- 1. Discover tables in both worlds -------------------------------
 
-    db_tables = sorted([
+    # Exclude internal (_build_state) and sqlite_* tables. Filtered in Python:
+    # a SQL `NOT LIKE '_%'` matches *every* name (``_`` is a single-char LIKE
+    # wildcard), so the old query returned no tables and reported them all as
+    # "DB MISSING".
+    db_tables = sorted(
         r['name'] for r in conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name NOT LIKE '_%' "
-            "AND name NOT LIKE 'sqlite_%'"
-        )
-    ])
+            "SELECT name FROM sqlite_master WHERE type='table'")
+        if not r['name'].startswith('_') and not r['name'].startswith('sqlite_')
+    )
     ndjson_tables = sorted([p.stem for p in DATA.glob('*.ndjson')])
     all_tables = sorted(set(db_tables) | set(ndjson_tables))
 

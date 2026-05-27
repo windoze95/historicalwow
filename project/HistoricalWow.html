@@ -9205,20 +9205,24 @@ flagging the omission.
       const uipReady   = !!(d.uip   && Array.isArray(d.uip.rows));
       const aclsReady  = !!(d.acls  && Array.isArray(d.acls.rows));
       const uiactReady = !!(d.uiact && Array.isArray(d.uiact.rows));
-      if (!brReady || !csReady || !uipReady || !aclsReady || !uiactReady) return;
+      const ieaReady   = !!(d.iea   && Array.isArray(d.iea.rows));
+      const notifReady = !!(d.notif && Array.isArray(d.notif.rows));
+      if (!brReady || !csReady || !uipReady || !aclsReady || !uiactReady || !ieaReady || !notifReady) return;
       let cancel = false;
       const setProps = (v) => { if (!cancel) setD(prev => ({ ...prev, props: v })); };
       const setFlows = (v) => { if (!cancel) setD(prev => ({ ...prev, flows: v })); };
-      // Collect every script body in scope on this table. ACL + UI-action
-      // scripts are now in the prompt too, so a property or flow referenced
-      // only from one of those would otherwise be missing from the
-      // resolved sections — include them in the scan inputs.
+      // Collect every script body in scope on this table. ACL, UI-action,
+      // and email-action scripts are in the prompt too, so a property or
+      // flow referenced only from one of those would otherwise be missing
+      // from the resolved sections — include them all in the scan inputs.
       const bodies = [];
       for (const r of (d.br?.rows    || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); if (r.filter_condition) bodies.push(String(r.filter_condition)); }
       for (const r of (d.cs?.rows    || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); }
       for (const p of (d.uip?.rows   || [])) { if (p.script_true) bodies.push(String(p.script_true)); if (p.script_false) bodies.push(String(p.script_false)); }
       for (const r of (d.acls?.rows  || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); }
       for (const r of (d.uiact?.rows || [])) { if (r.script) bodies.push(String(r.script)); if (r.condition) bodies.push(String(r.condition)); if (r.onclick) bodies.push(String(r.onclick)); }
+      for (const r of (d.iea?.rows   || [])) { if (r.script) bodies.push(String(r.script)); if (r.filter_condition) bodies.push(String(r.filter_condition)); }
+      for (const r of (d.notif?.rows || [])) { if (r.advanced_condition) bodies.push(String(r.advanced_condition)); if (r.condition) bodies.push(String(r.condition)); }
 
       const propNames = new Set();
       const flowNames = new Set();
@@ -9277,7 +9281,7 @@ flagging the omission.
       })();
 
       return () => { cancel = true; };
-    }, [d.br, d.cs, d.uip, d.acls, d.uiact]);
+    }, [d.br, d.cs, d.uip, d.acls, d.uiact, d.iea, d.notif]);
 
     const r = (id) => d[id] || { rows: [], total: 0, loading: true };
 
@@ -9524,6 +9528,15 @@ flagging the omission.
       push(`UIA/${r.name}`,           r.script);
       push(`UIA/${r.name}/condition`, r.condition);
       push(`UIA/${r.name}/onclick`,   r.onclick);
+    }
+    // Email-action scripts are shown in the prompt too — seed the cascade
+    // from them so the includes they call are resolved like any other.
+    for (const r of active(d.iea)) {
+      push(`IEA/${r.name}`,        r.script);
+      push(`IEA/${r.name}/filter`, r.filter_condition);
+    }
+    for (const r of active(d.notif)) {
+      push(`NOTIF/${r.name}/advanced`, r.advanced_condition);
     }
     return out;
   }

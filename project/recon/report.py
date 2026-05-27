@@ -80,6 +80,8 @@ def _table_signals(entry):
             bits.append('count_err')
         if 'missing_vs_asof' in cp:
             bits.append('MISSING_VS_SOURCE=%d' % cp['missing_vs_asof'])
+        if 'short_vs_asof' in cp:
+            bits.append('short=%d' % cp['short_vs_asof'])
         if cp.get('deletes_since'):
             bits.append('del_since=%d' % cp['deletes_since'])
         if cp.get('creates_since'):
@@ -107,10 +109,15 @@ def render_text(report):
     p = report.get('params', {})
     lines.append('phases %s | sample %s | chunk %s'
                  % (','.join(report.get('phases_run', [])), p.get('sample'), p.get('chunk')))
-    absent = report.get('intended_tables_absent_from_db')
+    absent = report.get('schema_tables_absent_from_db')
     if absent:
-        lines.append('intended-but-absent tables (in DEFAULT_TABLES, no DB table): %s'
-                     % ', '.join(absent))
+        lines.append('SCHEMAS tables missing from the DB (FAIL — build did not '
+                     'create them): %s' % ', '.join(absent))
+    enb = report.get('exported_but_not_built')
+    if enb:
+        lines.append('exported but not built into the served DB by design '
+                     '(%d tables, informational): %s'
+                     % (len(enb), ', '.join(enb[:20]) + ('…' if len(enb) > 20 else '')))
     lines.append('-' * 78)
 
     tables = report.get('tables', {})
@@ -155,6 +162,10 @@ def _detail_lines(entry):
     if 'missing_vs_asof' in cp:
         out.append('count: DB=%s but live had %s as-of snapshot (missing %s)'
                    % (cp.get('db'), cp.get('live_asof'), cp['missing_vs_asof']))
+    if 'short_vs_asof' in cp:
+        out.append('count: DB=%s vs live as-of %s — short %s (%s)'
+                   % (cp.get('db'), cp.get('live_asof'), cp['short_vs_asof'],
+                      cp.get('note', 'within tolerance')))
     if cp.get('error'):
         out.append('count parity error: %s' % cp['error'])
     fs = live.get('field_set', {})

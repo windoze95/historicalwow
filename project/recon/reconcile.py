@@ -39,6 +39,13 @@ def parse_args(argv):
                     help='rows sampled for the raw parse/envelope check (default: 500)')
     ap.add_argument('--sample-extractor', type=int, default=5000,
                     help='rows sampled for the extractor-fidelity check (default: 5000)')
+    ap.add_argument('--count-tolerance-pct', type=float, default=1.0,
+                    help='live count shortfall within this %% is WARN (export-window '
+                         'churn), beyond it FAIL (default: 1.0; use 0 for the final '
+                         'frozen pre-shutdown gate)')
+    ap.add_argument('--ignore-fields', default='',
+                    help='comma-separated extra fields to treat as volatile (excluded '
+                         'from the same-revision corruption check)')
     ap.add_argument('--db', default='',
                     help='path to the archive DB (default: project/data/historicalwow.db)')
     ap.add_argument('--out', default='',
@@ -88,24 +95,35 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    # Absent-table inventory: in a full run, every DEFAULT_TABLES entry missing
-    # from the DB; in a --tables run, only the requested-but-absent ones, so a
-    # scoped/smoke run doesn't drag in unrelated default tables. Live-checkable.
+    # The DB's intended scope = build_sqlite.SCHEMAS (the tables it builds).
+    # Side-effect-free import; load it regardless of phase.
+    schemas = offline.get_schemas()
+    schema_tables = set(schemas)
+
+    # Absent-table inventory (live-checkable): a table that SHOULD be in the DB
+    # (it's in SCHEMAS) but isn't = whole-table loss -> FAIL via count_parity
+    # below. DEFAULT_TABLES not in SCHEMAS are exported-but-not-built by design
+    # -> reported as INFO, never FAIL. A --tables run only checks requested ones.
     absent_to_check = []
+    exported_not_built = []
     if run_live:
         if args.tables:
-            absent_to_check = requested_absent
+            absent_to_check = [t for t in requested_absent if t in schema_tables]
+            skip = [t for t in requested_absent if t not in schema_tables]
+            if skip:
+                print('requested tables outside the DB schema scope (not built by '
+                      'design; skipped): %s' % ', '.join(skip), file=sys.stderr)
         else:
+            absent_to_check = sorted(schema_tables - set(db_tables))
             try:
                 e = live.get_ex()
-                absent_to_check = sorted(t for t in e.DEFAULT_TABLES
-                                         if t not in set(db_tables))
+                exported_not_built = sorted(set(e.DEFAULT_TABLES) - schema_tables)
             except Exception as err:                             # noqa: BLE001
-                print('could not load DEFAULT_TABLES for inventory check: %s'
+                print('could not load DEFAULT_TABLES for inventory note: %s'
                       % str(err)[:140], file=sys.stderr)
-    if requested_absent and not absent_to_check:
-        print('requested tables not in DB and not checkable here (skipped): %s'
-              % ', '.join(requested_absent), file=sys.stderr)
+    elif requested_absent:
+        print('requested tables not in DB; offline-only cannot check them '
+              '(skipped): %s' % ', '.join(requested_absent), file=sys.stderr)
     if not tables and not absent_to_check:
         print('no tables to reconcile', file=sys.stderr)
         return 2
@@ -115,8 +133,6 @@ def main(argv=None):
         phases_run.append('offline')
     if run_live:
         phases_run.append('live')
-
-    schemas = offline.get_schemas() if run_offline else {}
 
     results = {}
     started = time.time()
@@ -142,7 +158,8 @@ def main(argv=None):
     # FAILS the gate; an empty source table passes. Otherwise these would be
     # metadata-only and excluded from the verdict.
     for t in absent_to_check:
-        cp = live.count_parity(t, manifest, state, 0)
+        cp = live.count_parity(t, manifest, state, 0,
+                               tolerance_pct=args.count_tolerance_pct)
         cp['absent_from_db'] = True
         results[t] = {'live': {'count_parity': cp}}
         print('[absent] %-32s %s' % (t, cp.get('verdict')), file=sys.stderr)
@@ -155,11 +172,16 @@ def main(argv=None):
         'captured_at': manifest.get('captured_at'),
         'phases_run': phases_run,
         'params': {'sample': args.sample, 'chunk': args.chunk,
-                   'profile_full': args.profile_full},
+                   'profile_full': args.profile_full,
+                   'count_tolerance_pct': args.count_tolerance_pct},
         'elapsed_sec': round(time.time() - started, 1),
     }
     if absent_to_check:
-        meta['intended_tables_absent_from_db'] = absent_to_check
+        meta['schema_tables_absent_from_db'] = absent_to_check
+    if exported_not_built:
+        # exported to NDJSON but intentionally not built into the served DB
+        # (not in build_sqlite.SCHEMAS) — informational, not a failure.
+        meta['exported_but_not_built'] = exported_not_built
 
     rep = report.build_report(meta, results)
     out_dir = Path(args.out) if args.out else (data_dir / ('recon_%s' % common.utc_stamp()))
@@ -178,7 +200,9 @@ def args_to_opts(args):
     return SimpleNamespace(
         sample=args.sample, chunk=args.chunk, profile_full=args.profile_full,
         profile_limit=args.profile_limit, sample_raw=args.sample_raw,
-        sample_extractor=args.sample_extractor)
+        sample_extractor=args.sample_extractor,
+        count_tolerance_pct=args.count_tolerance_pct,
+        ignore_fields=[f.strip() for f in args.ignore_fields.split(',') if f.strip()])
 
 
 def _quick_verdict(per):

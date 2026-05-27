@@ -106,6 +106,17 @@ def test_classify_corruption():
     assert any(m[0] == 'state' for m in d['value_mismatches'])
 
 
+def test_classify_volatile_not_corruption():
+    # same revision, only a volatile counter differs -> MATCH, not CORRUPTION
+    a = row('a', sys_mod_count=env('5'), state='2')
+    b = row('a', sys_mod_count=env('9'), state='2')
+    assert compare.classify_record(a, b)[:2] == ('MATCH', PASS)
+    # a real (non-volatile) field differing is still CORRUPTION even alongside a
+    # volatile diff
+    c = row('a', sys_mod_count=env('9'), state='7')
+    assert compare.classify_record(a, c)[:2] == ('CORRUPTION', FAIL)
+
+
 def test_classify_display_drift():
     a = row('a', mgr=env('sysid1', 'Alice'))
     b = row('a', mgr=env('sysid1', 'Alice Smith'))   # value same, label moved
@@ -351,6 +362,17 @@ def test_report_rollup_overall_fail():
     assert 'OVERALL: FAIL' in text
 
 
+def test_report_renders_short_vs_asof():
+    # a within-tolerance count WARN must show its shortfall + reason in the text
+    results = {'t': {'live': {'count_parity': {
+        'verdict': WARN, 'db': 995, 'live_asof': 1000, 'short_vs_asof': 5,
+        'note': 'short 0.500% (<= 1% tol) — export-window churn'}}}}
+    rep = report.build_report({'phases_run': ['live'], 'params': {}}, results)
+    text = report.render_text(rep)
+    assert 'short=5' in text, text
+    assert 'export-window churn' in text, text
+
+
 def test_info_does_not_escalate():
     results = {'t': {'live': {'count_parity': {'verdict': INFO},
                               'deep_check': {'verdict': INFO}}}}
@@ -416,6 +438,32 @@ def test_count_parity_absent_table_with_live_rows_fails():
     finally:
         live.ex = None
     assert cp['verdict'] == FAIL and cp.get('missing_vs_asof') == 5, cp
+
+
+def test_count_parity_tolerance_band():
+    manifest = {'captured_at': '2026-05-01T00:00:00Z'}
+    live.ex = FakeEx([], stats_count=1000)
+    try:
+        small = live.count_parity('t', manifest, {}, 995, tolerance_pct=1.0)
+        big = live.count_parity('t', manifest, {}, 900, tolerance_pct=1.0)
+    finally:
+        live.ex = None
+    # small shortfall (0.5%) within tolerance -> WARN, not FAIL
+    assert small['verdict'] == WARN and small.get('short_vs_asof') == 5, small
+    # large shortfall (10%) -> FAIL
+    assert big['verdict'] == FAIL and big.get('missing_vs_asof') == 100, big
+
+
+def test_count_parity_zero_tolerance_fails_any_shortfall():
+    # the final frozen gate (--count-tolerance-pct 0) must FAIL even 1 row short,
+    # not let it through an absolute floor
+    live.ex = FakeEx([], stats_count=1000)
+    try:
+        one = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
+                                {}, 999, tolerance_pct=0)
+    finally:
+        live.ex = None
+    assert one['verdict'] == FAIL and one.get('missing_vs_asof') == 1, one
 
 
 # ---- runner ----------------------------------------------------------------

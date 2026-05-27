@@ -3042,7 +3042,7 @@ flagging the omission.
           </tr></thead>
           <tbody>
             {r.rows.map(row => (
-              <tr key={row.sys_id}>
+              <tr key={row.sys_id} onClick={() => window.navigate(`/sla-definitions/${row.sys_id}`)}>
                 <td><strong style={{ fontWeight: 500 }}>{flat(row.name) || '—'}</strong></td>
                 <td className="muted">{flat(row.type) || '—'}</td>
                 <td className="muted">{flat(row.target) || '—'}</td>

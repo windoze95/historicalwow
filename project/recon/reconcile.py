@@ -74,12 +74,6 @@ def main(argv=None):
 
     db_tables = common.db_table_names(conn)
     tables, requested_absent = resolve_tables(db_tables, args.tables)
-    if requested_absent:
-        print('requested tables not in DB (skipped): %s'
-              % ', '.join(requested_absent), file=sys.stderr)
-    if not tables:
-        print('no tables to reconcile', file=sys.stderr)
-        return 2
 
     run_offline = args.phase in ('offline', 'all')
     run_live = args.phase in ('live', 'all')
@@ -94,6 +88,28 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
+    # Absent-table inventory: in a full run, every DEFAULT_TABLES entry missing
+    # from the DB; in a --tables run, only the requested-but-absent ones, so a
+    # scoped/smoke run doesn't drag in unrelated default tables. Live-checkable.
+    absent_to_check = []
+    if run_live:
+        if args.tables:
+            absent_to_check = requested_absent
+        else:
+            try:
+                e = live.get_ex()
+                absent_to_check = sorted(t for t in e.DEFAULT_TABLES
+                                         if t not in set(db_tables))
+            except Exception as err:                             # noqa: BLE001
+                print('could not load DEFAULT_TABLES for inventory check: %s'
+                      % str(err)[:140], file=sys.stderr)
+    if requested_absent and not absent_to_check:
+        print('requested tables not in DB and not checkable here (skipped): %s'
+              % ', '.join(requested_absent), file=sys.stderr)
+    if not tables and not absent_to_check:
+        print('no tables to reconcile', file=sys.stderr)
+        return 2
+
     phases_run = []
     if run_offline:
         phases_run.append('offline')
@@ -101,16 +117,6 @@ def main(argv=None):
         phases_run.append('live')
 
     schemas = offline.get_schemas() if run_offline else {}
-
-    # DEFAULT_TABLES we intended to archive but that have no DB table at all.
-    intended_absent = []
-    if run_live:
-        try:
-            e = live.get_ex()
-            intended_absent = sorted(t for t in e.DEFAULT_TABLES if t not in set(db_tables))
-        except Exception as err:                                 # noqa: BLE001
-            print('could not load DEFAULT_TABLES for inventory check: %s'
-                  % str(err)[:140], file=sys.stderr)
 
     results = {}
     started = time.time()
@@ -131,11 +137,11 @@ def main(argv=None):
         print('[%d/%d] %-32s %s' % (i, len(tables), t,
               _quick_verdict(per)), file=sys.stderr)
 
-    # Whole-table archive loss: tables we intended to archive that have no DB
-    # table at all. Reconcile each against live (db_count=0) so a missing table
-    # still holding source rows FAILS the gate; an empty source table passes.
-    # These would otherwise be metadata-only and excluded from the verdict.
-    for t in intended_absent:
+    # Whole-table archive loss: intended tables with no DB table. Reconcile each
+    # against live (db_count=0) so a missing table still holding source rows
+    # FAILS the gate; an empty source table passes. Otherwise these would be
+    # metadata-only and excluded from the verdict.
+    for t in absent_to_check:
         cp = live.count_parity(t, manifest, state, 0)
         cp['absent_from_db'] = True
         results[t] = {'live': {'count_parity': cp}}
@@ -152,8 +158,8 @@ def main(argv=None):
                    'profile_full': args.profile_full},
         'elapsed_sec': round(time.time() - started, 1),
     }
-    if intended_absent:
-        meta['intended_tables_absent_from_db'] = intended_absent
+    if absent_to_check:
+        meta['intended_tables_absent_from_db'] = absent_to_check
 
     rep = report.build_report(meta, results)
     out_dir = Path(args.out) if args.out else (data_dir / ('recon_%s' % common.utc_stamp()))

@@ -102,7 +102,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
     // Emails tied to this record (sys_email.instance == sys_id). Metadata-only
     // by design; HR-gated at the API. Keep total to flag truncation.
-    data.fetchTaskList('sys_email', { filters: { instance: sys_id }, order_by: 'sys_created_on', dir: 'desc', limit: 200 })
+    data.fetchTaskList('sys_email', { filters: { instance: sys_id }, order_by: 'sys_created_on', dir: 'desc', limit: 200, slim: 1 })
       .then(r => { if (!cancel) setEmails(r); }).catch(() => { if (!cancel) setEmails({ rows: [], total: 0 }); });
 
     // Per-record relationships (each is a small filtered query — was eager-

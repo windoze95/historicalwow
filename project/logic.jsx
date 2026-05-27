@@ -1661,6 +1661,118 @@
     );
   }
 
+  // SLA definition record (contract_sla). An SLA has several conditions
+  // (start/stop/pause/reset/cancel) and timing config rather than a single
+  // script, so it gets its own layout instead of ScriptRecordView. The
+  // encoded-query conditions carry a readable display_value (the ".and." /
+  // ".or." form) — show that as the label and the raw query beneath.
+  window.SLADefinitionRecordPage = function SLADefinitionRecordPage({ sys_id }) {
+    const [rec, setRec] = useState(null);
+    useEffect(() => {
+      let cancel = false;
+      setRec(null);
+      L.fetchRecord('contract_sla', sys_id).then(r => {
+        if (cancel) return;
+        if (!r) { setRec(false); return; }
+        setRec(r);
+        window.AuditLog.push('view', `contract_sla/${flat(r.name) || sys_id.slice(0, 8)}`, flat(r.name) || '');
+      }).catch(() => { if (!cancel) setRec(false); });
+      return () => { cancel = true; };
+    }, [sys_id]);
+
+    if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading SLA definition…</div>;
+    if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not in snapshot.</div>;
+
+    const name = flat(rec.name) || sys_id.slice(0, 8);
+    const active = isTrue(flat(rec.active));
+    const collection = flat(rec.collection);
+
+    // Prefer display values; null/'' render as —.
+    const details = [
+      ['Type', dv(rec, 'type')],
+      ['Measures', dv(rec, 'target')],
+      ['Duration', dv(rec, 'duration')],
+      ['Schedule', dv(rec, 'schedule')],
+      ['Schedule source', dv(rec, 'schedule_source')],
+      ['Timezone', dv(rec, 'timezone_source')],
+      ['Workflow / flow', dv(rec, 'flow') || dv(rec, 'workflow')],
+      ['Duration applies to', dv(rec, 'relative_duration_works_on')],
+      ['When to cancel', dv(rec, 'when_to_cancel')],
+      ['When to resume', dv(rec, 'when_to_resume')],
+      ['Reset action', dv(rec, 'reset_action')],
+      ['Retroactive', isTrue(flat(rec.retroactive)) ? 'Yes' : 'No'],
+      ['Pause on retroactive', isTrue(flat(rec.retroactive_pause)) ? 'Yes' : 'No'],
+      ['Logging', isTrue(flat(rec.enable_logging)) ? 'Enabled' : 'Disabled'],
+    ];
+
+    // Encoded-query conditions; show only the ones that are populated.
+    const conditions = [
+      ['Start', 'start_condition'],
+      ['Stop', 'stop_condition'],
+      ['Pause', 'pause_condition'],
+      ['Reset', 'reset_condition'],
+      ['Cancel', 'cancel_condition'],
+    ].map(([label, field]) => ({ label, query: flat(rec[field]), display: dv(rec, field) }))
+     .filter(c => c.query);
+
+    return (
+      <div className="record single">
+        <div className="left">
+          <div className="record-header">
+            <div className="crumbs">
+              <a onClick={() => window.navigate('/logic')}>Logic</a>
+              <window.Icon name="chevron_right" size={11} />
+              <a onClick={() => window.navigate('/sla-definitions')}>SLA definitions</a>
+              <window.Icon name="chevron_right" size={11} />
+              <span className="mono">{name}</span>
+            </div>
+            <h1>
+              <window.Icon name="history" size={22} />
+              <span style={{ flex: 1, minWidth: 0 }}>{name}</span>
+            </h1>
+            <div className="title-row">
+              {active ? <span className="chip green">active</span> : <span className="chip">inactive</span>}
+              {dv(rec, 'type') && <span className="chip">{dv(rec, 'type')}</span>}
+              {dv(rec, 'target') && <span className="chip">{dv(rec, 'target')}</span>}
+              {collection && <>
+                <span className="dot">·</span>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>applies to</span>
+                <TableCrumb name={collection} />
+              </>}
+              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
+                sys_id {sys_id.slice(0, 8)}…
+              </span>
+            </div>
+          </div>
+
+          <div className="section">
+            <h3>Definition</h3>
+            <div className="fields" style={{ display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: 8, columnGap: 16 }}>
+              {details.map(([label, value]) => (
+                <Field key={label} label={label}>{(value == null || value === '') ? '—' : value}</Field>
+              ))}
+            </div>
+          </div>
+
+          <div className="section">
+            <h3>Conditions</h3>
+            {conditions.length ? conditions.map(c => (
+              <div key={c.label} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 4 }}>
+                  {c.label}
+                  {c.display && c.display !== c.query && <span style={{ color: 'var(--fg-2)', marginLeft: 8 }}>{c.display}</span>}
+                </div>
+                <CodeBlock maxHeight={120}>{c.query}</CodeBlock>
+              </div>
+            )) : <Empty text="No conditions on this SLA." />}
+          </div>
+
+          <ManifestFooter />
+        </div>
+      </div>
+    );
+  };
+
   // =========================================================================
   // Per-table logic inspector — /sn-table/:name
   // =========================================================================

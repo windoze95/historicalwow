@@ -783,10 +783,10 @@ function SLADefinitionList() {
             <tr><td colSpan={5} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>None in this snapshot.</td></tr>
           )}
           {(resp.rows || []).map(s => (
-            <tr key={s.sys_id}>
+            <tr key={s.sys_id} onClick={() => window.navigate(window.recordUrl('contract_sla', s.sys_id))}>
               <td><strong style={{ fontWeight: 500 }}>{s.name || '—'}</strong></td>
               <td>{s.collection
-                ? <a className="mono" style={{ fontSize: 12 }} onClick={() => window.navigate(`/sn-table/${s.collection}`)}>{s.collection}</a>
+                ? <a className="mono" style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); window.navigate(`/sn-table/${s.collection}`); }}>{s.collection}</a>
                 : <span className="muted">—</span>}</td>
               <td className="muted">{s.type || '—'}</td>
               <td className="muted">{s.target || '—'}</td>

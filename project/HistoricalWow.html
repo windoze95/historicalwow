@@ -7814,6 +7814,58 @@ Object.assign(window, {
   }
 
   // =========================================================================
+  // Email action records (inbound rules + outbound notifications)
+  // =========================================================================
+  window.InboundEmailActionRecordPage = function InboundEmailActionRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_in_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Inbound email actions', href: '/inbound-email-actions' }]}
+      tableField="table"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+        <span key="order" style={chip}>order {flat(r.order) ?? '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.table)],
+        ['Action', flat(r.action)],
+        ['Event', flat(r.event_name)],
+        ['Order', flat(r.order) ?? '—'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Stop processing', isTrue(flat(r.stop_processing)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="filter_condition"
+    />;
+  };
+
+  window.NotificationRecordPage = function NotificationRecordPage({ sys_id }) {
+    return <ScriptRecordView table="sysevent_email_action" sys_id={sys_id}
+      title={r => flat(r.name) || '(unnamed)'}
+      crumbs={[{ label: 'Logic', href: '/logic' }, { label: 'Notifications', href: '/notifications' }]}
+      tableField="collection"
+      scriptField="message_html"
+      scriptLabel="Message body"
+      extraChips={r => [
+        <span key="type" style={chip}>{flat(r.type) || '—'}</span>,
+      ]}
+      detailFields={r => [
+        ['Name', flat(r.name)],
+        ['Type', flat(r.type)],
+        ['Target table', flat(r.collection)],
+        ['Subject', flat(r.subject)],
+        ['Event', flat(r.event_name)],
+        ['On insert', isTrue(flat(r.action_insert)) ? 'true' : 'false'],
+        ['On update', isTrue(flat(r.action_update)) ? 'true' : 'false'],
+        ['Active', isTrue(flat(r.active)) ? 'true' : 'false'],
+        ['Created', flat(r.sys_created_on), 'by ' + (flat(r.sys_created_by) || '—')],
+      ]}
+      conditionField="condition"
+    />;
+  };
+
+  // =========================================================================
   // Business rule record
   // =========================================================================
   window.BusinessRuleRecordPage = function BusinessRuleRecordPage({ sys_id }) {
@@ -8151,7 +8203,7 @@ Object.assign(window, {
   // Renders the same crumbs / chips / detail-grid / script body /
   // condition / "Script includes referenced" pattern.
   // =========================================================================
-  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField }) {
+  function ScriptRecordView({ table, sys_id, title, crumbs, tableField, extraChips, detailFields, conditionField, scriptField, scriptLabel }) {
     const [rec, setRec] = useState(null);
     const [includes, setIncludes] = useState(null);
     useEffect(() => {
@@ -8174,7 +8226,7 @@ Object.assign(window, {
     if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not in snapshot.</div>;
 
     const name = title(rec);
-    const script = flat(rec.script) || '';
+    const script = flat(rec[scriptField || 'script']) || '';
     const active = isTrue(flat(rec.active));
     const targetTable = tableField ? flat(rec[tableField]) : null;
 
@@ -8229,8 +8281,8 @@ Object.assign(window, {
           )}
 
           <div className="section">
-            <h3>Script</h3>
-            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text="No script body on this record." />}
+            <h3>{scriptLabel || 'Script'}</h3>
+            {script ? <CodeBlock maxHeight={600}>{script}</CodeBlock> : <Empty text={`No ${(scriptLabel || 'script').toLowerCase()} on this record.`} />}
           </div>
 
           <IncludeRefsSection includes={includes} />
@@ -9839,6 +9891,7 @@ const LOGIC_LIST_TABLES = new Set([
 ]);
 const LOGIC_RECORD_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
+  'sysevent_in_email_action', 'sysevent_email_action',
 ]);
 
 function applyTweaks(t) {
@@ -9990,6 +10043,8 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}

@@ -25,6 +25,7 @@ const LOGIC_LIST_TABLES = new Set([
 ]);
 const LOGIC_RECORD_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
+  'sysevent_in_email_action', 'sysevent_email_action',
 ]);
 
 function applyTweaks(t) {
@@ -176,6 +177,8 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}

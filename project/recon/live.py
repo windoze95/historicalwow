@@ -142,6 +142,17 @@ def field_set(table, archive_keys):
             'intentional_omissions': sorted(intentional)}
 
 
+def _archive_field_keys(conn, table, db_count, scan=2000):
+    """Union of archived field keys — full scan when small, else a sample. Used
+    for the field-set inventory when no offline profile is available, so subclass
+    fields on heterogeneous tables aren't falsely reported missing."""
+    limit = None if db_count <= scan else scan
+    keys = set()
+    for row in common.iter_raw(conn, table, limit=limit):
+        keys |= set(row.keys())
+    return keys
+
+
 def refetch_live(table, sys_ids, chunk):
     """Batch re-fetch rows by sys_id with the same params the exporter used.
     Returns (sys_id -> live row, set of sys_ids whose batch succeeded). A
@@ -255,9 +266,14 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     sample = common.sample_rows(conn, table, sample_n) if sample_n else []
     arch_rows = [(sid, raw) for sid, raw in sample if raw is not None]
 
-    archive_keys = set()
-    for _, raw in arch_rows:
-        archive_keys |= set(raw.keys())
+    # Field-set inventory: prefer the offline profile (a full/large-sample scan)
+    # so subclass-specific fields on heterogeneous tables (cmdb_ci, task) aren't
+    # falsely flagged missing from the small random deep-check sample. Without a
+    # profile (live-only run), scan a dedicated, larger sample.
+    if archive_profile and archive_profile.get('fields'):
+        archive_keys = set(archive_profile['fields'].keys())
+    else:
+        archive_keys = _archive_field_keys(conn, table, db_count)
     checks['field_set'] = field_set(table, archive_keys)
 
     deep, live_map = deep_check(table, arch_rows, opts.chunk, cutoff=cutoff)

@@ -57,11 +57,15 @@ class FakeEx:
         if path.startswith('/api/now/stats/'):
             return {'result': {'stats': {'count': self.stats_count}}}
         q = (params or {}).get('sysparm_query', '')
-        ids = []
-        for part in q.split('^'):
-            if part.startswith('sys_idIN'):
-                ids = [x for x in part[len('sys_idIN'):].split(',') if x]
-        return {'result': [self.live[i] for i in ids if i in self.live]}
+        if 'sys_idIN' in q:
+            ids = []
+            for part in q.split('^'):
+                if part.startswith('sys_idIN'):
+                    ids = [x for x in part[len('sys_idIN'):].split(',') if x]
+            return {'result': [self.live[i] for i in ids if i in self.live]}
+        # plain table query (e.g. field_set's sample fetch): return live rows
+        limit = int((params or {}).get('sysparm_limit', 0) or len(self.live))
+        return {'result': list(self.live.values())[:limit]}
 
 
 def mem_db(rows_by_table, indexed=()):
@@ -272,6 +276,25 @@ def test_live_deep_check_categories():
     assert summary['verdict'] == FAIL, summary['verdict']
     assert summary['fetched_live'] == 3 and summary['sampled'] == 4
     assert len(live_map) == 3
+
+
+def test_field_set_uses_full_inventory_not_sample():
+    # a live field present in the full archive inventory must NOT be flagged
+    # missing just because a small deep sample happened to omit it
+    live.ex = FakeEx([row('a', subclass_field=env('x'))])
+    try:
+        full_keys = set(row('a', subclass_field=env('x')).keys())
+        ok = live.field_set('cmdb_ci', full_keys)
+    finally:
+        live.ex = None
+    assert ok['verdict'] == PASS, ok
+    # but a populated live field genuinely absent from the inventory still fails
+    live.ex = FakeEx([row('a', subclass_field=env('x'))])
+    try:
+        bad = live.field_set('cmdb_ci', set(row('a').keys()))   # no subclass_field
+    finally:
+        live.ex = None
+    assert bad['verdict'] == FAIL and 'subclass_field' in bad['missing_from_archive'], bad
 
 
 def test_live_population_parity_gap():

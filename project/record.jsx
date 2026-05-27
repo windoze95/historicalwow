@@ -30,6 +30,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const [journals, setJournals] = React.useState(null);
   const [audits, setAudits]     = React.useState(null);
   const [atts, setAtts]         = React.useState(null);
+  const [emails, setEmails]     = React.useState(null);
   const [tasks, setTasks]       = React.useState([]);
   const [ciLinks, setCILinks]   = React.useState([]);
   const [slas, setSLAs]         = React.useState([]);
@@ -99,6 +100,10 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
     data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
     data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
     data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
+    // Emails tied to this record (sys_email.instance == sys_id). Metadata-only
+    // by design; HR-gated at the API. Keep total to flag truncation.
+    data.fetchTaskList('sys_email', { filters: { instance: sys_id }, order_by: 'sys_created_on', dir: 'desc', limit: 200 })
+      .then(r => { if (!cancel) setEmails(r); }).catch(() => { if (!cancel) setEmails({ rows: [], total: 0 }); });
 
     // Per-record relationships (each is a small filtered query — was eager-
     // loaded as 422k+90k+75k rows, now 0–N rows per record). Asset records
@@ -164,6 +169,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const journalCount = journals == null ? '…' : journals.length;
   const auditCount   = audits   == null ? '…' : audits.length;
   const attCount     = atts     == null ? '…' : atts.length;
+  const emailCount   = emails    == null ? '…' : emails.total;
 
   return (
     <div className="record">
@@ -201,6 +207,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
           <button className={'tab' + (tab === 'attachments' ? ' active' : '')} onClick={() => setTab('attachments')}>
             Attachments <span className="badge">{attCount}</span>
           </button>
+          <button className={'tab' + (tab === 'emails' ? ' active' : '')} onClick={() => setTab('emails')}>
+            Emails <span className="badge">{emailCount}</span>
+          </button>
           <button className={'tab' + (tab === 'related' ? ' active' : '')} onClick={() => setTab('related')}>
             Related
           </button>
@@ -208,6 +217,7 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         {tab === 'journal'     && <JournalTab     entries={journals} />}
         {tab === 'audit'       && <AuditTab       entries={audits} table={table} />}
         {tab === 'attachments' && <AttachmentsTab entries={atts} />}
+        {tab === 'emails'      && <EmailsTab      resp={emails} />}
         {tab === 'related'     && <RelatedTab     rec={rec} table={table} journals={journals} />}
       </div>
     </div>
@@ -1080,6 +1090,35 @@ function AuditTab({ entries, table }) {
           <span className="to"><span className="arrow">→</span>{renderVal(a, a.newvalue)} <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 8 }}>by {a.user}</span></span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function EmailsTab({ resp }) {
+  if (resp == null) return <_LoadingTab label="loading emails…" />;
+  const rows = resp.rows || [];
+  if (!rows.length) {
+    return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>No emails on this record.</div>;
+  }
+  const truncated = rows.length < (resp.total || 0);
+  const inbound = (t) => /rece/i.test(String(t || ''));  // received vs sent/ready
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {rows.map(e => (
+        <div key={e.sys_id} style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="chip" style={{ fontSize: 10.5 }}>{inbound(e.type) ? '↓ in' : '↑ out'}</span>
+            <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.subject || '(no subject)'}</span>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', whiteSpace: 'nowrap' }}>{e.sys_created_on}</span>
+          </div>
+          {(e.recipients || e.state) && (
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {e.recipients ? `to ${e.recipients}` : ''}{e.recipients && e.state ? ' · ' : ''}{e.state || ''}
+            </div>
+          )}
+        </div>
+      ))}
+      {truncated && <div style={{ fontSize: 11, color: 'var(--fg-4)', padding: '4px 2px' }}>Showing first {rows.length} of {resp.total.toLocaleString()}.</div>}
     </div>
   );
 }

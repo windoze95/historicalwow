@@ -477,12 +477,14 @@ paths:
               - change_request
               - change_task
               - cmdb_ci
+              - cmdb_ci_outage
               - cmdb_ci_spkg
               - cmdb_rel_ci
               - cmdb_software_instance
               - cmn_cost_center
               - cmn_department
               - cmn_location
+              - contract_sla
               - core_company
               - incident
               - incident_task
@@ -507,6 +509,7 @@ paths:
               - sn_contract_renewal_task
               - sn_ent_facility_asset
               - std_change_proposal
+              - std_change_record_producer
               - sys_attachment
               - sys_audit
               - sys_choice
@@ -523,6 +526,7 @@ paths:
               - sys_script_client
               - sys_script_include
               - sys_security_acl
+              - sys_template
               - sys_ui_action
               - sys_ui_policy
               - sys_ui_policy_action
@@ -535,6 +539,7 @@ paths:
               - sysapproval_approver
               - sysapproval_group
               - sysauto_script
+              - sysevent_email_action
               - sysevent_in_email_action
               - task_ci
               - task_sla

@@ -1641,6 +1641,131 @@ components:
           description: ServiceNow boolean stored as 0 or 1.
       required: [sys_id]
       additionalProperties: true
+    SyseventEmailActionRow:
+      type: object
+      description: 'Row from the `sysevent_email_action` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        collection:
+          type: string
+        type:
+          type: string
+        event_name:
+          type: string
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        action_insert:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        action_update:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    SysTemplateRow:
+      type: object
+      description: 'Row from the `sys_template` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        table:
+          type: string
+        short_description:
+          type: string
+        user:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        global:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    CmdbCiOutageRow:
+      type: object
+      description: 'Row from the `cmdb_ci_outage` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        number:
+          type: string
+        cmdb_ci:
+          type: string
+        type:
+          type: string
+        begin:
+          type: string
+        end:
+          type: string
+        short_description:
+          type: string
+        u_outage_status:
+          type: string
+        task_number:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    StdChangeRecordProducerRow:
+      type: object
+      description: 'Row from the `std_change_record_producer` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        short_description:
+          type: string
+        table_name:
+          type: string
+        category:
+          type: string
+        sys_class_name:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    ContractSlaRow:
+      type: object
+      description: 'Row from the `contract_sla` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        collection:
+          type: string
+        type:
+          type: string
+        target:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     AlmAssetRow:
       type: object
       description: 'Row from the `alm_asset` table (reference).'
@@ -2002,6 +2127,11 @@ x-filterable-columns:
   sys_hub_flow: [sys_id, name, internal_name, active, type, sys_class_name, description]
   sys_security_acl: [sys_id, name, operation, type, active, admin_overrides, decision_type, sys_class_name]
   sysevent_in_email_action: [sys_id, name, type, table, action, event_name, order, active, stop_processing]
+  sysevent_email_action: [sys_id, name, collection, type, event_name, order, active, action_insert, action_update]
+  sys_template: [sys_id, name, table, short_description, user, active, global]
+  cmdb_ci_outage: [sys_id, number, cmdb_ci, type, begin, end, short_description, u_outage_status, task_number]
+  std_change_record_producer: [sys_id, name, short_description, table_name, category, sys_class_name, active]
+  contract_sla: [sys_id, name, collection, type, target, active]
   alm_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, company, cost_center, sys_class_name, sys_created_on, sys_updated_on]
   alm_hardware: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, warranty_expiration, sys_created_on, sys_updated_on]
   sn_ent_facility_asset: [sys_id, asset_tag, display_name, serial_number, model, model_category, state, substatus, assigned_to, owned_by, location, ci, sys_created_on, sys_updated_on]

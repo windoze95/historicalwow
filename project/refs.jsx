@@ -260,6 +260,41 @@ function DelegationList({ rows, otherField }) {
   );
 }
 
+// Role grants for a user (sys_user_has_role) or group (sys_group_has_role).
+// `resp` is the fetchTaskList response ({rows,total}); `inheritedField` is
+// 'inherited' (user) or 'inherits' (group). Role names come from the reference
+// display value. Shows direct + inherited (dimmed) chips, and flags truncation
+// when more rows exist than were fetched (privileged accounts can have many).
+function RolesSection({ resp, inheritedField, title }) {
+  if (!resp || !resp.rows || resp.rows.length === 0) return null;
+  const named = resp.rows
+    .map(r => ({ name: r.__display_role || r.role, inherited: delegationOn(r[inheritedField]) }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const direct = named.filter(r => !r.inherited);
+  const inh = named.filter(r => r.inherited);
+  const truncated = resp.rows.length < (resp.total || 0);
+  return (
+    <div className="ref-section">
+      <h2>{title} <span className="count">{(resp.total || resp.rows.length).toLocaleString()}</span></h2>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {direct.map((r, i) => (
+          <span key={'d' + i} className="chip" style={{ fontSize: 11.5 }}>
+            <window.Icon name="shield" size={11} />{r.name}
+          </span>
+        ))}
+        {inh.map((r, i) => (
+          <span key={'i' + i} className="chip" title="inherited" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{r.name}</span>
+        ))}
+      </div>
+      {(inh.length > 0 || truncated) && (
+        <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>
+          {direct.length} direct · {inh.length} inherited (dimmed){truncated ? ` · showing first ${resp.rows.length} of ${resp.total.toLocaleString()}` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
@@ -304,7 +339,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
     // Roles held (direct + inherited). Non-slim so the role name arrives as the
     // reference display value (__display_role).
     data.fetchTaskList('sys_user_has_role', { limit: 1000, filters: { user: sys_id }, order_by: 'role', dir: 'asc' })
-      .then(r => { if (!cancel) setRoles(r.rows || []); }).catch(() => { if (!cancel) setRoles([]); });
+      .then(r => { if (!cancel) setRoles(r); }).catch(() => { if (!cancel) setRoles({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
 
@@ -364,33 +399,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
         </div>
       </div>
 
-      {roles != null && roles.length > 0 && (() => {
-        const named = roles
-          .map(r => ({ name: r.__display_role || r.role, inherited: delegationOn(r.inherited) }))
-          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-        const direct = named.filter(r => !r.inherited);
-        const inh = named.filter(r => r.inherited);
-        return (
-          <div className="ref-section">
-            <h2>Roles <span className="count">{roles.length}</span></h2>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {direct.map((r, i) => (
-                <span key={'d' + i} className="chip" style={{ fontSize: 11.5 }}>
-                  <window.Icon name="shield" size={11} />{r.name}
-                </span>
-              ))}
-              {inh.map((r, i) => (
-                <span key={'i' + i} className="chip" title="inherited" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{r.name}</span>
-              ))}
-            </div>
-            {inh.length > 0 && (
-              <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>
-                {direct.length} direct · {inh.length} inherited (dimmed)
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {roles != null && <RolesSection resp={roles} inheritedField="inherited" title="Roles" />}
 
       {delegations != null && (delegations.given.total > 0 || delegations.received.total > 0) && (
         <div className="ref-section">
@@ -566,7 +575,7 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
       .then(b => { if (!cancel) setTaskBuckets(b); })
       .catch(() => { if (!cancel) setTaskBuckets([]); });
     data.fetchTaskList('sys_group_has_role', { limit: 1000, filters: { group: sys_id }, order_by: 'role', dir: 'asc' })
-      .then(r => { if (!cancel) setRoles(r.rows || []); }).catch(() => { if (!cancel) setRoles([]); });
+      .then(r => { if (!cancel) setRoles(r); }).catch(() => { if (!cancel) setRoles({ rows: [], total: 0 }); });
     return () => { cancel = true; };
   }, [sys_id]);
   if (!g) return <div className="empty">Group not in snapshot.</div>;
@@ -616,33 +625,7 @@ window.GroupRefPage = function GroupRefPage({ sys_id }) {
         </div>
       </div>
 
-      {roles != null && roles.length > 0 && (() => {
-        const named = roles
-          .map(r => ({ name: r.__display_role || r.role, inherited: delegationOn(r.inherits) }))
-          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-        const direct = named.filter(r => !r.inherited);
-        const inh = named.filter(r => r.inherited);
-        return (
-          <div className="ref-section">
-            <h2>Roles granted <span className="count">{roles.length}</span></h2>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {direct.map((r, i) => (
-                <span key={'d' + i} className="chip" style={{ fontSize: 11.5 }}>
-                  <window.Icon name="shield" size={11} />{r.name}
-                </span>
-              ))}
-              {inh.map((r, i) => (
-                <span key={'i' + i} className="chip" title="inherited" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{r.name}</span>
-              ))}
-            </div>
-            {inh.length > 0 && (
-              <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>
-                {direct.length} direct · {inh.length} inherited (dimmed)
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {roles != null && <RolesSection resp={roles} inheritedField="inherits" title="Roles granted" />}
 
       {taskBuckets == null && (
         <div className="ref-section">

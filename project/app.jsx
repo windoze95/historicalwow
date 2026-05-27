@@ -177,9 +177,10 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'sys_template' && <window.TemplateRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
-          {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
+          {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && route.table !== 'sys_template' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_ci' && <window.CIRefPage sys_id={route.sys_id} />}

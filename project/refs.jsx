@@ -295,6 +295,104 @@ function RolesSection({ resp, inheritedField, title }) {
   );
 }
 
+// A compact clickable row for the user-page "related records" sections.
+function RefRow({ onClick, children }) {
+  return (
+    <div onClick={onClick}
+         style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                  background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6,
+                  cursor: onClick ? 'pointer' : 'default', fontSize: 12.5 }}>
+      {children}
+    </div>
+  );
+}
+
+// User-page section: fetch <table> where <field> = the user, render each row
+// via renderRow. Hidden while loading and when empty; keeps the API total to
+// flag truncation.
+function RelatedRecordsSection({ title, table, field, sys_id, slim, orderBy, dir, renderRow }) {
+  const data = window.HistoricalWowData;
+  const [resp, setResp] = React.useState(null);
+  React.useEffect(() => {
+    let cancel = false; setResp(null);
+    const opts = { limit: 100, filters: { [field]: sys_id } };
+    // orderBy must be an indexed column — the server ignores non-indexed
+    // order_by and falls back to sys_id, which would make the truncated
+    // first-100 arbitrary rather than ordered.
+    if (orderBy) { opts.order_by = orderBy; opts.dir = dir || 'desc'; }
+    if (slim) opts.slim = 1;
+    data.fetchTaskList(table, opts)
+      .then(r => { if (!cancel) setResp(r); })
+      .catch(() => { if (!cancel) setResp({ rows: [], total: 0 }); });
+    return () => { cancel = true; };
+  }, [table, field, sys_id]);
+  if (!resp || !resp.rows || resp.rows.length === 0) return null;
+  const truncated = resp.rows.length < (resp.total || 0);
+  return (
+    <div className="ref-section">
+      <h2>{title} <span className="count">{(resp.total || resp.rows.length).toLocaleString()}</span></h2>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {resp.rows.map(renderRow)}
+      </div>
+      {truncated && <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>showing first {resp.rows.length} of {resp.total.toLocaleString()}</div>}
+    </div>
+  );
+}
+
+// Record view for a sys_template — the generic RecordPage is task-shaped and
+// renders blank for templates, so show the target table, owner, and the field
+// values it pre-fills (parsed from the encoded `template` string).
+window.TemplateRecordPage = function TemplateRecordPage({ sys_id }) {
+  const data = window.HistoricalWowData;
+  const [rec, setRec] = React.useState(undefined);
+  React.useEffect(() => {
+    let cancel = false;
+    data.fetchRecord('sys_template', sys_id)
+      .then(r => { if (!cancel) setRec(r || null); })
+      .catch(() => { if (!cancel) setRec(null); });
+    if (window.AuditLog) window.AuditLog.push('view', `sys_template/${sys_id}`, '');
+    return () => { cancel = true; };
+  }, [sys_id]);
+  if (rec === undefined) return <div style={{ padding: 24, color: 'var(--fg-4)', fontSize: 12.5 }}><span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…</div>;
+  if (!rec) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Template not in this snapshot.</div>;
+  // `template` encodes field=value pairs joined by `^` (with trailing query
+  // operators like EQ). Parse into rows, skipping operator tokens.
+  const pairs = String(rec.template || '').split('^')
+    .map(s => s.trim())
+    .filter(s => s.includes('=') && !/^(EQ|NQ|OR|ORDERBY|GOTO)\b/i.test(s))
+    .map(s => { const i = s.indexOf('='); return [s.slice(0, i), s.slice(i + 1)]; });
+  return (
+    <div className="ref-page">
+      <div className="crumbs" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-3)', marginBottom: 14 }}>
+        <span>Template</span>
+        <window.Icon name="chevron_right" size={11} />
+        <span className="mono">{rec.name}</span>
+      </div>
+      <div className="head" style={{ display: 'block' }}>
+        <h1 style={{ marginBottom: 8 }}>{rec.name || '(unnamed)'}</h1>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {rec.table && <span className="chip mono">{rec.table}</span>}
+          {rec.active === false && <span className="chip" style={{ color: 'var(--fg-4)' }}>inactive</span>}
+        </div>
+      </div>
+      <div className="ref-grid" style={{ marginTop: 14 }}>
+        <div className="cell"><div className="label">Target table</div><div className="val mono">{rec.table || '—'}</div></div>
+        <div className="cell"><div className="label">Owner</div><div className="val">{rec.user ? <window.UserCell sys_id={rec.user} displayName={rec.__display_user} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Short description</div><div className="val">{rec.short_description || '—'}</div></div>
+        <div className="cell"><div className="label">Updated</div><div className="val">{rec.sys_updated_on || '—'}</div></div>
+      </div>
+      <div className="ref-section">
+        <h2>Sets fields <span className="count">{pairs.length}</span></h2>
+        {pairs.length === 0
+          ? <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No field values parsed from this template.</div>
+          : <table className="dt"><thead><tr><th style={{ width: 240 }}>Field</th><th>Value</th></tr></thead>
+              <tbody>{pairs.map(([k, v], i) => (<tr key={i}><td className="mono" style={{ fontSize: 12 }}>{k}</td><td>{v || '—'}</td></tr>))}</tbody>
+            </table>}
+      </div>
+    </div>
+  );
+};
+
 window.UserRefPage = function UserRefPage({ sys_id }) {
   const data = window.HistoricalWowData;
   const u = window.findUser(sys_id);
@@ -422,6 +520,40 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
           )}
         </div>
       )}
+
+      <RelatedRecordsSection title="Templates" table="sys_template" field="user" sys_id={sys_id} slim orderBy="name" dir="asc"
+        renderRow={t => (
+          <RefRow key={t.sys_id} onClick={() => window.navigate(window.recordUrl('sys_template', t.sys_id))}>
+            <window.Icon name="file" size={13} />
+            <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>{t.table || ''}</span>
+          </RefRow>
+        )} />
+
+      <RelatedRecordsSection title="Knowledge authored" table="kb_knowledge" field="author" sys_id={sys_id} slim orderBy="number"
+        renderRow={a => (
+          <RefRow key={a.sys_id} onClick={() => window.navigate(`/knowledge/${a.sys_id}`)}>
+            <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{a.number}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.short_description}</span>
+          </RefRow>
+        )} />
+
+      <RelatedRecordsSection title="Approvals" table="sysapproval_approver" field="approver" sys_id={sys_id} orderBy="sys_created_on"
+        renderRow={a => (
+          <RefRow key={a.sys_id}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.__display_sysapproval || a.sysapproval || '—'}</span>
+            <span className="chip" style={{ marginLeft: 'auto', fontSize: 10.5 }}>{a.__display_state || a.state || '—'}</span>
+          </RefRow>
+        )} />
+
+      <RelatedRecordsSection title="CIs owned" table="cmdb_ci" field="owned_by" sys_id={sys_id} slim orderBy="name" dir="asc"
+        renderRow={c => (
+          <RefRow key={c.sys_id} onClick={() => window.navigate(`/cis/${c.sys_id}`)}>
+            <window.Icon name="ci" size={12} />
+            <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>{c.sys_class_name || ''}</span>
+          </RefRow>
+        )} />
 
       {relations == null && (
         <div className="ref-section">

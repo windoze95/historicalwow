@@ -443,6 +443,18 @@ def test_count_parity_tolerance_band():
     assert big['verdict'] == FAIL and big.get('missing_vs_asof') == 100, big
 
 
+def test_count_parity_zero_tolerance_fails_any_shortfall():
+    # the final frozen gate (--count-tolerance-pct 0) must FAIL even 1 row short,
+    # not let it through an absolute floor
+    live.ex = FakeEx([], stats_count=1000)
+    try:
+        one = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
+                                {}, 999, tolerance_pct=0)
+    finally:
+        live.ex = None
+    assert one['verdict'] == FAIL and one.get('missing_vs_asof') == 1, one
+
+
 # ---- runner ----------------------------------------------------------------
 def _run():
     tests = sorted((n, f) for n, f in globals().items()

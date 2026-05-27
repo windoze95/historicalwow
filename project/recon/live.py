@@ -99,21 +99,22 @@ def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     res['live_asof'] = asof
 
     if asof is not None:
-        abs_tol = max(2, int(asof * 0.0001))
         shortfall = asof - db_count
-        if shortfall > abs_tol:
+        if shortfall > 0:
             rel = shortfall / asof if asof else 1.0
-            if rel <= tolerance_pct / 100.0:
-                # rows created during the export window (between a table's pull
-                # and its watermark) — expected on a live instance, not loss.
+            if tolerance_pct > 0 and rel <= tolerance_pct / 100.0:
+                # rows created during the non-instantaneous export window
+                # (between a table's pull and its watermark) — expected on a
+                # live instance, not loss.
                 res['verdict'] = WARN
                 res['short_vs_asof'] = shortfall
-                res['note'] = ('short %.2f%% (<= %.3g%% tol) — export-window churn'
+                res['note'] = ('short %.3f%% (<= %.3g%% tol) — export-window churn'
                                % (rel * 100, tolerance_pct))
             else:
+                # any shortfall at zero tolerance, or beyond the band, is loss
                 res['verdict'] = FAIL
                 res['missing_vs_asof'] = shortfall
-        elif db_count > asof + abs_tol:
+        elif db_count > asof:
             res['deletes_since'] = db_count - asof          # expected; not a failure
     if res.get('live_now') is not None and res['live_now'] > db_count:
         res['creates_since'] = res['live_now'] - db_count   # expected; not a failure

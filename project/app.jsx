@@ -175,7 +175,8 @@ function App() {
           {route.view === 'record' && route.table === 'sys_script_client' && <window.ClientScriptRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sys_script_include' && <window.ScriptIncludeRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysauto_script' && <window.ScheduledJobRecordPage sys_id={route.sys_id} />}
-          {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
+          {route.view === 'record' && route.table === 'kb_knowledge' && <window.KBRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_ci' && <window.CIRefPage sys_id={route.sys_id} />}
@@ -313,6 +314,7 @@ function Sidebar({ route }) {
     navItem('/users',           'user',     'Users',            'sys_user'),
     navItem('/groups',          'users',    'Groups',           'sys_user_group'),
     navItem('/delegations',     'link',     'Delegations',      'sys_user_delegate'),
+    navItem('/knowledge',       'book',     'Knowledge',        'kb_knowledge'),
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
     { sep: 'Logic' },
     { id: '/logic',             icon: 'settings', label: 'Overview' },
@@ -341,7 +343,7 @@ function Sidebar({ route }) {
       '/stockrooms': 'alm_stockroom', '/assets': 'alm_asset',
       '/software': 'cmdb_ci_spkg', '/software-installs': 'cmdb_software_instance',
       '/users': 'sys_user', '/groups': 'sys_user_group',
-      '/delegations': 'sys_user_delegate', '/cis': 'cmdb_ci',
+      '/delegations': 'sys_user_delegate', '/knowledge': 'kb_knowledge', '/cis': 'cmdb_ci',
       '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
       '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',

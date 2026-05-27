@@ -49,6 +49,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (table === 'sys_user')        return <UserList />;
   if (table === 'sys_user_group')  return <GroupList />;
   if (table === 'sys_user_delegate') return <DelegateList />;
+  if (table === 'kb_knowledge')    return <KBListPage />;
   if (table === 'cmdb_ci')         return <CIList />;
   if (ASSET_TABLES.includes(table)) return <AssetList key={table} table={table} />;
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
@@ -560,6 +561,119 @@ function DelegateList() {
     </div>
   );
 }
+
+// ---- Knowledge base -------------------------------------------------------
+// kb_knowledge isn't eager-loaded; paginate via the API like CIList. The list
+// links to a dedicated article view; the record page renders the article HTML.
+
+function KBListPage() {
+  const data = window.HistoricalWowData;
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    // slim=1 → indexed columns only, skipping the raw envelope (which for
+    // kb_knowledge carries the full article `text` body). The list only shows
+    // metadata; the body is fetched lazily in KBRecordPage.
+    data.fetchTaskList('kb_knowledge', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, order_by: 'number', dir: 'desc', slim: 1 })
+      .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [page]);
+
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === 'kb_knowledge')?.source_rows;
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Knowledge <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>kb_knowledge</span> · articles &amp; drafts · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar"><div className="spacer" /><Pager page={page} setPage={setPage} lastPage={lastPage} /></div>
+      </div>
+      <table className="dt">
+        <thead><tr>
+          <th style={{ width: 130 }}>Number</th><th>Short description</th>
+          <th style={{ width: 140 }}>State</th><th style={{ width: 220 }}>Author</th>
+        </tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={4} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={4} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No articles.</td></tr>
+          )}
+          {(resp.rows || []).map(a => (
+            <tr key={a.sys_id} onClick={() => window.navigate(`/knowledge/${a.sys_id}`)}>
+              <td className="num mono" style={{ fontSize: 12 }}>{a.number}</td>
+              <td><strong style={{ fontWeight: 500 }}>{a.short_description}</strong></td>
+              <td>{a.workflow_state ? <span className="chip" style={{ fontSize: 10.5 }}>{a.workflow_state}</span> : <span className="muted">—</span>}</td>
+              <td>{a.author ? <window.UserCell sys_id={a.author} displayName={a.__display_author} /> : <span className="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+window.KBRecordPage = function KBRecordPage({ sys_id }) {
+  const data = window.HistoricalWowData;
+  const [rec, setRec] = React.useState(undefined);  // undefined = loading, null = not found
+  React.useEffect(() => {
+    let cancel = false;
+    data.fetchRecord('kb_knowledge', sys_id)
+      .then(r => { if (!cancel) setRec(r || null); })
+      .catch(() => { if (!cancel) setRec(null); });
+    if (window.AuditLog) window.AuditLog.push('view', `kb_knowledge/${sys_id}`, '');
+    return () => { cancel = true; };
+  }, [sys_id]);
+
+  if (rec === undefined) return <div style={{ padding: 24, color: 'var(--fg-4)', fontSize: 12.5 }}><span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…</div>;
+  if (!rec) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Article not in this snapshot.</div>;
+  const dval = (k) => rec['__display_' + k] || rec[k];
+
+  return (
+    <div className="ref-page">
+      <div className="crumbs" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-3)', marginBottom: 14 }}>
+        <a onClick={() => window.navigate('/knowledge')}>Knowledge</a>
+        <window.Icon name="chevron_right" size={11} />
+        <span className="mono">{rec.number}</span>
+      </div>
+      <div className="head" style={{ display: 'block' }}>
+        <h1 style={{ marginBottom: 8 }}>{rec.short_description || '(untitled)'}</h1>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          {rec.workflow_state && <span className="chip">{dval('workflow_state')}</span>}
+          {rec.article_type && <span className="chip">{dval('article_type')}</span>}
+          {rec.active === false && <span className="chip" style={{ color: 'var(--fg-4)' }}>inactive</span>}
+        </div>
+      </div>
+      <div className="ref-grid" style={{ marginTop: 14 }}>
+        <div className="cell"><div className="label">Number</div><div className="val mono">{rec.number || '—'}</div></div>
+        <div className="cell"><div className="label">Knowledge base</div><div className="val">{dval('kb_knowledge_base') || '—'}</div></div>
+        <div className="cell"><div className="label">Category</div><div className="val">{dval('kb_category') || dval('category') || '—'}</div></div>
+        <div className="cell"><div className="label">Author</div><div className="val">{rec.author ? <window.UserCell sys_id={rec.author} displayName={rec.__display_author} /> : '—'}</div></div>
+        <div className="cell"><div className="label">Published</div><div className="val">{rec.published || '—'}</div></div>
+        <div className="cell"><div className="label">Valid to</div><div className="val">{rec.valid_to || '—'}</div></div>
+        <div className="cell"><div className="label">Views</div><div className="val">{rec.sys_view_count || '0'}</div></div>
+        <div className="cell"><div className="label">Updated</div><div className="val">{rec.sys_updated_on || '—'}</div></div>
+      </div>
+      <div className="ref-section">
+        <h2>Article</h2>
+        {rec.text
+          ? <iframe title="KB article" sandbox="" srcDoc={rec.text}
+              style={{ width: '100%', height: '70vh', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }} />
+          : <div style={{ color: 'var(--fg-4)', fontSize: 12.5 }}>No article body in this snapshot.</div>}
+      </div>
+    </div>
+  );
+};
 
 // ---- CIs (paginated via API since cmdb_ci has 1M+ records) ---------------
 

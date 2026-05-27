@@ -1782,6 +1782,26 @@
   // policies (model_table = name), and data policy rules (table = name).
   // Each tab gets a count + counter chip; tabs whose backing table isn't
   // in the snapshot render NotInSnapshot.
+  // Toggleable prompt sections, in document order. `id` matches the data
+  // key on `d` (and the inspector tab id); `label` shows in the prompt-
+  // builder options popover and in the "omitted sections" note. 'dict'
+  // covers both field definitions and overrides.
+  const PROMPT_SECTIONS = [
+    { id: 'br',      label: 'Business rules' },
+    { id: 'cs',      label: 'Client scripts' },
+    { id: 'uip',     label: 'UI policies' },
+    { id: 'dp',      label: 'Data policies' },
+    { id: 'sla',     label: 'SLA definitions' },
+    { id: 'iea',     label: 'Inbound email actions' },
+    { id: 'notif',   label: 'Notifications' },
+    { id: 'acls',    label: 'ACLs' },
+    { id: 'uiact',   label: 'UI actions' },
+    { id: 'dict',    label: 'Dictionary & overrides' },
+    { id: 'choices', label: 'Choice values' },
+    { id: 'props',   label: 'System properties' },
+    { id: 'flows',   label: 'Flows' },
+  ];
+
   // Build a structured markdown prompt of every active rule on a table.
   // Designed to be pasted into an LLM with the instruction at the top —
   // gives the model a single document to reason about table behavior
@@ -1794,7 +1814,7 @@
   // ui_policy = policy.sys_id), and data policies pair with their rules
   // (sys_data_policy_rule.sys_data_policy = policy.sys_id), so the model
   // sees what each policy actually changes — not just that it exists.
-  function buildLogicPrompt(tableName, d, cascadeEnabled) {
+  function buildLogicPrompt(tableName, d, cascadeEnabled, exclude = {}) {
     const activeRows = (env) => (env?.rows || [])
       .filter(r => isTrue(r.active) || r.active == null);
     const byOrder = (a, b) => {
@@ -1830,6 +1850,15 @@
 
     const lines = [];
     const push = (s) => lines.push(s == null ? '' : String(s));
+    // Section exclusion: each toggleable section marks where it starts so
+    // excluded ones can be sliced out cleanly at the end (no dangling
+    // headers). Everything before the first mark (intro + Table) is kept.
+    const sectionMarks = [];
+    const mark = (id) => sectionMarks.push({ id, at: lines.length });
+    const excludedLabels = PROMPT_SECTIONS.filter(s => exclude[s.id]).map(s => s.label);
+    const excludedNote = excludedLabels.length
+      ? `\n\n**Note — filtered prompt.** These logic types were intentionally omitted at build time: ${excludedLabels.join(', ')}. Their absence below is a deliberate choice, not evidence that \`${tableName}\` lacks them — do not infer their non-existence.`
+      : '';
 
     push(`You are a senior ServiceNow architect. Below is every active piece of server-side and client-side logic that runs against the table \`${tableName}\` on a real ServiceNow instance, extracted from a read-only snapshot of the production system.
 
@@ -1863,7 +1892,7 @@ prompt are **not exhaustive** for the table — they're filtered to active
 records and to what a literal text scan of the rule bodies above could
 resolve. Anything you'd expect to see and don't can be assumed OOTB or
 absent from this snapshot; reason from platform defaults rather than
-flagging the omission.
+flagging the omission.${excludedNote}
 
 ---
 
@@ -1871,9 +1900,11 @@ flagging the omission.
 
 \`${tableName}\`
 
----
+---`);
 
-## Business rules — ${br.length} active`);
+    mark('br');
+    push('');
+    push(`## Business rules — ${br.length} active`);
 
     for (const r of br) {
       push('');
@@ -1893,6 +1924,7 @@ flagging the omission.
       push(code(r.script || ''));
     }
 
+    mark('cs');
     push('');
     push(`## Client scripts — ${cs.length} active`);
     for (const r of cs) {
@@ -1908,6 +1940,7 @@ flagging the omission.
       push(code(r.script || ''));
     }
 
+    mark('uip');
     push('');
     push(`## UI policies — ${uip.length} active`);
     for (const p of uip) {
@@ -1946,6 +1979,7 @@ flagging the omission.
       }
     }
 
+    mark('dp');
     push('');
     push(`## Data policies — ${dp.length} active`);
     for (const p of dp) {
@@ -1966,6 +2000,7 @@ flagging the omission.
     // SLA definitions — start/stop/pause conditions, target, and duration that
     // govern the timers on this table. Active only, like the rule types above.
     const sla = activeRows(d.sla).slice().sort(byOrder);
+    mark('sla');
     push('');
     push(`## SLA definitions — ${sla.length} active`);
     for (const s of sla) {
@@ -1986,6 +2021,7 @@ flagging the omission.
     // Inbound email actions — scripts that create/update records on this
     // table from incoming email. Active only; include the processing script.
     const iea = activeRows(d.iea).slice().sort(byOrder);
+    mark('iea');
     push('');
     push(`## Inbound email actions — ${iea.length} active`);
     for (const r of iea) {
@@ -2005,6 +2041,7 @@ flagging the omission.
     // only. The HTML message body is omitted on purpose (it's content, not
     // logic, and large); the trigger, condition, and subject are what matter.
     const notif = activeRows(d.notif).slice().sort(byOrder);
+    mark('notif');
     push('');
     push(`## Notifications — ${notif.length} active`);
     for (const n of notif) {
@@ -2027,6 +2064,7 @@ flagging the omission.
     // incident.assigned_to, then incident.action_x).
     const acls = activeRows(d.acls).slice()
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    mark('acls');
     push('');
     push(`## ACLs — ${acls.length} active`);
     for (const a of acls) {
@@ -2053,6 +2091,7 @@ flagging the omission.
 
     // UI actions — sort by order then name. Each gets metadata + script.
     const uiact = activeRows(d.uiact).slice().sort(byOrder);
+    mark('uiact');
     push('');
     push(`## UI Actions — ${uiact.length} active`);
     for (const u of uiact) {
@@ -2086,6 +2125,7 @@ flagging the omission.
     // Field definitions (sys_dictionary). Tabular list, no fences.
     const dictRows = (d.dict?.rows || []).slice()
       .sort((a, b) => String(a.element || '').localeCompare(String(b.element || '')));
+    mark('dict');
     push('');
     push(`## Field definitions (sys_dictionary) — ${dictRows.length}`);
     if (d.dict?.missing) push('_(sys_dictionary not in this snapshot — fields are not enumerated.)_');
@@ -2130,6 +2170,7 @@ flagging the omission.
       choicesByElement.get(el).push(c);
     }
     const choiceEls = [...choicesByElement.keys()].sort();
+    mark('choices');
     push('');
     push(`## Choice values (sys_choice) — ${choiceRows.length} across ${choiceEls.length} field(s)`);
     for (const el of choiceEls) {
@@ -2147,16 +2188,42 @@ flagging the omission.
       }
     }
 
+    // Properties/flows are scanned from rule bodies. Re-scan here over only
+    // the INCLUDED script-bearing sections, so excluding a section (e.g.
+    // business rules) doesn't leak its referenced properties/flows into a
+    // filtered prompt. With nothing excluded this reproduces the inspector's
+    // full scan — same body set as the derived-scan effect — so these
+    // sections are byte-identical to before.
+    const refBodies = [];
+    const addRefBodies = (id, rows, fields) => {
+      if (exclude[id]) return;
+      for (const row of (rows || [])) for (const f of fields) if (row[f]) refBodies.push(String(row[f]));
+    };
+    addRefBodies('br',    d.br?.rows,    ['script', 'condition', 'filter_condition']);
+    addRefBodies('cs',    d.cs?.rows,    ['script', 'condition']);
+    addRefBodies('uip',   d.uip?.rows,   ['script_true', 'script_false']);
+    addRefBodies('acls',  d.acls?.rows,  ['script', 'condition']);
+    addRefBodies('uiact', d.uiact?.rows, ['script', 'condition', 'onclick']);
+    addRefBodies('iea',   d.iea?.rows,   ['script', 'filter_condition']);
+    addRefBodies('notif', d.notif?.rows, ['advanced_condition', 'condition']);
+    const refPropNames = new Set();
+    const refFlowNames = new Set();
+    for (const body of refBodies) {
+      for (const n of L.scanForProperties(body)) refPropNames.add(n);
+      for (const n of L.scanForFlows(body))      refFlowNames.add(n);
+    }
+
     // System properties referenced by scan. The inspector resolved each
     // scanned name against /api/sys_properties and dropped misses (likely
     // OOTB platform properties not in the snapshot). Header notes the gap
     // so the model knows the section is intentionally non-exhaustive.
-    const propRows = (d.props?.rows || []).slice()
+    const propRows = (d.props?.rows || []).filter(p => refPropNames.has(p.name)).slice()
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    mark('props');
     push('');
     push(`## System properties referenced — ${propRows.length}`);
-    if (d.props?.scanned != null && d.props.scanned > propRows.length) {
-      push(`_(${d.props.scanned} property name(s) found in rule bodies; ${d.props.scanned - propRows.length} not present in this snapshot — assume OOTB defaults.)_`);
+    if (refPropNames.size > propRows.length) {
+      push(`_(${refPropNames.size} property name(s) found in rule bodies; ${refPropNames.size - propRows.length} not present in this snapshot — assume OOTB defaults.)_`);
     }
     for (const p of propRows) {
       push('');
@@ -2170,12 +2237,13 @@ flagging the omission.
     // Flows referenced by scan. One line per flow — we deliberately don't
     // embed the flow JSON; it's huge and the model can reason from name +
     // description for almost every diagnostic question.
-    const flowRows = (d.flows?.rows || []).slice()
+    const flowRows = (d.flows?.rows || []).filter(f => refFlowNames.has(f.name) || refFlowNames.has(f.internal_name)).slice()
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    mark('flows');
     push('');
     push(`## Flows referenced — ${flowRows.length}`);
-    if (d.flows?.scanned != null && d.flows.scanned > flowRows.length) {
-      push(`_(${d.flows.scanned} flow name(s) found in rule bodies; ${d.flows.scanned - flowRows.length} not present in this snapshot — assume OOTB.)_`);
+    if (refFlowNames.size > flowRows.length) {
+      push(`_(${refFlowNames.size} flow name(s) found in rule bodies; ${refFlowNames.size - flowRows.length} not present in this snapshot — assume OOTB.)_`);
     }
     for (const f of flowRows) {
       push('');
@@ -2186,6 +2254,16 @@ flagging the omission.
       ].filter(Boolean).join(', ');
       push(`- "${f.name || '(unnamed)'}" — ${meta}`);
       if (f.description) push(`  ${f.description}`);
+    }
+
+    // Remove excluded sections, back-to-front so earlier ranges keep their
+    // indices (a splice only shifts content after the cut). Each section
+    // runs from its mark until the next mark (or end of document).
+    for (let i = sectionMarks.length - 1; i >= 0; i--) {
+      if (!exclude[sectionMarks[i].id]) continue;
+      const start = sectionMarks[i].at;
+      const end = i + 1 < sectionMarks.length ? sectionMarks[i + 1].at : lines.length;
+      lines.splice(start, end - start);
     }
 
     return lines.join('\n') + '\n';
@@ -2588,22 +2666,22 @@ flagging the omission.
   // the prompt without cascading the includes they referenced. The
   // word-boundary scanner is happy to run against encoded-query
   // syntax too — those just won't match any include names.
-  function seedScriptsFor(d) {
+  function seedScriptsFor(d, exclude = {}) {
     const out = [];
     const active = (env) => (env?.rows || []).filter(r => isTrue(r.active) || r.active == null);
     const push = (label, body) => {
       if (body) out.push({ label, body: String(body) });
     };
-    for (const r of active(d.br)) {
+    if (!exclude.br) for (const r of active(d.br)) {
       push(`BR/${r.name}`,            r.script);
       push(`BR/${r.name}/condition`,  r.condition);
       push(`BR/${r.name}/filter`,     r.filter_condition);
     }
-    for (const r of active(d.cs)) {
+    if (!exclude.cs) for (const r of active(d.cs)) {
       push(`CS/${r.name}`,           r.script);
       push(`CS/${r.name}/condition`, r.condition);
     }
-    for (const p of active(d.uip)) {
+    if (!exclude.uip) for (const p of active(d.uip)) {
       push(`UIP/${p.short_description}/true`,  p.script_true);
       push(`UIP/${p.short_description}/false`, p.script_false);
     }
@@ -2611,22 +2689,22 @@ flagging the omission.
     // properties / flows); seed the cascade from them too so anything the
     // include-cascade walks through is grounded in every script we show
     // in the prompt.
-    for (const r of active(d.acls)) {
+    if (!exclude.acls) for (const r of active(d.acls)) {
       push(`ACL/${r.name}`,           r.script);
       push(`ACL/${r.name}/condition`, r.condition);
     }
-    for (const r of active(d.uiact)) {
+    if (!exclude.uiact) for (const r of active(d.uiact)) {
       push(`UIA/${r.name}`,           r.script);
       push(`UIA/${r.name}/condition`, r.condition);
       push(`UIA/${r.name}/onclick`,   r.onclick);
     }
     // Email-action scripts are shown in the prompt too — seed the cascade
     // from them so the includes they call are resolved like any other.
-    for (const r of active(d.iea)) {
+    if (!exclude.iea) for (const r of active(d.iea)) {
       push(`IEA/${r.name}`,        r.script);
       push(`IEA/${r.name}/filter`, r.filter_condition);
     }
-    for (const r of active(d.notif)) {
+    if (!exclude.notif) for (const r of active(d.notif)) {
       push(`NOTIF/${r.name}/advanced`, r.advanced_condition);
     }
     return out;
@@ -2646,7 +2724,7 @@ flagging the omission.
     const [building, setBuilding] = useState(false);
     const [modal, setModal]       = useState(null);
     const [menuOpen, setMenuOpen] = useState(false);
-    const [opts, setOpts]         = useState({ resolveIncludes: false });
+    const [opts, setOpts]         = useState({ resolveIncludes: false, exclude: {} });
     const anchorRef               = React.useRef(null);
     // props/flows are derived after BR/CS/UIP settle, so they finish last —
     // including them in the readiness gate keeps the user from copying a
@@ -2657,8 +2735,8 @@ flagging the omission.
     });
     const ready = readiness.every(Boolean);
     const basePrompt = useMemo(
-      () => ready ? buildLogicPrompt(name, d, opts.resolveIncludes) : '',
-      [ready, name, d, opts.resolveIncludes],
+      () => ready ? buildLogicPrompt(name, d, opts.resolveIncludes, opts.exclude) : '',
+      [ready, name, d, opts.resolveIncludes, opts.exclude],
     );
     const baseKb = basePrompt ? Math.round(basePrompt.length / 1024) : 0;
 
@@ -2691,7 +2769,7 @@ flagging the omission.
         let tail = '';
         if (opts.resolveIncludes) {
           try {
-            const seeds = seedScriptsFor(d);
+            const seeds = seedScriptsFor(d, opts.exclude);
             const cascaded = await gatherCascadedIncludes(seeds);
             tail = renderIncludesSection(cascaded, basePrompt.length);
           } catch (e) {
@@ -2772,6 +2850,26 @@ flagging the omission.
                 </div>
               </span>
             </label>
+            <div style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <span style={{ flex: 1 }}>Include sections</span>
+              <button onClick={() => setOpts(o => ({ ...o, exclude: {} }))}
+                style={{ background: 'none', border: 'none', color: 'var(--accent-fg)', cursor: 'pointer', fontSize: 11, padding: 0 }}>all</button>
+              <button onClick={() => setOpts(o => ({ ...o, exclude: Object.fromEntries(PROMPT_SECTIONS.map(s => [s.id, true])) }))}
+                style={{ background: 'none', border: 'none', color: 'var(--fg-4)', cursor: 'pointer', fontSize: 11, padding: 0 }}>none</button>
+            </div>
+            <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', border: '1px solid var(--border-2)', borderRadius: 6, padding: '4px 8px' }}>
+              {PROMPT_SECTIONS.map(s => {
+                const n = d[s.id]?.total ?? (d[s.id]?.rows || []).length;
+                return (
+                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '2px 0', fontSize: 12.5, opacity: n ? 1 : 0.5 }}>
+                    <input type="checkbox" checked={!opts.exclude[s.id]}
+                      onChange={e => setOpts(o => ({ ...o, exclude: { ...o.exclude, [s.id]: !e.target.checked } }))} />
+                    <span style={{ flex: 1 }}>{s.label}</span>
+                    <span className="mono" style={{ color: 'var(--fg-4)', fontSize: 11 }}>{n}</span>
+                  </label>
+                );
+              })}
+            </div>
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <button onClick={() => setMenuOpen(false)} className="toggle"
                 style={{ padding: '4px 10px', fontSize: 11.5, height: 24, borderRadius: 12 }}>

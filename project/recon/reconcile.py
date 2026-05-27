@@ -131,6 +131,16 @@ def main(argv=None):
         print('[%d/%d] %-32s %s' % (i, len(tables), t,
               _quick_verdict(per)), file=sys.stderr)
 
+    # Whole-table archive loss: tables we intended to archive that have no DB
+    # table at all. Reconcile each against live (db_count=0) so a missing table
+    # still holding source rows FAILS the gate; an empty source table passes.
+    # These would otherwise be metadata-only and excluded from the verdict.
+    for t in intended_absent:
+        cp = live.count_parity(t, manifest, state, 0)
+        cp['absent_from_db'] = True
+        results[t] = {'live': {'count_parity': cp}}
+        print('[absent] %-32s %s' % (t, cp.get('verdict')), file=sys.stderr)
+
     meta = {
         'schema_version': 1,
         'generated_at': common.utc_iso(),

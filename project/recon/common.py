@@ -113,25 +113,33 @@ def manifest_by_table(manifest):
 
 
 def snapshot_cutoff(table, manifest, state):
-    """Resolve the creation cutoff for the as-of live count.
+    """Resolve the per-table creation cutoff for the as-of live count.
 
-    A live row existed in the snapshot iff it was created on or before the
-    export captured the data, so the count is constrained with
-    ``sys_created_on<=<cutoff>``. Use the manifest capture time (export
-    completion) — NOT the per-table delta watermark. The watermark is
-    ``max(sys_updated_on)`` and can predate completion, so a row created between
-    the last update and capture would be wrongly excluded from live_asof, and a
-    DB missing those rows could still pass the gate. Fall back to the per-table
-    watermark only when captured_at is absent (flagged approximate).
+    The archive is built incrementally per table; the watermark is
+    ``max(sys_updated_on)`` (or ``sys_created_on`` for append-only tables) over
+    all archived rows — that table's snapshot boundary. Every archived row has
+    ``created_on <= updated_on <= watermark``, and any row created at/before the
+    pull would have been fetched and pushed the watermark forward, so no live
+    row exists with ``watermark < created_on <= pull_time``. The rows that
+    *should* be in the archive are therefore exactly the live rows with
+    ``sys_created_on <= watermark``: comparing that count to the DB count catches
+    real loss (a missing in-snapshot row makes asof > db) while NOT flagging rows
+    created after the table's snapshot (those surface as creates-since via
+    live_now).
+
+    A per-table watermark is used, not the global ``captured_at`` — the global
+    capture time would over-count for tables exported early in a long run
+    (inserts between a table's pull and the manifest write would look like loss).
+    Falls back to ``captured_at`` only when a table has no watermark at all.
     Returns (cutoff_string_or_None, source_label).
     """
-    cap = manifest.get('captured_at')           # e.g. 2026-05-01T15:09:00Z
-    if cap:
-        return cap.replace('T', ' ').replace('Z', '').strip()[:19], 'captured_at'
     wm = ((state.get('watermarks') or {}).get(table)
           or manifest_by_table(manifest).get(table, {}).get('watermark'))
     if wm:
-        return wm, 'watermark_approx'
+        return wm, 'watermark'
+    cap = manifest.get('captured_at')           # e.g. 2026-05-01T15:09:00Z
+    if cap:
+        return cap.replace('T', ' ').replace('Z', '').strip()[:19], 'captured_at_fallback'
     return None, 'none'
 
 

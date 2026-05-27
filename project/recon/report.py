@@ -74,6 +74,8 @@ def _table_signals(entry):
 
     cp = live.get('count_parity')
     if cp:
+        if cp.get('absent_from_db'):
+            bits.append('ABSENT_FROM_DB')
         if cp.get('error'):
             bits.append('count_err')
         if 'missing_vs_asof' in cp:

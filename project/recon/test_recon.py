@@ -34,8 +34,9 @@ class FakeEx:
     from a canned live-row map; omitted ids simulate source deletes."""
     TABLE_FILTERS = {}
 
-    def __init__(self, live_rows):
+    def __init__(self, live_rows, stats_count=0):
         self.live = {r['sys_id']['value']: r for r in live_rows}
+        self.stats_count = stats_count
         self.calls = []
 
     def class_filter(self, table):
@@ -53,6 +54,8 @@ class FakeEx:
 
     def api_get_json(self, path, params=None):
         self.calls.append((path, params))
+        if path.startswith('/api/now/stats/'):
+            return {'result': {'stats': {'count': self.stats_count}}}
         q = (params or {}).get('sysparm_query', '')
         ids = []
         for part in q.split('^'):
@@ -342,16 +345,29 @@ def test_main_live_without_creds_returns_nonzero():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def test_snapshot_cutoff_prefers_captured_at():
+def test_snapshot_cutoff_prefers_per_table_watermark():
+    # per-table watermark is the snapshot boundary; global captured_at would
+    # over-count for early-exported tables, so it's only a fallback.
     manifest = {'captured_at': '2026-05-01T15:09:00Z',
                 'tables': [{'table': 't', 'watermark': '2026-04-01 00:00:00'}]}
-    state = {'watermarks': {'t': '2026-04-01 00:00:00'}}
+    state = {'watermarks': {'t': '2026-04-10 00:00:00'}}
     cut, src = common.snapshot_cutoff('t', manifest, state)
-    assert (cut, src) == ('2026-05-01 15:09:00', 'captured_at'), (cut, src)
-    # fall back to the watermark (flagged approximate) only without captured_at
-    cut2, src2 = common.snapshot_cutoff(
-        't', {'tables': [{'table': 't', 'watermark': '2026-04-01 00:00:00'}]}, state)
-    assert src2 == 'watermark_approx', src2
+    assert (cut, src) == ('2026-04-10 00:00:00', 'watermark'), (cut, src)
+    # fall back to captured_at only when the table has no watermark
+    cut2, src2 = common.snapshot_cutoff('t', {'captured_at': '2026-05-01T15:09:00Z'}, {})
+    assert (cut2, src2) == ('2026-05-01 15:09:00', 'captured_at_fallback'), (cut2, src2)
+
+
+def test_count_parity_absent_table_with_live_rows_fails():
+    # a table missing from the DB but still holding live rows must FAIL the gate
+    fake = FakeEx([], stats_count=5)
+    live.ex = fake
+    try:
+        cp = live.count_parity('missing_table',
+                               {'captured_at': '2026-05-01T00:00:00Z'}, {}, 0)
+    finally:
+        live.ex = None
+    assert cp['verdict'] == FAIL and cp.get('missing_vs_asof') == 5, cp
 
 
 # ---- runner ----------------------------------------------------------------

@@ -144,8 +144,14 @@ outside a `data/` directory unless `--allow-unsafe-out` is passed.
   filter on both the count and the re-fetch.
 - `sys_email` bodies are excluded from the compare when the export skipped them.
 - Volatile fields that change without bumping `sys_updated_on` (`sys_mod_count`,
-  `sys_view_count`, `compiler_build`, `latest_snapshot`, `sizeclass`) are excluded
-  from the same-revision corruption check; extend with `--ignore-fields`.
+  `sys_view_count`, `compiler_build`, `latest_snapshot`, `sizeclass`, plus the
+  `sys_user` login-activity fields `last_login`/`last_login_time`/
+  `last_login_device`/`failed_attempts`) are excluded from the same-revision
+  corruption check. Extend per-instance with `--ignore-fields a,b,c` for custom
+  fields that also auto-update without a revision bump (e.g. `u_*` integrations).
+- A Phase A "all-empty fields" WARN auto-downgrades to PASS when Phase B's
+  `population_parity` ran clean for the same table — live confirms the fields
+  are genuinely unused, not capture gaps.
 - The "should be in the DB" set is `build_sqlite.SCHEMAS`. A SCHEMAS table missing
   from the DB is a FAIL; tables exported to NDJSON but not in SCHEMAS are reported
   as *exported-but-not-built* (informational) — add them to SCHEMAS if you want

@@ -117,6 +117,16 @@ def test_classify_volatile_not_corruption():
     assert compare.classify_record(a, c)[:2] == ('CORRUPTION', FAIL)
 
 
+def test_classify_login_fields_are_volatile():
+    # sys_user login-activity fields update without bumping sys_updated_on, so
+    # a same-revision diff on them must be MATCH (not CORRUPTION).
+    a = row('a', last_login=env('2026-05-01 00:00:00'),
+            last_login_time=env('2026-05-01 00:00:00'))
+    b = row('a', last_login=env('2026-05-27 12:00:00'),
+            last_login_time=env('2026-05-27 12:00:00'))
+    assert compare.classify_record(a, b)[:2] == ('MATCH', PASS)
+
+
 def test_classify_display_drift():
     a = row('a', mgr=env('sysid1', 'Alice'))
     b = row('a', mgr=env('sysid1', 'Alice Smith'))   # value same, label moved
@@ -371,6 +381,35 @@ def test_report_renders_short_vs_asof():
     text = report.render_text(rep)
     assert 'short=5' in text, text
     assert 'export-window churn' in text, text
+
+
+def test_confirm_all_empty_downgrades_when_pop_parity_passes():
+    # Phase A "all-empty fields" WARN downgrades to PASS when Phase B's
+    # population_parity ran clean (live confirms the fields are also empty,
+    # so they're genuinely unused — not a capture gap).
+    results = {
+        'safe': {
+            'offline': {'field_profile': {'verdict': WARN,
+                                          'suspicious_all_empty': ['code', 'manager']}},
+            'live': {'population_parity': {'verdict': PASS, 'gap_fields': []}},
+        },
+        'gap': {
+            'offline': {'field_profile': {'verdict': WARN,
+                                          'suspicious_all_empty': ['x']}},
+            'live': {'population_parity': {'verdict': FAIL, 'gap_fields': ['x']}},
+        },
+        'no_live': {
+            'offline': {'field_profile': {'verdict': WARN,
+                                          'suspicious_all_empty': ['y']}},
+        },
+    }
+    report.confirm_offline_all_empty_with_live(results)
+    # safe: live confirmed -> WARN downgraded to PASS
+    assert results['safe']['offline']['field_profile']['verdict'] == PASS
+    # gap: live actually FAILed; do not downgrade
+    assert results['gap']['offline']['field_profile']['verdict'] == WARN
+    # no_live: no Phase B to confirm -> stay WARN
+    assert results['no_live']['offline']['field_profile']['verdict'] == WARN
 
 
 def test_info_does_not_escalate():

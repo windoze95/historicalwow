@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import common, offline, live, report
-from .common import FAIL
+from .common import FAIL, WARN
 
 
 def parse_args(argv):
@@ -182,6 +182,9 @@ def main(argv=None):
         # exported to NDJSON but intentionally not built into the served DB
         # (not in build_sqlite.SCHEMAS) — informational, not a failure.
         meta['exported_but_not_built'] = exported_not_built
+
+    # Cross-phase noise reduction before rollup.
+    report.confirm_offline_all_empty_with_live(results)
 
     rep = report.build_report(meta, results)
     out_dir = Path(args.out) if args.out else (data_dir / ('recon_%s' % common.utc_stamp()))

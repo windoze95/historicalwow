@@ -492,6 +492,44 @@ def test_count_parity_zero_tolerance_fails_any_shortfall():
     assert one['verdict'] == FAIL and one.get('missing_vs_asof') == 1, one
 
 
+def test_live_readable_or_stats_fallback_on_400():
+    # /table rejecting the query (e.g., sys_audit's huge tablenameIN filter)
+    # must fall back to /stats so the table still gets a verdict
+    import urllib.error
+    live.ex = FakeEx([], stats_count=12345)
+    saved = live._live_readable_count
+    def boom(t, q):
+        raise urllib.error.HTTPError('url', 400, 'Bad Request', {}, None)
+    live._live_readable_count = boom
+    try:
+        n, src = live._live_readable_or_stats('sys_audit', 'tablenameIN...')
+    finally:
+        live._live_readable_count = saved
+        live.ex = None
+    assert (n, src) == (12345, 'stats_fallback')
+
+
+def test_live_readable_or_stats_no_fallback_on_other_4xx():
+    # 403/404 (and other non-400/414) propagate — they're not the long-query
+    # rejection case the fallback targets
+    import urllib.error
+    live.ex = FakeEx([])
+    saved = live._live_readable_count
+    def boom(t, q):
+        raise urllib.error.HTTPError('url', 403, 'Forbidden', {}, None)
+    live._live_readable_count = boom
+    try:
+        raised = False
+        try:
+            live._live_readable_or_stats('t', 'x')
+        except urllib.error.HTTPError as he:
+            raised = (he.code == 403)
+    finally:
+        live._live_readable_count = saved
+        live.ex = None
+    assert raised
+
+
 def test_count_parity_uses_readable_not_stats_on_acl_gap():
     # /stats over-counts when ACLs hide rows from the OAuth user; verdict must
     # use the /table-readable count (apples-to-apples with the export), not

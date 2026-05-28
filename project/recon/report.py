@@ -164,6 +164,8 @@ def _detail_lines(entry):
     if 'missing_vs_asof' in cp:
         out.append('count: DB=%s but live had %s as-of snapshot (missing %s)'
                    % (cp.get('db'), cp.get('live_asof'), cp['missing_vs_asof']))
+        if cp.get('note'):
+            out.append('  note: %s' % cp['note'])
     if 'short_vs_asof' in cp:
         out.append('count: DB=%s vs live as-of %s — short %s (%s)'
                    % (cp.get('db'), cp.get('live_asof'), cp['short_vs_asof'],

@@ -69,12 +69,13 @@ python3 -m recon.test_recon
 
 6. **count_parity** — live count *as-of the snapshot watermark*, using the same
    per-table filter the exporter applied, vs the DB count. The verdict count
-   comes from `/api/now/table`'s `X-Total-Count` header (one API call,
-   **ACL-respecting** — apples-to-apples with what the export user can pull).
-   The `/api/now/stats` count is recorded alongside as `live_*_stats`; when it
-   exceeds the readable count, the gap is reported as `acl_filtered_asof`
-   (rows live has but the export user cannot read — *not* counted toward FAIL).
-   A shortfall within `--count-tolerance-pct` is WARN (rows created during the
+   comes from `/api/now/table`'s `X-Total-Count` header (one API call). When
+   `/table` rejects the query (HTTP 400/414 — typically a very long
+   `tablenameIN<…>` filter on `sys_audit` / `sys_journal_field` /
+   `sys_attachment`), it falls back to `/api/now/stats` so the table still gets
+   a verdict; the report marks `live_*_source` as `/stats fallback`. `/stats`
+   is also recorded alongside as `live_*_stats` for cross-check. A shortfall
+   within `--count-tolerance-pct` is WARN (rows created during the
    non-instantaneous export); beyond it is FAIL. Records created *after* the
    watermark are reported as `creates_since` (INFO).
 7. **field_set** — every field the live record carries is present in the archive.

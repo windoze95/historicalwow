@@ -117,6 +117,20 @@ def _live_readable_count(table, query):
     raise RuntimeError('readable count failed for %s: %s' % (table, last))
 
 
+def _live_readable_or_stats(table, query):
+    """Try _live_readable_count (/table X-Total-Count) first; on HTTP 400/414
+    fall back to _stats_count (some queries — e.g. sys_audit's very long
+    tablenameIN<DISPLAYED> filter — get rejected by the /table endpoint but
+    served by /stats). Returns (count, source) where source is 'table' or
+    'stats_fallback' so the caller can flag the fallback in the report."""
+    try:
+        return _live_readable_count(table, query), 'table'
+    except urllib.error.HTTPError as he:
+        if he.code in (400, 414):
+            return _stats_count(table, query), 'stats_fallback'
+        raise
+
+
 # ---- checks ----------------------------------------------------------------
 def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     """Live count as-of the snapshot watermark vs the DB count, using the same
@@ -134,9 +148,12 @@ def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     base_q = '^'.join(base) if base else ''
     asof_q = '^'.join(base + ['sys_created_on<=%s' % cutoff]) if cutoff else None
 
-    # readable counts (ACL-respecting; the verdict-relevant numbers)
+    # readable counts (verdict-relevant). /table X-Total-Count is preferred;
+    # fall back to /stats on long-query rejections so we never lose the signal.
     try:
-        res['live_now'] = _live_readable_count(table, base_q)
+        res['live_now'], src = _live_readable_or_stats(table, base_q)
+        if src == 'stats_fallback':
+            res['live_now_source'] = '/stats fallback (/table rejected the query)'
     except Exception as e:                                       # noqa: BLE001
         res['verdict'] = WARN
         res['error'] = 'live readable count failed: %s' % str(e)[:140]
@@ -144,7 +161,9 @@ def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     asof = None
     if cutoff:
         try:
-            asof = _live_readable_count(table, asof_q)
+            asof, src = _live_readable_or_stats(table, asof_q)
+            if src == 'stats_fallback':
+                res['live_asof_source'] = '/stats fallback (/table rejected the query)'
         except Exception as e:                                   # noqa: BLE001
             res['asof_error'] = str(e)[:140]
     res['live_asof'] = asof
@@ -177,9 +196,17 @@ def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
                 res['note'] = ('short %.3f%% (<= %.3g%% tol) — export-window churn'
                                % (rel * 100, tolerance_pct))
             else:
-                # any shortfall at zero tolerance, or beyond the band, is loss
+                # beyond tolerance (or zero-tolerance): FAIL. Tolerance trumps
+                # fallback uncertainty — the user's tolerance is the contract.
+                # If the count came from the /stats fallback, attach a note so
+                # the operator can investigate whether it's real loss or ACL
+                # filtering before treating it as definitive.
                 res['verdict'] = FAIL
                 res['missing_vs_asof'] = shortfall
+                if res.get('live_asof_source'):
+                    res['note'] = ('count via /stats fallback — may include '
+                                   'ACL-hidden rows; investigate to distinguish '
+                                   'real loss from ACL filtering')
         elif db_count > asof:
             res['deletes_since'] = db_count - asof          # expected; not a failure
     if res.get('live_now') is not None and res['live_now'] > db_count:

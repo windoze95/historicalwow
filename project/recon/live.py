@@ -6,8 +6,14 @@ how the archive was captured. The exporter module is imported lazily — and onl
 after confirming SN_* env is set — because it sys.exit(2)s at import time when
 creds are absent. Tests inject a stub by setting ``live.ex`` directly.
 """
+import http.client
 import os
+import ssl
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import common, compare
 from .common import PASS, WARN, FAIL
@@ -71,32 +77,92 @@ def _stats_count(table, query):
     return int(resp.get('result', {}).get('stats', {}).get('count', 0))
 
 
+_RC_TRANSIENT = (urllib.error.URLError, http.client.HTTPException,
+                 TimeoutError, ssl.SSLError, ConnectionError)
+
+
+def _live_readable_count(table, query):
+    """ACL-respecting count from the /api/now/table endpoint via the
+    X-Total-Count response header — one API call. Use this for count_parity,
+    not /api/now/stats: the stats API ignores ACLs and over-counts whenever the
+    OAuth export user lacks read access to some rows (i.e. it counts records
+    the export could never have captured). This is apples-to-apples with the
+    export. Mirrors ex.api_get_json's retry/backoff for 401/429/5xx."""
+    e = get_ex()
+    params = {'sysparm_query': query, 'sysparm_limit': 1, 'sysparm_fields': 'sys_id'}
+    url = 'https://%s/api/now/table/%s?%s' % (
+        e.INSTANCE, table, urllib.parse.urlencode(params))
+    last = None
+    for attempt in range(1, e.RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers={
+                'Authorization': 'Bearer %s' % e.get_token(),
+                'Accept': 'application/json',
+            })
+            with urllib.request.urlopen(req, timeout=e.TIMEOUT) as r:
+                total = r.headers.get('X-Total-Count')
+            return int(total) if total is not None else None
+        except urllib.error.HTTPError as he:
+            if he.code == 401:
+                e._token['access_token'] = None
+                continue
+            if he.code == 429 or 500 <= he.code < 600:
+                time.sleep(min(60, 2 ** attempt))
+                last = he
+                continue
+            raise
+        except _RC_TRANSIENT as exc:
+            time.sleep(min(60, 2 ** attempt))
+            last = exc
+    raise RuntimeError('readable count failed for %s: %s' % (table, last))
+
+
 # ---- checks ----------------------------------------------------------------
 def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
     """Live count as-of the snapshot watermark vs the DB count, using the same
-    filter the exporter applied. db > live_asof = source deletes since capture
-    (reported, PASS); live_now > db = creates since capture (reported, PASS). A
-    db < live_asof shortfall within tolerance_pct is WARN (rows created during
-    the non-instantaneous export, between a table's pull and its watermark);
-    beyond tolerance it's FAIL (real loss / stale DB)."""
+    filter the exporter applied. The verdict-relevant counts come from the
+    /api/now/table X-Total-Count header (ACL-respecting — apples-to-apples
+    with what the export user can pull). /api/now/stats counts are recorded
+    alongside as informational; when stats > readable, the gap is reported as
+    `acl_filtered_asof` so the operator can see how many rows are inaccessible
+    to the export user. db > live_asof = deletes since capture (PASS); live_now
+    > db = creates since capture (PASS); db < live_asof within tolerance_pct =
+    WARN export-window churn; beyond it = FAIL real loss / stale DB."""
     base = _base_filter(table)
     cutoff, src = common.snapshot_cutoff(table, manifest, state)
     res = {'verdict': PASS, 'db': db_count, 'cutoff': cutoff, 'cutoff_source': src}
+    base_q = '^'.join(base) if base else ''
+    asof_q = '^'.join(base + ['sys_created_on<=%s' % cutoff]) if cutoff else None
 
+    # readable counts (ACL-respecting; the verdict-relevant numbers)
     try:
-        res['live_now'] = _stats_count(table, '^'.join(base) if base else '')
+        res['live_now'] = _live_readable_count(table, base_q)
     except Exception as e:                                       # noqa: BLE001
         res['verdict'] = WARN
-        res['error'] = 'live count failed: %s' % str(e)[:140]
+        res['error'] = 'live readable count failed: %s' % str(e)[:140]
         return res
-
     asof = None
     if cutoff:
         try:
-            asof = _stats_count(table, '^'.join(base + ['sys_created_on<=%s' % cutoff]))
+            asof = _live_readable_count(table, asof_q)
         except Exception as e:                                   # noqa: BLE001
             res['asof_error'] = str(e)[:140]
     res['live_asof'] = asof
+
+    # /stats counts (informational; surface ACL discrepancy when stats > readable)
+    try:
+        res['live_now_stats'] = _stats_count(table, base_q)
+    except Exception:                                            # noqa: BLE001
+        pass
+    if cutoff:
+        try:
+            stats_asof = _stats_count(table, asof_q)
+            res['live_asof_stats'] = stats_asof
+            if (stats_asof is not None and asof is not None
+                    and stats_asof > asof):
+                res['acl_filtered_asof'] = stats_asof - asof
+        except Exception:                                        # noqa: BLE001
+            pass
 
     if asof is not None:
         shortfall = asof - db_count

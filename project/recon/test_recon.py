@@ -438,13 +438,27 @@ def test_snapshot_cutoff_prefers_per_table_watermark():
     assert (cut2, src2) == ('2026-05-01 15:09:00', 'captured_at_fallback'), (cut2, src2)
 
 
+def _mock_readable(value):
+    """Save/install/restore mock for live._live_readable_count. Use:
+        with _mock_readable(N): ...
+    """
+    class _Ctx:
+        def __enter__(self):
+            self.saved = live._live_readable_count
+            live._live_readable_count = lambda t, q: value
+            return self
+        def __exit__(self, *a):
+            live._live_readable_count = self.saved
+    return _Ctx()
+
+
 def test_count_parity_absent_table_with_live_rows_fails():
     # a table missing from the DB but still holding live rows must FAIL the gate
-    fake = FakeEx([], stats_count=5)
-    live.ex = fake
+    live.ex = FakeEx([], stats_count=5)
     try:
-        cp = live.count_parity('missing_table',
-                               {'captured_at': '2026-05-01T00:00:00Z'}, {}, 0)
+        with _mock_readable(5):
+            cp = live.count_parity('missing_table',
+                                   {'captured_at': '2026-05-01T00:00:00Z'}, {}, 0)
     finally:
         live.ex = None
     assert cp['verdict'] == FAIL and cp.get('missing_vs_asof') == 5, cp
@@ -454,8 +468,9 @@ def test_count_parity_tolerance_band():
     manifest = {'captured_at': '2026-05-01T00:00:00Z'}
     live.ex = FakeEx([], stats_count=1000)
     try:
-        small = live.count_parity('t', manifest, {}, 995, tolerance_pct=1.0)
-        big = live.count_parity('t', manifest, {}, 900, tolerance_pct=1.0)
+        with _mock_readable(1000):
+            small = live.count_parity('t', manifest, {}, 995, tolerance_pct=1.0)
+            big = live.count_parity('t', manifest, {}, 900, tolerance_pct=1.0)
     finally:
         live.ex = None
     # small shortfall (0.5%) within tolerance -> WARN, not FAIL
@@ -469,11 +484,30 @@ def test_count_parity_zero_tolerance_fails_any_shortfall():
     # not let it through an absolute floor
     live.ex = FakeEx([], stats_count=1000)
     try:
-        one = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
-                                {}, 999, tolerance_pct=0)
+        with _mock_readable(1000):
+            one = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
+                                    {}, 999, tolerance_pct=0)
     finally:
         live.ex = None
     assert one['verdict'] == FAIL and one.get('missing_vs_asof') == 1, one
+
+
+def test_count_parity_uses_readable_not_stats_on_acl_gap():
+    # /stats over-counts when ACLs hide rows from the OAuth user; verdict must
+    # use the /table-readable count (apples-to-apples with the export), not
+    # /stats. The ACL gap is reported informationally as acl_filtered_asof.
+    live.ex = FakeEx([], stats_count=1000)   # /stats says 1000
+    try:
+        with _mock_readable(500):            # /table-readable says 500
+            cp = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
+                                   {}, 500, tolerance_pct=0)
+    finally:
+        live.ex = None
+    # archive matches readable -> PASS at zero tolerance (no real loss)
+    assert cp['verdict'] == PASS, cp
+    assert cp.get('live_asof') == 500
+    assert cp.get('live_asof_stats') == 1000
+    assert cp.get('acl_filtered_asof') == 500
 
 
 # ---- runner ----------------------------------------------------------------

@@ -69,15 +69,18 @@ python3 -m recon.test_recon
 
 6. **count_parity** — live count *as-of the snapshot watermark*, using the same
    per-table filter the exporter applied, vs the DB count. The verdict count
-   comes from `/api/now/table`'s `X-Total-Count` header (one API call). When
-   `/table` rejects the query (HTTP 400/414 — typically a very long
-   `tablenameIN<…>` filter on `sys_audit` / `sys_journal_field` /
-   `sys_attachment`), it falls back to `/api/now/stats` so the table still gets
-   a verdict; the report marks `live_*_source` as `/stats fallback`. `/stats`
-   is also recorded alongside as `live_*_stats` for cross-check. A shortfall
-   within `--count-tolerance-pct` is WARN (rows created during the
-   non-instantaneous export); beyond it is FAIL. Records created *after* the
-   watermark are reported as `creates_since` (INFO).
+   is picked per-table: for tables whose `/api/now/stats` count is
+   `<= --paginate-count-max` (default 50000), the harness **cursor-paginates
+   `/api/now/table`** for a *truly ACL-respecting* count (each page returns
+   only rows the OAuth user can read). When the paginated count is less than
+   `/stats`, the gap is reported as `acl_filtered_asof` — rows live has but
+   the export user cannot read. For larger tables it uses `/table`'s
+   `X-Total-Count` header (one call; same as `/stats` — NOT ACL-respecting);
+   on HTTP 400/414 (long `tablenameIN<…>` queries like `sys_audit`) it falls
+   back to `/stats` with a `stats_fallback` note on any beyond-tolerance FAIL.
+   A shortfall within `--count-tolerance-pct` is WARN (rows created during
+   the non-instantaneous export); beyond it is FAIL. Records created *after*
+   the watermark are reported as `creates_since` (INFO).
 7. **field_set** — every field the live record carries is present in the archive.
 8. **deep_check** — re-fetches a random sample (`--sample`, default 200) by
    sys_id and classifies each record (see below).
@@ -131,6 +134,8 @@ outside a `data/` directory unless `--allow-unsafe-out` is passed.
 --sample-extractor N         rows for the extractor-fidelity check (default: 5000)
 --count-tolerance-pct P      count shortfall within P% is WARN (export-window churn),
                              beyond it FAIL (default: 1.0; use 0 for the final gate)
+--paginate-count-max N       tables with /stats count <= N use cursor-paginated /table
+                             for a truly ACL-respecting count (default: 50000)
 --ignore-fields a,b          extra volatile fields excluded from the corruption check
 --db PATH                    archive DB (default: project/data/historicalwow.db)
 --out PATH                   report dir (default: <data>/recon_<timestamp>)

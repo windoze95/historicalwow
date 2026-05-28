@@ -43,6 +43,10 @@ def parse_args(argv):
                     help='live count shortfall within this %% is WARN (export-window '
                          'churn), beyond it FAIL (default: 1.0; use 0 for the final '
                          'frozen pre-shutdown gate)')
+    ap.add_argument('--paginate-count-max', type=int, default=50000,
+                    help='tables whose /stats count is <= this use cursor-paginated '
+                         '/table for a TRULY ACL-respecting count; larger tables use '
+                         '/table X-Total-Count (default: 50000)')
     ap.add_argument('--ignore-fields', default='',
                     help='comma-separated extra fields to treat as volatile (excluded '
                          'from the same-revision corruption check)')
@@ -159,7 +163,8 @@ def main(argv=None):
     # metadata-only and excluded from the verdict.
     for t in absent_to_check:
         cp = live.count_parity(t, manifest, state, 0,
-                               tolerance_pct=args.count_tolerance_pct)
+                               tolerance_pct=args.count_tolerance_pct,
+                               paginate_count_max=args.paginate_count_max)
         cp['absent_from_db'] = True
         results[t] = {'live': {'count_parity': cp}}
         print('[absent] %-32s %s' % (t, cp.get('verdict')), file=sys.stderr)
@@ -202,6 +207,7 @@ def args_to_opts(args):
         profile_limit=args.profile_limit, sample_raw=args.sample_raw,
         sample_extractor=args.sample_extractor,
         count_tolerance_pct=args.count_tolerance_pct,
+        paginate_count_max=args.paginate_count_max,
         ignore_fields=[f.strip() for f in args.ignore_fields.split(',') if f.strip()])
 
 

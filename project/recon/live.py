@@ -117,6 +117,69 @@ def _live_readable_count(table, query):
     raise RuntimeError('readable count failed for %s: %s' % (table, last))
 
 
+def _live_paginated_count(table, query, max_rows):
+    """ACL-respecting count via cursor-paginated /api/now/table — each page
+    returns ONLY rows the OAuth user can read, so summing page lengths gives
+    the true readable count (which X-Total-Count and /stats do not). Slow on
+    large tables, so callers gate this on a max_rows threshold and fall back
+    to X-Total-Count for larger ones.
+
+    Termination is the subtle bit: short pages can be the natural end of
+    results OR pages where SN's ACL filtered some rows below the limit. We
+    only terminate on (a) empty page or (b) cursor not advancing — never on
+    `len(page) < limit`, which was the bug behind earlier 'truncated' counts.
+    Raises RuntimeError if the count would exceed max_rows (caller falls back).
+    """
+    e = get_ex()
+    PAGE = 1000
+    count = 0
+    last = ''
+    while True:
+        if count > max_rows:
+            raise RuntimeError('paginated count exceeds max_rows=%d for %s'
+                               % (max_rows, table))
+        parts = [query] if query else []
+        if last:
+            parts.append('sys_id>' + last)
+        parts.append('ORDERBYsys_id')
+        params = {
+            'sysparm_query': '^'.join(parts),
+            'sysparm_limit': PAGE,
+            'sysparm_fields': 'sys_id',
+            'sysparm_exclude_reference_link': 'true',
+        }
+        resp = e.api_get_json('/api/now/table/' + table, params)
+        page = resp.get('result') or []
+        if not isinstance(page, list) or not page:
+            return count
+        count += len(page)
+        new_last = e.field(page[-1], 'sys_id') or ''
+        if not new_last or new_last == last:
+            return count            # no cursor progress — defensive bail
+        last = new_last
+
+
+def _live_count(table, query, stats_count, paginate_max):
+    """Pick the right count method for `query`. Returns (count, method) where
+    method is one of 'paginated' | 'table_header' | 'stats_fallback'.
+
+    - For tables whose /stats count is <= paginate_max, use cursor pagination
+      (true ACL-respecting). For larger tables this would be too slow, so
+      fall through.
+    - Else: /table X-Total-Count (one call). On HTTP 400/414 the query is
+      rejected by the table endpoint — fall back to /stats; both X-Total-Count
+      and /stats give the same query-match count (NOT ACL-respecting), which
+      the verdict path handles via the 'stats_fallback' note.
+    """
+    if stats_count is not None and stats_count <= paginate_max:
+        try:
+            return _live_paginated_count(table, query, paginate_max), 'paginated'
+        except RuntimeError:
+            pass    # exceeded max in flight — fall through to table_header
+    n, src = _live_readable_or_stats(table, query)
+    return n, ('stats_fallback' if src == 'stats_fallback' else 'table_header')
+
+
 def _live_readable_or_stats(table, query):
     """Try _live_readable_count (/table X-Total-Count) first; on HTTP 400/414
     fall back to _stats_count (some queries — e.g. sys_audit's very long
@@ -132,56 +195,73 @@ def _live_readable_or_stats(table, query):
 
 
 # ---- checks ----------------------------------------------------------------
-def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
-    """Live count as-of the snapshot watermark vs the DB count, using the same
-    filter the exporter applied. The verdict-relevant counts come from the
-    /api/now/table X-Total-Count header (ACL-respecting — apples-to-apples
-    with what the export user can pull). /api/now/stats counts are recorded
-    alongside as informational; when stats > readable, the gap is reported as
-    `acl_filtered_asof` so the operator can see how many rows are inaccessible
-    to the export user. db > live_asof = deletes since capture (PASS); live_now
-    > db = creates since capture (PASS); db < live_asof within tolerance_pct =
-    WARN export-window churn; beyond it = FAIL real loss / stale DB."""
+def count_parity(table, manifest, state, db_count, tolerance_pct=1.0,
+                 paginate_count_max=50000):
+    """Live count as-of the snapshot watermark vs the DB count.
+
+    Method choice per table:
+      - /stats count <= paginate_count_max: cursor-paginate /api/now/table for
+        a TRULY ACL-respecting count (slow on large tables, cheap on small).
+        When stats > paginated, the gap is `acl_filtered_asof` — rows live has
+        but the OAuth export user cannot read.
+      - Larger tables: /table X-Total-Count (one call; NOT ACL-respecting —
+        same as /stats). If the long-query case rejects /table (HTTP 400/414
+        on sys_audit's tablenameIN), fall back to /stats with a 'stats_fallback'
+        note so beyond-tolerance FAILs are flagged as 'may include ACL'.
+
+    Verdict rules: db > live_asof = deletes since capture (PASS); live_now > db
+    = creates since capture (PASS); db < live_asof within tolerance_pct = WARN
+    export-window churn; beyond it = FAIL real loss / stale DB.
+    """
     base = _base_filter(table)
     cutoff, src = common.snapshot_cutoff(table, manifest, state)
     res = {'verdict': PASS, 'db': db_count, 'cutoff': cutoff, 'cutoff_source': src}
     base_q = '^'.join(base) if base else ''
     asof_q = '^'.join(base + ['sys_created_on<=%s' % cutoff]) if cutoff else None
 
-    # readable counts (verdict-relevant). /table X-Total-Count is preferred;
-    # fall back to /stats on long-query rejections so we never lose the signal.
+    # /stats counts first — cheap, and drive the method choice below.
+    stats_now = stats_asof = None
     try:
-        res['live_now'], src = _live_readable_or_stats(table, base_q)
-        if src == 'stats_fallback':
-            res['live_now_source'] = '/stats fallback (/table rejected the query)'
-    except Exception as e:                                       # noqa: BLE001
-        res['verdict'] = WARN
-        res['error'] = 'live readable count failed: %s' % str(e)[:140]
-        return res
-    asof = None
-    if cutoff:
-        try:
-            asof, src = _live_readable_or_stats(table, asof_q)
-            if src == 'stats_fallback':
-                res['live_asof_source'] = '/stats fallback (/table rejected the query)'
-        except Exception as e:                                   # noqa: BLE001
-            res['asof_error'] = str(e)[:140]
-    res['live_asof'] = asof
-
-    # /stats counts (informational; surface ACL discrepancy when stats > readable)
-    try:
-        res['live_now_stats'] = _stats_count(table, base_q)
+        stats_now = _stats_count(table, base_q)
+        res['live_now_stats'] = stats_now
     except Exception:                                            # noqa: BLE001
         pass
     if cutoff:
         try:
             stats_asof = _stats_count(table, asof_q)
             res['live_asof_stats'] = stats_asof
-            if (stats_asof is not None and asof is not None
-                    and stats_asof > asof):
-                res['acl_filtered_asof'] = stats_asof - asof
         except Exception:                                        # noqa: BLE001
             pass
+
+    # Readable count: paginated (true ACL-respecting) for small tables,
+    # X-Total-Count + /stats fallback otherwise. The method used is recorded.
+    try:
+        n, method = _live_count(table, base_q, stats_now, paginate_count_max)
+        res['live_now'] = n
+        res['live_now_method'] = method
+    except Exception as e:                                       # noqa: BLE001
+        res['verdict'] = WARN
+        res['error'] = 'live readable count failed: %s' % str(e)[:140]
+        return res
+
+    asof = None
+    method_asof = None
+    if cutoff:
+        try:
+            asof, method_asof = _live_count(table, asof_q, stats_asof,
+                                            paginate_count_max)
+            res['live_asof_method'] = method_asof
+            if method_asof == 'stats_fallback':
+                res['live_asof_source'] = '/stats fallback (/table rejected the query)'
+        except Exception as e:                                   # noqa: BLE001
+            res['asof_error'] = str(e)[:140]
+    res['live_asof'] = asof
+
+    # ACL gap is real signal only when paginated — X-Total-Count == /stats, so
+    # for table_header / stats_fallback the "gap" would always be 0.
+    if (method_asof == 'paginated' and stats_asof is not None
+            and asof is not None and stats_asof > asof):
+        res['acl_filtered_asof'] = stats_asof - asof
 
     if asof is not None:
         shortfall = asof - db_count
@@ -350,9 +430,11 @@ def run_table(conn, table, manifest, state, opts, archive_profile=None):
     derives archive coverage from the sample."""
     db_count = common.table_count(conn, table)
     tol = getattr(opts, 'count_tolerance_pct', 1.0)
+    pmax = getattr(opts, 'paginate_count_max', 50000)
     volatile = compare.DEFAULT_VOLATILE_FIELDS | set(getattr(opts, 'ignore_fields', ()) or ())
     checks = {'count_parity': count_parity(table, manifest, state, db_count,
-                                           tolerance_pct=tol)}
+                                           tolerance_pct=tol,
+                                           paginate_count_max=pmax)}
     cutoff, _ = common.snapshot_cutoff(table, manifest, state)
 
     sample_n = min(opts.sample, db_count) if db_count else 0

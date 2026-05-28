@@ -372,6 +372,18 @@ def test_report_rollup_overall_fail():
     assert 'OVERALL: FAIL' in text
 
 
+def test_report_renders_missing_vs_asof_note():
+    # A FAIL via /stats fallback attaches a note; render must show it in detail
+    results = {'t': {'live': {'count_parity': {
+        'verdict': FAIL, 'db': 900, 'live_asof': 1000, 'missing_vs_asof': 100,
+        'live_asof_source': '/stats fallback (/table rejected the query)',
+        'note': 'count via /stats fallback — may include ACL-hidden rows'}}}}
+    rep = report.build_report({'phases_run': ['live'], 'params': {}}, results)
+    text = report.render_text(rep)
+    assert 'missing 100' in text, text
+    assert 'ACL-hidden' in text, text
+
+
 def test_report_renders_short_vs_asof():
     # a within-tolerance count WARN must show its shortfall + reason in the text
     results = {'t': {'live': {'count_parity': {

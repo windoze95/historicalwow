@@ -509,10 +509,11 @@ def test_live_readable_or_stats_fallback_on_400():
     assert (n, src) == (12345, 'stats_fallback')
 
 
-def test_count_parity_fallback_shortfall_is_warn_not_fail():
-    # When /table errors and we fall back to /stats, a shortfall can't be
-    # confidently called FAIL — /stats may include ACL-hidden rows. WARN with a
-    # clear note instead, so the operator can investigate (real vs ACL).
+def test_count_parity_fallback_shortfall_fails_with_note():
+    # Even when the count came from the /stats fallback, a shortfall beyond
+    # tolerance must FAIL — the user's --count-tolerance-pct is the contract.
+    # The fallback adds an explanatory note so the operator can investigate
+    # whether it's real loss or ACL-hidden rows.
     import urllib.error
     live.ex = FakeEx([], stats_count=1000)
     saved = live._live_readable_count
@@ -525,8 +526,8 @@ def test_count_parity_fallback_shortfall_is_warn_not_fail():
     finally:
         live._live_readable_count = saved
         live.ex = None
-    assert cp['verdict'] == WARN, cp
-    assert cp.get('short_vs_asof') == 100
+    assert cp['verdict'] == FAIL, cp
+    assert cp.get('missing_vs_asof') == 100
     assert 'fallback' in (cp.get('note') or ''), cp
 
 

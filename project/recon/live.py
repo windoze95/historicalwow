@@ -195,20 +195,18 @@ def count_parity(table, manifest, state, db_count, tolerance_pct=1.0):
                 res['short_vs_asof'] = shortfall
                 res['note'] = ('short %.3f%% (<= %.3g%% tol) — export-window churn'
                                % (rel * 100, tolerance_pct))
-            elif res.get('live_asof_source'):
-                # /stats fallback used; that number can include rows the OAuth
-                # export user cannot /table-read. We can't tell real loss from
-                # ACL hiding from /stats alone, so demote the shortfall to WARN
-                # with a clear note — investigate manually if real loss matters.
-                res['verdict'] = WARN
-                res['short_vs_asof'] = shortfall
-                res['note'] = ('short %d via /stats fallback — may include '
-                               'ACL-hidden rows; investigate to distinguish '
-                               'real loss from ACL filtering' % shortfall)
             else:
-                # any shortfall at zero tolerance, or beyond the band, is loss
+                # beyond tolerance (or zero-tolerance): FAIL. Tolerance trumps
+                # fallback uncertainty — the user's tolerance is the contract.
+                # If the count came from the /stats fallback, attach a note so
+                # the operator can investigate whether it's real loss or ACL
+                # filtering before treating it as definitive.
                 res['verdict'] = FAIL
                 res['missing_vs_asof'] = shortfall
+                if res.get('live_asof_source'):
+                    res['note'] = ('count via /stats fallback — may include '
+                                   'ACL-hidden rows; investigate to distinguish '
+                                   'real loss from ACL filtering')
         elif db_count > asof:
             res['deletes_since'] = db_count - asof          # expected; not a failure
     if res.get('live_now') is not None and res['live_now'] > db_count:

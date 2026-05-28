@@ -176,6 +176,11 @@ def _live_count(table, query, stats_count, paginate_max):
             return _live_paginated_count(table, query, paginate_max), 'paginated'
         except RuntimeError:
             pass    # exceeded max in flight — fall through to table_header
+        except urllib.error.HTTPError as he:
+            if he.code in (400, 414):
+                pass  # /table rejection on long query — fall through too
+            else:
+                raise
     n, src = _live_readable_or_stats(table, query)
     return n, ('stats_fallback' if src == 'stats_fallback' else 'table_header')
 

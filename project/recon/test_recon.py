@@ -534,6 +534,29 @@ def test_live_readable_or_stats_fallback_on_400():
     assert (n, src) == (12345, 'stats_fallback')
 
 
+def test_live_count_paginated_400_falls_through_to_header():
+    # A small-stats table whose /table query is also long enough to be rejected
+    # (e.g. sys_attachment with table_nameIN<DISPLAYED> when the instance is
+    # small): paginated raises 400 -> must fall through to X-Total-Count/stats
+    # path, not bubble up to a WARN-by-error.
+    import urllib.error
+    live.ex = FakeEx([], stats_count=42)
+    saved_p = live._live_paginated_count
+    saved_r = live._live_readable_count
+    def boom_paginated(t, q, mx):
+        raise urllib.error.HTTPError('url', 400, 'Bad Request', {}, None)
+    live._live_paginated_count = boom_paginated
+    live._live_readable_count = lambda t, q: 42
+    try:
+        n, method = live._live_count('sys_attachment', 'table_nameINlong,filter',
+                                     stats_count=42, paginate_max=50000)
+    finally:
+        live._live_paginated_count = saved_p
+        live._live_readable_count = saved_r
+        live.ex = None
+    assert (n, method) == (42, 'table_header')
+
+
 def test_count_parity_fallback_shortfall_fails_with_note():
     # Force the X-Total-Count path (paginate_count_max=0); /table errors and
     # the count falls back to /stats. A shortfall beyond tolerance must FAIL

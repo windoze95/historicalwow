@@ -33,8 +33,14 @@ def confirm_offline_all_empty_with_live(results):
         # confirmation; without it we'd hide the only capture-gap signal.
         if not pp.get('compared_rows'):
             continue
-        gaps = set(pp.get('gap_fields') or [])
-        if set(prof['suspicious_all_empty']) & gaps:
+        # require live to have observed the suspicious fields as ALSO empty.
+        # The gap_fields list only flags live_rate >= 0.5; a field with
+        # live_rate 0.49 (or any positive rate) on an archive-empty field is
+        # still a real capture gap and must not be silently downgraded.
+        fields_data = pp.get('fields') or {}
+        def _live_rate(f):
+            return (fields_data.get(f) or {}).get('live_rate', 0)
+        if any(_live_rate(f) > 0 for f in prof['suspicious_all_empty']):
             continue
         prof['verdict'] = PASS
         prof['note'] = ('all-empty fields confirmed empty live too '

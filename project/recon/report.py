@@ -86,6 +86,8 @@ def _table_signals(entry):
             bits.append('del_since=%d' % cp['deletes_since'])
         if cp.get('creates_since'):
             bits.append('new_since=%d' % cp['creates_since'])
+        if cp.get('acl_filtered_asof'):
+            bits.append('acl_hidden=%d' % cp['acl_filtered_asof'])
     fs = live.get('field_set')
     if fs and fs.get('missing_from_archive'):
         bits.append('MISSING_FIELDS=%s' % ','.join(fs['missing_from_archive'][:5]))
@@ -166,6 +168,10 @@ def _detail_lines(entry):
         out.append('count: DB=%s vs live as-of %s — short %s (%s)'
                    % (cp.get('db'), cp.get('live_asof'), cp['short_vs_asof'],
                       cp.get('note', 'within tolerance')))
+    if cp.get('acl_filtered_asof'):
+        out.append('ACL: live /stats as-of = %s (%d rows hidden from the export '
+                   'user — not counted toward FAIL)'
+                   % (cp.get('live_asof_stats'), cp['acl_filtered_asof']))
     if cp.get('error'):
         out.append('count parity error: %s' % cp['error'])
     fs = live.get('field_set', {})

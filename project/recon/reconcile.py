@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import common, offline, live, report
-from .common import FAIL
+from .common import FAIL, WARN
 
 
 def parse_args(argv):

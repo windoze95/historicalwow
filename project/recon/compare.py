@@ -16,6 +16,8 @@ IMMUTABLE_FIELDS = ('sys_id', 'sys_created_on', 'sys_created_by', 'number')
 DEFAULT_VOLATILE_FIELDS = frozenset({
     'sys_mod_count', 'sys_view_count', 'compiler_build', 'latest_snapshot',
     'sizeclass',
+    # sys_user activity tracking — updated on login without a sys_updated_on bump
+    'last_login', 'last_login_time', 'last_login_device', 'failed_attempts',
 })
 
 

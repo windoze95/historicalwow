@@ -117,6 +117,16 @@ def test_classify_volatile_not_corruption():
     assert compare.classify_record(a, c)[:2] == ('CORRUPTION', FAIL)
 
 
+def test_classify_login_fields_are_volatile():
+    # sys_user login-activity fields update without bumping sys_updated_on, so
+    # a same-revision diff on them must be MATCH (not CORRUPTION).
+    a = row('a', last_login=env('2026-05-01 00:00:00'),
+            last_login_time=env('2026-05-01 00:00:00'))
+    b = row('a', last_login=env('2026-05-27 12:00:00'),
+            last_login_time=env('2026-05-27 12:00:00'))
+    assert compare.classify_record(a, b)[:2] == ('MATCH', PASS)
+
+
 def test_classify_display_drift():
     a = row('a', mgr=env('sysid1', 'Alice'))
     b = row('a', mgr=env('sysid1', 'Alice Smith'))   # value same, label moved

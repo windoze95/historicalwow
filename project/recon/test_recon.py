@@ -464,11 +464,24 @@ def _mock_readable(value):
     return _Ctx()
 
 
+def _mock_paginated(value):
+    """Save/install/restore mock for live._live_paginated_count."""
+    class _Ctx:
+        def __enter__(self):
+            self.saved = live._live_paginated_count
+            live._live_paginated_count = lambda t, q, mx: value
+            return self
+        def __exit__(self, *a):
+            live._live_paginated_count = self.saved
+    return _Ctx()
+
+
 def test_count_parity_absent_table_with_live_rows_fails():
-    # a table missing from the DB but still holding live rows must FAIL the gate
+    # a table missing from the DB but still holding live rows must FAIL the gate.
+    # Small stats count -> paginated method.
     live.ex = FakeEx([], stats_count=5)
     try:
-        with _mock_readable(5):
+        with _mock_paginated(5):
             cp = live.count_parity('missing_table',
                                    {'captured_at': '2026-05-01T00:00:00Z'}, {}, 0)
     finally:
@@ -480,7 +493,7 @@ def test_count_parity_tolerance_band():
     manifest = {'captured_at': '2026-05-01T00:00:00Z'}
     live.ex = FakeEx([], stats_count=1000)
     try:
-        with _mock_readable(1000):
+        with _mock_paginated(1000):
             small = live.count_parity('t', manifest, {}, 995, tolerance_pct=1.0)
             big = live.count_parity('t', manifest, {}, 900, tolerance_pct=1.0)
     finally:
@@ -496,7 +509,7 @@ def test_count_parity_zero_tolerance_fails_any_shortfall():
     # not let it through an absolute floor
     live.ex = FakeEx([], stats_count=1000)
     try:
-        with _mock_readable(1000):
+        with _mock_paginated(1000):
             one = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
                                     {}, 999, tolerance_pct=0)
     finally:
@@ -521,11 +534,55 @@ def test_live_readable_or_stats_fallback_on_400():
     assert (n, src) == (12345, 'stats_fallback')
 
 
+def test_live_count_paginated_runtime_error_propagates():
+    # A generic RuntimeError from _live_paginated_count (e.g. ex.api_get_json
+    # retry exhaustion) MUST surface — silently falling through to /stats
+    # would swap the ACL-respecting count for a non-respecting one and hide
+    # the ACL gap on transient failures.
+    live.ex = FakeEx([], stats_count=100)
+    saved = live._live_paginated_count
+    def boom(t, q, mx):
+        raise RuntimeError('transient API failure')
+    live._live_paginated_count = boom
+    try:
+        raised = False
+        try:
+            live._live_count('t', '', stats_count=100, paginate_max=50000)
+        except RuntimeError as e:
+            raised = 'transient' in str(e)
+    finally:
+        live._live_paginated_count = saved
+        live.ex = None
+    assert raised
+
+
+def test_live_count_paginated_400_falls_through_to_header():
+    # A small-stats table whose /table query is also long enough to be rejected
+    # (e.g. sys_attachment with table_nameIN<DISPLAYED> when the instance is
+    # small): paginated raises 400 -> must fall through to X-Total-Count/stats
+    # path, not bubble up to a WARN-by-error.
+    import urllib.error
+    live.ex = FakeEx([], stats_count=42)
+    saved_p = live._live_paginated_count
+    saved_r = live._live_readable_count
+    def boom_paginated(t, q, mx):
+        raise urllib.error.HTTPError('url', 400, 'Bad Request', {}, None)
+    live._live_paginated_count = boom_paginated
+    live._live_readable_count = lambda t, q: 42
+    try:
+        n, method = live._live_count('sys_attachment', 'table_nameINlong,filter',
+                                     stats_count=42, paginate_max=50000)
+    finally:
+        live._live_paginated_count = saved_p
+        live._live_readable_count = saved_r
+        live.ex = None
+    assert (n, method) == (42, 'table_header')
+
+
 def test_count_parity_fallback_shortfall_fails_with_note():
-    # Even when the count came from the /stats fallback, a shortfall beyond
-    # tolerance must FAIL — the user's --count-tolerance-pct is the contract.
-    # The fallback adds an explanatory note so the operator can investigate
-    # whether it's real loss or ACL-hidden rows.
+    # Force the X-Total-Count path (paginate_count_max=0); /table errors and
+    # the count falls back to /stats. A shortfall beyond tolerance must FAIL
+    # with an explanatory note so the operator can investigate ACL vs real loss.
     import urllib.error
     live.ex = FakeEx([], stats_count=1000)
     saved = live._live_readable_count
@@ -534,7 +591,7 @@ def test_count_parity_fallback_shortfall_fails_with_note():
     live._live_readable_count = boom
     try:
         cp = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
-                               {}, 900, tolerance_pct=0)
+                               {}, 900, tolerance_pct=0, paginate_count_max=0)
     finally:
         live._live_readable_count = saved
         live.ex = None
@@ -565,12 +622,12 @@ def test_live_readable_or_stats_no_fallback_on_other_4xx():
 
 
 def test_count_parity_uses_readable_not_stats_on_acl_gap():
-    # /stats over-counts when ACLs hide rows from the OAuth user; verdict must
-    # use the /table-readable count (apples-to-apples with the export), not
-    # /stats. The ACL gap is reported informationally as acl_filtered_asof.
+    # /stats over-counts when ACLs hide rows; the truly ACL-respecting count
+    # comes from cursor-paginated /table. Verdict uses that; the ACL gap is
+    # reported as acl_filtered_asof (only meaningful when paginated method).
     live.ex = FakeEx([], stats_count=1000)   # /stats says 1000
     try:
-        with _mock_readable(500):            # /table-readable says 500
+        with _mock_paginated(500):           # paginated /table = 500 readable
             cp = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
                                    {}, 500, tolerance_pct=0)
     finally:
@@ -579,6 +636,7 @@ def test_count_parity_uses_readable_not_stats_on_acl_gap():
     assert cp['verdict'] == PASS, cp
     assert cp.get('live_asof') == 500
     assert cp.get('live_asof_stats') == 1000
+    assert cp.get('live_asof_method') == 'paginated'
     assert cp.get('acl_filtered_asof') == 500
 
 

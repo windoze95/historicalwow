@@ -534,6 +534,28 @@ def test_live_readable_or_stats_fallback_on_400():
     assert (n, src) == (12345, 'stats_fallback')
 
 
+def test_live_count_paginated_runtime_error_propagates():
+    # A generic RuntimeError from _live_paginated_count (e.g. ex.api_get_json
+    # retry exhaustion) MUST surface — silently falling through to /stats
+    # would swap the ACL-respecting count for a non-respecting one and hide
+    # the ACL gap on transient failures.
+    live.ex = FakeEx([], stats_count=100)
+    saved = live._live_paginated_count
+    def boom(t, q, mx):
+        raise RuntimeError('transient API failure')
+    live._live_paginated_count = boom
+    try:
+        raised = False
+        try:
+            live._live_count('t', '', stats_count=100, paginate_max=50000)
+        except RuntimeError as e:
+            raised = 'transient' in str(e)
+    finally:
+        live._live_paginated_count = saved
+        live.ex = None
+    assert raised
+
+
 def test_live_count_paginated_400_falls_through_to_header():
     # A small-stats table whose /table query is also long enough to be rejected
     # (e.g. sys_attachment with table_nameIN<DISPLAYED> when the instance is

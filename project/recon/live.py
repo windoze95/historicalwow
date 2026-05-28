@@ -117,6 +117,14 @@ def _live_readable_count(table, query):
     raise RuntimeError('readable count failed for %s: %s' % (table, last))
 
 
+class _PaginatedCountExceeded(RuntimeError):
+    """Raised by _live_paginated_count when the count would exceed max_rows.
+    A dedicated class (not bare RuntimeError) so callers can distinguish 'too
+    big, switch methods' from 'paginated call genuinely failed' (e.g. API
+    retry exhaustion) — the latter must surface, not silently fall through to
+    the non-ACL-respecting /stats count."""
+
+
 def _live_paginated_count(table, query, max_rows):
     """ACL-respecting count via cursor-paginated /api/now/table — each page
     returns ONLY rows the OAuth user can read, so summing page lengths gives
@@ -136,8 +144,8 @@ def _live_paginated_count(table, query, max_rows):
     last = ''
     while True:
         if count > max_rows:
-            raise RuntimeError('paginated count exceeds max_rows=%d for %s'
-                               % (max_rows, table))
+            raise _PaginatedCountExceeded(
+                'paginated count exceeds max_rows=%d for %s' % (max_rows, table))
         parts = [query] if query else []
         if last:
             parts.append('sys_id>' + last)
@@ -174,13 +182,16 @@ def _live_count(table, query, stats_count, paginate_max):
     if stats_count is not None and stats_count <= paginate_max:
         try:
             return _live_paginated_count(table, query, paginate_max), 'paginated'
-        except RuntimeError:
+        except _PaginatedCountExceeded:
             pass    # exceeded max in flight — fall through to table_header
         except urllib.error.HTTPError as he:
             if he.code in (400, 414):
                 pass  # /table rejection on long query — fall through too
             else:
                 raise
+        # Any other failure (e.g. api_get_json retry exhaustion → RuntimeError)
+        # MUST propagate — falling through to /stats would silently swap an
+        # ACL-respecting count for a non-respecting one and hide the gap.
     n, src = _live_readable_or_stats(table, query)
     return n, ('stats_fallback' if src == 'stats_fallback' else 'table_header')
 

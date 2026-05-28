@@ -509,6 +509,27 @@ def test_live_readable_or_stats_fallback_on_400():
     assert (n, src) == (12345, 'stats_fallback')
 
 
+def test_count_parity_fallback_shortfall_is_warn_not_fail():
+    # When /table errors and we fall back to /stats, a shortfall can't be
+    # confidently called FAIL — /stats may include ACL-hidden rows. WARN with a
+    # clear note instead, so the operator can investigate (real vs ACL).
+    import urllib.error
+    live.ex = FakeEx([], stats_count=1000)
+    saved = live._live_readable_count
+    def boom(t, q):
+        raise urllib.error.HTTPError('url', 400, 'Bad Request', {}, None)
+    live._live_readable_count = boom
+    try:
+        cp = live.count_parity('t', {'captured_at': '2026-05-01T00:00:00Z'},
+                               {}, 900, tolerance_pct=0)
+    finally:
+        live._live_readable_count = saved
+        live.ex = None
+    assert cp['verdict'] == WARN, cp
+    assert cp.get('short_vs_asof') == 100
+    assert 'fallback' in (cp.get('note') or ''), cp
+
+
 def test_live_readable_or_stats_no_fallback_on_other_4xx():
     # 403/404 (and other non-400/414) propagate — they're not the long-query
     # rejection case the fallback targets

@@ -183,9 +183,6 @@ def main(argv=None):
         # (not in build_sqlite.SCHEMAS) — informational, not a failure.
         meta['exported_but_not_built'] = exported_not_built
 
-    # Cross-phase noise reduction before rollup.
-    report.confirm_offline_all_empty_with_live(results)
-
     rep = report.build_report(meta, results)
     out_dir = Path(args.out) if args.out else (data_dir / ('recon_%s' % common.utc_stamp()))
     written = report.write_report(out_dir, rep, args.allow_unsafe_out)

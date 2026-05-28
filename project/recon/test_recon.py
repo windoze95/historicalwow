@@ -383,59 +383,6 @@ def test_report_renders_short_vs_asof():
     assert 'export-window churn' in text, text
 
 
-def test_confirm_all_empty_downgrades_when_pop_parity_passes():
-    # Phase A "all-empty fields" WARN downgrades to PASS when Phase B's
-    # population_parity ran clean (live confirms the fields are also empty,
-    # so they're genuinely unused — not a capture gap).
-    results = {
-        'safe': {
-            'offline': {'field_profile': {'verdict': WARN,
-                                          'suspicious_all_empty': ['code', 'manager']}},
-            'live': {'population_parity': {'verdict': PASS, 'compared_rows': 100,
-                                           'gap_fields': []}},
-        },
-        'gap': {
-            'offline': {'field_profile': {'verdict': WARN,
-                                          'suspicious_all_empty': ['x']}},
-            'live': {'population_parity': {'verdict': FAIL, 'gap_fields': ['x']}},
-        },
-        'no_live': {
-            'offline': {'field_profile': {'verdict': WARN,
-                                          'suspicious_all_empty': ['y']}},
-        },
-        'no_rows': {
-            # pop_parity returns PASS with no comparable rows when the sample is
-            # empty or every sys_id was deleted — that's not confirmation, must
-            # NOT downgrade
-            'offline': {'field_profile': {'verdict': WARN,
-                                          'suspicious_all_empty': ['z']}},
-            'live': {'population_parity': {'verdict': PASS, 'gap_fields': [],
-                                           'note': 'no comparable rows'}},
-        },
-        'sparse_live': {
-            # field populated live below the 0.5 gap threshold (so not in
-            # gap_fields and pop_parity still PASSes), but live_rate > 0 means
-            # the archive being empty is a real (sparse) capture gap -> keep WARN
-            'offline': {'field_profile': {'verdict': WARN,
-                                          'suspicious_all_empty': ['w']}},
-            'live': {'population_parity': {'verdict': PASS, 'compared_rows': 200,
-                'gap_fields': [],
-                'fields': {'w': {'live_rate': 0.49, 'archive_rate': 0.0}}}},
-        },
-    }
-    report.confirm_offline_all_empty_with_live(results)
-    # safe: live confirmed -> WARN downgraded to PASS
-    assert results['safe']['offline']['field_profile']['verdict'] == PASS
-    # gap: live actually FAILed; do not downgrade
-    assert results['gap']['offline']['field_profile']['verdict'] == WARN
-    # no_live: no Phase B to confirm -> stay WARN
-    assert results['no_live']['offline']['field_profile']['verdict'] == WARN
-    # no_rows: pop_parity PASS but zero comparable rows -> not confirmation
-    assert results['no_rows']['offline']['field_profile']['verdict'] == WARN
-    # sparse_live: field populated live below gap threshold -> still a gap
-    assert results['sparse_live']['offline']['field_profile']['verdict'] == WARN
-
-
 def test_info_does_not_escalate():
     results = {'t': {'live': {'count_parity': {'verdict': INFO},
                               'deep_check': {'verdict': INFO}}}}

@@ -149,9 +149,11 @@ outside a `data/` directory unless `--allow-unsafe-out` is passed.
   `last_login_device`/`failed_attempts`) are excluded from the same-revision
   corruption check. Extend per-instance with `--ignore-fields a,b,c` for custom
   fields that also auto-update without a revision bump (e.g. `u_*` integrations).
-- A Phase A "all-empty fields" WARN auto-downgrades to PASS when Phase B's
-  `population_parity` ran clean for the same table — live confirms the fields
-  are genuinely unused, not capture gaps.
+- The Phase A "all-empty fields" WARN is informational and is **not** auto-downgraded
+  by live (the ~200-row sample can't statistically confirm a field is empty live;
+  a sparsely-populated field can be missed by the sample). Curate per-instance:
+  once you've verified a field is genuinely unused, silence it with
+  `--ignore-fields field_a,field_b`.
 - The "should be in the DB" set is `build_sqlite.SCHEMAS`. A SCHEMAS table missing
   from the DB is a FAIL; tables exported to NDJSON but not in SCHEMAS are reported
   as *exported-but-not-built* (informational) — add them to SCHEMAS if you want

@@ -13,40 +13,6 @@ from . import compare
 from .common import PASS, WARN, FAIL
 
 
-def confirm_offline_all_empty_with_live(results):
-    """Cross-phase noise reduction: downgrade Phase A's *all-empty fields* WARN
-    to PASS when Phase B's population_parity also ran clean for those fields —
-    live confirmed the fields are also empty at source, so they're genuinely
-    unused, not capture gaps. Mutates results in place. No-op for tables where
-    the live phase didn't run or population_parity didn't pass."""
-    for _, per in results.items():
-        prof = (per.get('offline') or {}).get('field_profile')
-        pp = (per.get('live') or {}).get('population_parity')
-        if not (prof and pp):
-            continue
-        if prof.get('verdict') != WARN or not prof.get('suspicious_all_empty'):
-            continue
-        if pp.get('verdict') != PASS:
-            continue
-        # require live to have actually observed rows — a PASS with zero
-        # comparable rows (e.g. all sampled records deleted/unfetched) is no
-        # confirmation; without it we'd hide the only capture-gap signal.
-        if not pp.get('compared_rows'):
-            continue
-        # require live to have observed the suspicious fields as ALSO empty.
-        # The gap_fields list only flags live_rate >= 0.5; a field with
-        # live_rate 0.49 (or any positive rate) on an archive-empty field is
-        # still a real capture gap and must not be silently downgraded.
-        fields_data = pp.get('fields') or {}
-        def _live_rate(f):
-            return (fields_data.get(f) or {}).get('live_rate', 0)
-        if any(_live_rate(f) > 0 for f in prof['suspicious_all_empty']):
-            continue
-        prof['verdict'] = PASS
-        prof['note'] = ('all-empty fields confirmed empty live too '
-                        '(population_parity PASS)')
-
-
 def build_report(meta, results):
     """meta: run metadata dict. results: {table: {'offline': checks, 'live': checks}}.
     Returns the full report dict with per-table and overall verdicts."""

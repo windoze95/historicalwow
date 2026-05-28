@@ -28,6 +28,11 @@ def confirm_offline_all_empty_with_live(results):
             continue
         if pp.get('verdict') != PASS:
             continue
+        # require live to have actually observed rows — a PASS with zero
+        # comparable rows (e.g. all sampled records deleted/unfetched) is no
+        # confirmation; without it we'd hide the only capture-gap signal.
+        if not pp.get('compared_rows'):
+            continue
         gaps = set(pp.get('gap_fields') or [])
         if set(prof['suspicious_all_empty']) & gaps:
             continue

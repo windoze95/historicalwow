@@ -391,7 +391,8 @@ def test_confirm_all_empty_downgrades_when_pop_parity_passes():
         'safe': {
             'offline': {'field_profile': {'verdict': WARN,
                                           'suspicious_all_empty': ['code', 'manager']}},
-            'live': {'population_parity': {'verdict': PASS, 'gap_fields': []}},
+            'live': {'population_parity': {'verdict': PASS, 'compared_rows': 100,
+                                           'gap_fields': []}},
         },
         'gap': {
             'offline': {'field_profile': {'verdict': WARN,
@@ -402,6 +403,15 @@ def test_confirm_all_empty_downgrades_when_pop_parity_passes():
             'offline': {'field_profile': {'verdict': WARN,
                                           'suspicious_all_empty': ['y']}},
         },
+        'no_rows': {
+            # pop_parity returns PASS with no comparable rows when the sample is
+            # empty or every sys_id was deleted — that's not confirmation, must
+            # NOT downgrade
+            'offline': {'field_profile': {'verdict': WARN,
+                                          'suspicious_all_empty': ['z']}},
+            'live': {'population_parity': {'verdict': PASS, 'gap_fields': [],
+                                           'note': 'no comparable rows'}},
+        },
     }
     report.confirm_offline_all_empty_with_live(results)
     # safe: live confirmed -> WARN downgraded to PASS
@@ -410,6 +420,8 @@ def test_confirm_all_empty_downgrades_when_pop_parity_passes():
     assert results['gap']['offline']['field_profile']['verdict'] == WARN
     # no_live: no Phase B to confirm -> stay WARN
     assert results['no_live']['offline']['field_profile']['verdict'] == WARN
+    # no_rows: pop_parity PASS but zero comparable rows -> not confirmation
+    assert results['no_rows']['offline']['field_profile']['verdict'] == WARN
 
 
 def test_info_does_not_escalate():

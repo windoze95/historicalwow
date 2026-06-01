@@ -968,3 +968,185 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
     </div>
   );
 };
+
+// =========================================================================
+// CMDB overview / metrics dashboard (/cmdb)
+// =========================================================================
+// Renders the precomputed /api/cmdb/metrics aggregates. Segments deep-link
+// into the CI list with a hash query (#/cis?sys_class_name=…) for the
+// dimensions that are server-side filterable (indexed columns); the rest are
+// informational. Matches the Logic/Catalog overview house style.
+
+function CmdbTile({ label, value, sub, accent, onClick }) {
+  return (
+    <div onClick={onClick} style={{
+      background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
+      padding: '12px 14px', cursor: onClick ? 'pointer' : 'default',
+      borderLeft: `3px solid ${accent || 'var(--border-strong)'}`,
+    }}>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-.02em', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+        {value == null ? '—' : value.toLocaleString()}
+      </div>
+      {sub != null && <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// Horizontal bar list. `items`: [{value,label,count}]. `linkFor(item)` returns
+// a hash path to deep-link the row (or null for non-filterable rows).
+function CmdbBars({ title, sub, items, color, total, linkFor, limit }) {
+  const rows = limit ? (items || []).slice(0, limit) : (items || []);
+  const max = rows.reduce((a, r) => Math.max(a, r.count), 0) || 1;
+  return (
+    <div>
+      <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
+        {title}
+        {sub && <span className="mono" style={{ color: 'var(--fg-4)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>{sub}</span>}
+      </h2>
+      <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 0', overflow: 'hidden' }}>
+        {rows.length === 0 && <div style={{ padding: 18, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>No data.</div>}
+        {rows.map((r, i) => {
+          const href = linkFor && linkFor(r);
+          const pct = total ? Math.round((r.count / total) * 1000) / 10 : null;
+          return (
+            <div key={r.value != null ? r.value + ':' + i : i}
+              onClick={href ? () => window.navigate(href) : undefined}
+              style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 10,
+                       padding: '5px 14px', cursor: href ? 'pointer' : 'default' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, marginBottom: 3 }}>
+                  <span className="truncate" style={{ color: href ? 'var(--accent-2)' : 'var(--fg-2)' }}>{r.label}</span>
+                  <span className="mono" style={{ color: 'var(--fg-4)', flexShrink: 0 }}>{r.count.toLocaleString()}{pct != null && pct >= 0.1 ? ` · ${pct}%` : ''}</span>
+                </div>
+                <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-deep, var(--border))' }}>
+                  <div style={{ width: `${Math.max(1, (r.count / max) * 100)}%`, height: '100%', borderRadius: 2, background: color || 'var(--accent)' }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+window.CMDBOverviewPage = function CMDBOverviewPage() {
+  const data = window.HistoricalWowData;
+  const [m, setM] = React.useState(null);
+  const [err, setErr] = React.useState(false);
+
+  React.useEffect(() => {
+    if (window.AuditLog) window.AuditLog.push('view', 'cmdb', 'CMDB overview');
+    let cancel = false;
+    data.fetchCmdbMetrics().then(x => { if (!cancel) setM(x); }).catch(() => { if (!cancel) setErr(true); });
+    return () => { cancel = true; };
+  }, []);
+
+  const wrap = (children) => (
+    <div style={{ padding: '32px 32px 60px', maxWidth: 1200, margin: '0 auto' }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600 }}>
+          Configuration Management Database
+        </div>
+        <h1 style={{ margin: '6px 0 8px', fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>CMDB overview</h1>
+        <div style={{ color: 'var(--fg-3)', fontSize: 13.5, maxWidth: 780, lineHeight: 1.6 }}>
+          Every configuration item in this snapshot, by class, status, discovery source, freshness,
+          ownership, and relationship coverage. Click a class or status to open the filtered CI list.
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+
+  if (err) return wrap(<div className="empty"><div className="glyph"><window.Icon name="info" /></div>CMDB metrics unavailable.</div>);
+  if (!m) return wrap(<div style={{ padding: 40, color: 'var(--fg-4)' }}><span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />computing metrics…</div>);
+
+  const idx = new Set(m.indexed_columns || []);
+  const byLabel = (arr, lbl) => (arr || []).find(d => d.label === lbl);
+  const statusVal = (lbl) => { const d = byLabel(m.operational_status, lbl); return d ? d.value : null; };
+  const bucket = (b) => { const d = (m.staleness || []).find(s => s.bucket === b); return d ? d.count : 0; };
+  const stale90 = bucket('91-365d') + bucket('365d+');
+  const rel = m.relationships || {};
+  const bizApps = (m.classes || []).find(c => c.value === 'cmdb_ci_business_app');
+
+  // deep-link helpers — only for filterable (indexed) dimensions
+  const classLink = (r) => r.value ? `/cis?sys_class_name=${encodeURIComponent(r.value)}` : null;
+  const opLink = (r) => r.value ? `/cis?operational_status=${encodeURIComponent(r.value)}` : null;
+  const instLink = (r) => (idx.has('install_status') && r.value) ? `/cis?install_status=${encodeURIComponent(r.value)}` : null;
+  const discoLink = (r) => (idx.has('discovery_source') && r.value) ? `/cis?discovery_source=${encodeURIComponent(r.value)}` : null;
+
+  const tile = { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 26 };
+  const owned = (m.ownership && m.ownership.owned_by) || 0;
+  const supported = (m.ownership && m.ownership.support_group) || 0;
+
+  return wrap(
+    <>
+      <div style={tile}>
+        <CmdbTile label="Configuration items" value={m.total} sub={`${m.classes ? m.classes.length : 0} classes`}
+                  accent="var(--accent)" onClick={() => window.navigate('/cis')} />
+        <CmdbTile label="Operational" value={(byLabel(m.operational_status, 'Operational') || {}).count}
+                  accent="var(--accent)" onClick={statusVal('Operational') ? () => window.navigate(`/cis?operational_status=${statusVal('Operational')}`) : undefined} />
+        <CmdbTile label="Retired" value={(byLabel(m.operational_status, 'Retired') || {}).count}
+                  accent="var(--c-amber)" onClick={statusVal('Retired') ? () => window.navigate(`/cis?operational_status=${statusVal('Retired')}`) : undefined} />
+        <CmdbTile label="Stale > 90 days" value={stale90} sub={idx.has('last_discovered') ? 'last discovered' : 'rebuild to filter'}
+                  accent="var(--c-red)" onClick={idx.has('last_discovered') ? () => window.navigate('/cis?stale=stale90') : undefined} />
+        <CmdbTile label="Orphans (no relationship)" value={rel.orphans} sub="not in cmdb_rel_ci" accent="var(--c-violet)" />
+        <CmdbTile label="Business apps" value={bizApps ? bizApps.count : 0} sub={`${owned.toLocaleString()} owned`}
+                  accent="var(--c-blue)" onClick={bizApps ? () => window.navigate('/cis?sys_class_name=cmdb_ci_business_app') : undefined} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 22, marginBottom: 24 }}>
+        <CmdbBars title="CIs by class" sub="sys_class_name" items={m.classes} limit={15}
+                  total={m.total} color="var(--accent)" linkFor={classLink} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <CmdbBars title="Operational status" items={m.operational_status} total={m.total} color="var(--c-blue)" linkFor={opLink} />
+          <CmdbBars title="Install status" items={m.install_status} total={m.total} color="var(--c-violet)" linkFor={instLink} />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22, marginBottom: 24 }}>
+        <CmdbBars title="Discovery source" sub="how the CI got here" items={m.discovery_source} total={m.total} color="var(--c-blue)" linkFor={discoLink} />
+        <div>
+          <CmdbBars title="Freshness" sub="last_discovered vs snapshot"
+                    items={(m.staleness || []).map(s => ({ value: s.bucket, label: s.bucket === 'never' ? 'never discovered' : s.bucket, count: s.count }))}
+                    total={m.total} color="var(--c-amber)" />
+          {idx.has('last_discovered') && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <button className="filter-pill" onClick={() => window.navigate('/cis?stale=stale90')}>stale &gt; 90d →</button>
+              <button className="filter-pill" onClick={() => window.navigate('/cis?stale=stale365')}>stale &gt; 1y →</button>
+              <button className="filter-pill" onClick={() => window.navigate('/cis?stale=fresh7')}>fresh ≤ 7d →</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
+        <div>
+          <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
+            Ownership <span className="mono" style={{ color: 'var(--fg-4)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>two tiers</span>
+          </h2>
+          <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, fontSize: 12.5, lineHeight: 1.7 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', rowGap: 6 }}>
+              <span style={{ color: 'var(--fg-3)' }}>Owned (owned_by) — the curated app tier</span>
+              <span className="mono">{owned.toLocaleString()}</span>
+              <span style={{ color: 'var(--fg-3)' }}>Supported (support_group) — the infra tier</span>
+              <span className="mono">{supported.toLocaleString()}</span>
+              <span style={{ color: 'var(--fg-3)' }}>Total CIs</span>
+              <span className="mono">{m.total.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
+            Relationships
+            <span className="mono" style={{ color: 'var(--fg-4)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
+              {rel.connected != null ? `${rel.connected.toLocaleString()} of ${m.total.toLocaleString()} connected` : 'cmdb_rel_ci'}
+            </span>
+          </h2>
+          <CmdbBars title="" items={rel.types} limit={10} total={rel.total_rels} color="var(--c-violet)" />
+        </div>
+      </div>
+    </>
+  );
+};

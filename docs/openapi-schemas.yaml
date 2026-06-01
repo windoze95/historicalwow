@@ -681,6 +681,20 @@ components:
           type: string
         short_description:
           type: string
+        install_status:
+          type: string
+        discovery_source:
+          type: string
+        last_discovered:
+          type: string
+        support_group:
+          type: string
+        category:
+          type: string
+        ip_address:
+          type: string
+        fqdn:
+          type: string
       required: [sys_id]
       additionalProperties: true
     CmdbRelCiRow:
@@ -2080,7 +2094,7 @@ x-filterable-columns:
   sys_user_role: [sys_id, name, description]
   sys_group_has_role: [sys_id, group, role, granted_by, inherits]
   kb_knowledge: [sys_id, number, short_description, kb_knowledge_base, kb_category, workflow_state, author, article_type, valid_to, active]
-  cmdb_ci: [sys_id, name, sys_class_name, operational_status, owned_by, short_description]
+  cmdb_ci: [sys_id, name, sys_class_name, operational_status, owned_by, short_description, install_status, discovery_source, last_discovered, support_group, category, ip_address, fqdn]
   cmdb_rel_ci: [sys_id, parent, child, type]
   sys_choice: [sys_id, name, table, element, value, label]
   core_company: [sys_id, name, short]

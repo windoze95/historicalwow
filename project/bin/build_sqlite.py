@@ -87,6 +87,20 @@ CMDB_INDEXED_COLS = [
     ('operational_status',  lambda r: _v(r.get('operational_status'))),
     ('owned_by',            lambda r: _v(r.get('owned_by'))),
     ('short_description',   lambda r: _v(r.get('short_description'))),
+    # Filter / metrics / lookup columns for the CMDB overview + CI-list filters.
+    # All stored as the coded `value` (operational_status/install_status carry
+    # numeric codes whose labels live in the raw envelope). last_discovered is
+    # 'YYYY-MM-DD HH:MM:SS' which sorts chronologically, so the staleness range
+    # filter (last_discovered_before=<cutoff>) is a plain string comparison.
+    # Field names verified against the live envelope before indexing — a typo'd
+    # key would silently extract every row to NULL.
+    ('install_status',      lambda r: _v(r.get('install_status'))),
+    ('discovery_source',    lambda r: _v(r.get('discovery_source'))),
+    ('last_discovered',     lambda r: _v(r.get('last_discovered'))),
+    ('support_group',       lambda r: _v(r.get('support_group'))),
+    ('category',            lambda r: _v(r.get('category'))),
+    ('ip_address',          lambda r: _v(r.get('ip_address'))),
+    ('fqdn',                lambda r: _v(r.get('fqdn'))),
 ]
 
 

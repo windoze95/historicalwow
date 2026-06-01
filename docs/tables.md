@@ -492,6 +492,13 @@ Filterable columns:
 | `operational_status` | string |  |
 | `owned_by` | string |  |
 | `short_description` | string |  |
+| `install_status` | string |  |
+| `discovery_source` | string |  |
+| `last_discovered` | string |  |
+| `support_group` | string |  |
+| `category` | string |  |
+| `ip_address` | string |  |
+| `fqdn` | string |  |
 
 ### `cmdb_rel_ci`
 

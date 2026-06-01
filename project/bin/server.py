@@ -104,19 +104,29 @@ def _db_mtime() -> float:
 def _serve_cached_lookup(handler, endpoint_id: str, builder, max_age: int = 3600):
     """Serve a lookup JSON endpoint from the in-memory cache, building if
     needed. `builder` is a no-arg callable returning a JSON-serializable
-    Python object. Browser cache validates via ETag (cheap 304s)."""
+    Python object. Browser cache validates via ETag (cheap 304s).
+
+    The builder runs OUTSIDE _lookup_cache_lock — the lock only guards the
+    dict read/write. This matters because the lock is shared across every
+    lookup endpoint: if a slow builder (e.g. cmdb_metrics on a multi-million
+    row DB) held it, an unrelated /api/manifest — the viewer's boot fetch —
+    would block behind it and the whole app would hang on "loading". The cost
+    is that two cold requests for the same endpoint may build redundantly; the
+    builds are cheap and the startup warmer pre-populates the heavy ones, so
+    that's a fine trade for never head-of-line-blocking the app."""
     mtime = _db_mtime()
     with _lookup_cache_lock:
         cached = _lookup_cache.get(endpoint_id)
-        if not cached or cached[0] != mtime:
-            payload = builder()
-            body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
-            gz_bytes = gzip.compress(body, compresslevel=6)
-            etag = f'W/"{int(mtime)}-{len(gz_bytes)}"'
-            _lookup_cache[endpoint_id] = (mtime, gz_bytes, etag)
-            log.info('lookup cache built %s — %d bytes gz', endpoint_id, len(gz_bytes))
-            cached = _lookup_cache[endpoint_id]
-        _, gz_bytes, etag = cached
+    if not cached or cached[0] != mtime:
+        payload = builder()
+        body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+        gz_bytes = gzip.compress(body, compresslevel=6)
+        etag = f'W/"{int(mtime)}-{len(gz_bytes)}"'
+        cached = (mtime, gz_bytes, etag)
+        with _lookup_cache_lock:
+            _lookup_cache[endpoint_id] = cached
+        log.info('lookup cache built %s — %d bytes gz', endpoint_id, len(gz_bytes))
+    _, gz_bytes, etag = cached
 
     # Browser revalidation — if the client's ETag matches, ship 304.
     if handler.headers.get('If-None-Match', '') == etag:
@@ -881,13 +891,16 @@ def _build_cmdb_ci_lookup_payload():
 # between builds — computing them once per DB and serving a memcpy beats a
 # fan-out of GROUP BYs on every page load.
 #
-# Forward-compatible with the indexed-column additions to CMDB_INDEXED_COLS:
-# each dimension uses its indexed column when present (fast GROUP BY) and
-# falls back to json_extract on `raw` otherwise, so the page works on a DB
-# built before those columns existed (just slower to compute, once). The
-# `indexed_columns` field tells the viewer which dimensions are actually
-# filterable server-side (an un-indexed column can't be a list filter), so
-# the UI can feature-detect and hide filters that wouldn't work yet.
+# Performance: a dimension is computed ONLY when its column is indexed, so
+# every aggregate is an indexed GROUP BY / COUNT. We do NOT fall back to
+# json_extract over `raw` for un-indexed columns — on a multi-million-row
+# cmdb_ci that's a per-row JSON parse for the whole table (measured at ~9 min
+# for the full payload), which is unusable for a request and, worse, starved
+# the shared lookup cache. So pre-CMDB_INDEXED_COLS-expansion the payload
+# carries the dimensions that ARE indexed (class, operational_status, owned_by)
+# plus relationship coverage; install/discovery/staleness/support_group appear
+# only once their columns are indexed. `indexed_columns` tells the viewer which
+# dimensions exist so it can feature-detect both the filters and the panels.
 
 def _cmdb_columns(conn):
     try:
@@ -899,15 +912,17 @@ def _cmdb_columns(conn):
 def _cmdb_dist(conn, field, has_col, label_field=True):
     """Distribution of cmdb_ci over `field` as [{value,label,count}] desc.
 
-    Groups by the indexed column when `has_col`, else by json_extract on raw.
-    The display label is read from the {value, display_value} envelope so the
-    UI shows 'Operational' / 'Windows Server', not the coded '1' / class name.
-    The label is a *bare* (non-aggregated) column, so SQLite evaluates the
-    json_extract once per group (≈ a few hundred), not once per row."""
-    val = f'"{field}"' if has_col else f"json_extract(raw,'$.{field}.value')"
-    lbl = f"json_extract(raw,'$.{field}.display_value')" if label_field else val
-    sql = (f"SELECT {val} AS v, {lbl} AS l, COUNT(*) AS n "
-           f"FROM cmdb_ci GROUP BY {val} ORDER BY n DESC")
+    Requires `field` to be an indexed column — returns [] otherwise. Grouping
+    by the indexed column keeps the GROUP BY index-backed; the display label is
+    read from the {value, display_value} envelope as a *bare* (non-aggregated)
+    column, which SQLite evaluates once per group (≈ a few hundred json_extract
+    calls), NOT once per row. Grouping by json_extract instead would force a
+    per-row JSON parse of the whole table, which is the slow path we avoid."""
+    if not has_col:
+        return []
+    lbl = f"json_extract(raw,'$.{field}.display_value')" if label_field else f'"{field}"'
+    sql = (f'SELECT "{field}" AS v, {lbl} AS l, COUNT(*) AS n '
+           f'FROM cmdb_ci GROUP BY "{field}" ORDER BY n DESC')
     # Collapse entries that render to the same label — ServiceNow can ship more
     # than one coded value for a single status label (e.g. multiple 'Retired'
     # install_status codes). Rows arrive count-desc. The merged option carries
@@ -938,14 +953,18 @@ def _cmdb_dist(conn, field, has_col, label_field=True):
 def _cmdb_staleness(conn, has_col, snapshot_date):
     """Bucket CIs by how long before the snapshot they were last_discovered.
     last_discovered is 'YYYY-MM-DD HH:MM:SS' which sorts chronologically, so
-    string compares against pre-computed cutoffs beat per-row julianday()."""
+    string compares against pre-computed cutoffs beat per-row julianday().
+    Requires the indexed column (returns [] otherwise) — bucketing over
+    json_extract would parse JSON for every row."""
+    if not has_col:
+        return []
     try:
         ref = datetime.datetime.strptime((snapshot_date or '')[:10], '%Y-%m-%d')
     except ValueError:
         return []
     fmt = lambda d: (ref - datetime.timedelta(days=d)).strftime('%Y-%m-%d %H:%M:%S')
     c7, c30, c90, c365 = fmt(7), fmt(30), fmt(90), fmt(365)
-    ld = '"last_discovered"' if has_col else "json_extract(raw,'$.last_discovered.value')"
+    ld = '"last_discovered"'
     sql = (f"SELECT CASE "
            f"WHEN {ld} IS NULL OR {ld}='' THEN 'never' "
            f"WHEN {ld} >= ? THEN '0-7d' "
@@ -960,16 +979,26 @@ def _cmdb_staleness(conn, has_col, snapshot_date):
 
 
 def _cmdb_nonempty(conn, field, has_col):
-    expr = f'"{field}"' if has_col else f"json_extract(raw,'$.{field}.value')"
+    """Count of CIs with a non-empty `field`. Indexed columns only — returns
+    None (omitted from the payload) otherwise, since a json_extract scan over
+    the whole table is the slow path we avoid."""
+    if not has_col:
+        return None
     return conn.execute(
-        f"SELECT COUNT(*) AS n FROM cmdb_ci WHERE {expr} IS NOT NULL AND {expr} != ''"
+        f'SELECT COUNT(*) AS n FROM cmdb_ci WHERE "{field}" IS NOT NULL AND "{field}" != \'\''
     ).fetchone()['n']
 
 
-def _cmdb_relationships(conn):
-    """Relationship-type distribution + connected/orphan CI coverage. Guarded:
-    the connected-set query is the heaviest in the payload, so a failure here
-    degrades to 'no rel data' rather than sinking the whole metrics build."""
+def _cmdb_relationships(conn, total):
+    """Relationship-type distribution (indexed GROUP BY) + connected/orphan CI
+    coverage. `connected` = distinct CIs that appear as a parent or child AND
+    exist in this cmdb_ci snapshot: a UNION over the indexed parent/child
+    columns, joined back to cmdb_ci on sys_id. The join matters — cmdb_rel_ci
+    can carry a dangling endpoint (a sys_id no longer in the snapshot), and
+    counting it would overstate `connected` (possibly past `total`) and zero
+    out `orphans`. Still far cheaper than probing every cmdb_ci row with
+    sys_id IN (…): we probe only the ~distinct endpoints against the PK. Guarded
+    so a failure degrades to 'no rel data' rather than sinking the build."""
     out = {}
     try:
         out['types'] = [
@@ -978,10 +1007,12 @@ def _cmdb_relationships(conn):
                 'SELECT type, COUNT(*) AS n FROM cmdb_rel_ci GROUP BY type ORDER BY n DESC')
         ]
         out['total_rels'] = conn.execute('SELECT COUNT(*) AS n FROM cmdb_rel_ci').fetchone()['n']
-        total = conn.execute('SELECT COUNT(*) AS n FROM cmdb_ci').fetchone()['n']
         connected = conn.execute(
-            'SELECT COUNT(*) AS n FROM cmdb_ci WHERE sys_id IN '
-            '(SELECT parent FROM cmdb_rel_ci UNION SELECT child FROM cmdb_rel_ci)'
+            'SELECT COUNT(*) AS n FROM ('
+            "  SELECT parent AS s FROM cmdb_rel_ci WHERE parent IS NOT NULL AND parent <> ''"
+            '  UNION'
+            "  SELECT child  AS s FROM cmdb_rel_ci WHERE child  IS NOT NULL AND child  <> ''"
+            ') u JOIN cmdb_ci c ON c.sys_id = u.s'
         ).fetchone()['n']
         out['connected'] = connected
         out['orphans'] = max(0, total - connected)
@@ -1011,7 +1042,7 @@ def _build_cmdb_metrics_payload():
             'support_group': _cmdb_nonempty(conn, 'support_group', 'support_group' in cols),
             'total': total,
         },
-        'relationships': _cmdb_relationships(conn),
+        'relationships': _cmdb_relationships(conn, total),
     }
 
 

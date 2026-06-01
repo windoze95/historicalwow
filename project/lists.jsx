@@ -868,6 +868,31 @@ function TemplateList() {
 }
 
 // ---- CIs (paginated via API since cmdb_ci has 1M+ records) ---------------
+// Filters: class + operational status are always available (indexed columns).
+// Install status / discovery source / staleness are feature-detected against
+// the metrics payload's `indexed_columns` — they appear only once those
+// columns exist in the DB (added to CMDB_INDEXED_COLS, populated at the next
+// build), so the bar never shows a filter that would silently no-op.
+
+// operational_status display label → chip color. Values are coded (1/2/6); the
+// flatten layer exposes the label as __display_operational_status.
+function ciStatusChipClass(label) {
+  if (label === 'Operational') return 'green';
+  if (label === 'Degraded') return 'amber';
+  if (label === 'Down' || label === 'Non-Operational') return 'red';
+  return '';  // Retired / unknown → neutral
+}
+
+// last_discovered is 'YYYY-MM-DD HH:MM:SS' (UTC). Age in days vs the snapshot
+// date, for the "Last seen" column's stale coloring. null when unparseable or
+// the CI was never discovered.
+function ciAgeDays(lastDiscovered, snapshotDate) {
+  if (!lastDiscovered || !snapshotDate) return null;
+  const ld = new Date(lastDiscovered.replace(' ', 'T') + 'Z');
+  const ref = new Date(snapshotDate + 'T00:00:00Z');
+  if (isNaN(ld) || isNaN(ref)) return null;
+  return Math.floor((ref - ld) / 86400000);
+}
 
 function CIList() {
   const data = window.HistoricalWowData;
@@ -876,20 +901,60 @@ function CIList() {
   const [page, setPage] = React.useState(0);
   const [resp, setResp] = React.useState({ rows: null, total: 0 });
   const [loading, setLoading] = React.useState(true);
+  const [metrics, setMetrics] = React.useState(null);
+  // sys_class_name / operational_status / install_status / discovery_source are
+  // exact-match; `stale` is a preset translated to a last_discovered range.
+  // Seed from the hash query (e.g. #/cis?sys_class_name=cmdb_ci_business_app)
+  // so the metrics page can deep-link into a pre-filtered list.
+  const [filters, setFilters] = React.useState(() => {
+    const base = {
+      sys_class_name: '', operational_status: '', install_status: '',
+      discovery_source: '', stale: '',
+    };
+    const qs = window.location.hash.split('?')[1];
+    if (qs) {
+      const p = new URLSearchParams(qs);
+      for (const k of Object.keys(base)) { const v = p.get(k); if (v) base[k] = v; }
+    }
+    return base;
+  });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    data.fetchCmdbMetrics().then(m => { if (!cancelled) setMetrics(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 250);
     return () => clearTimeout(t);
   }, [q]);
-  React.useEffect(() => { setPage(0); }, [debouncedQ]);
+  const filterKey = JSON.stringify(filters);
+  React.useEffect(() => { setPage(0); }, [debouncedQ, filterKey]);
 
   React.useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    const flt = {};
+    if (filters.sys_class_name) flt.sys_class_name = filters.sys_class_name;
+    if (filters.operational_status) flt.operational_status = filters.operational_status;
+    if (filters.install_status) flt.install_status = filters.install_status;
+    if (filters.discovery_source) flt.discovery_source = filters.discovery_source;
+    // Staleness preset → last_discovered range bound, computed off the snapshot.
+    const snap = metrics && metrics.snapshot_date;
+    if (filters.stale && snap) {
+      const cut = (days) => {
+        const d = new Date(snap + 'T00:00:00Z');
+        d.setUTCDate(d.getUTCDate() - days);
+        return d.toISOString().slice(0, 10);
+      };
+      if (filters.stale === 'stale90') flt.last_discovered_before = cut(90);
+      else if (filters.stale === 'stale365') flt.last_discovered_before = cut(365);
+      else if (filters.stale === 'fresh7') flt.last_discovered_after = cut(7);
+    }
     data.fetchTaskList('cmdb_ci', {
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
-      q: debouncedQ,
+      limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+      q: debouncedQ || undefined, filters: flt,
       order_by: 'name', dir: 'asc',
     }).then(r => {
       if (cancelled) return;
@@ -899,46 +964,93 @@ function CIList() {
       setResp({ rows: [], total: 0 }); setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [debouncedQ, page]);
+  }, [debouncedQ, page, filterKey, metrics && metrics.snapshot_date]);
 
   const total = resp.total || 0;
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const sourceTotal = data.manifest.tables.find(t => t.table === 'cmdb_ci')?.source_rows;
+  const snapshotDate = metrics && metrics.snapshot_date;
+
+  const idx = new Set((metrics && metrics.indexed_columns) || []);
+  const has = (col) => idx.has(col);
+  const set = (k, v) => setFilters(prev => ({ ...prev, [k]: v }));
+  const selStyle = { height: 26, padding: '0 8px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, color: 'var(--fg)', outline: 'none', maxWidth: 210 };
+  const opt = (d) => `${d.label} (${(d.count || 0).toLocaleString()})`;
 
   return (
     <div>
       <div className="page-header">
-        <h1>Configuration items <span className="count mono">{data.manifest.tables.find(t => t.table === 'cmdb_ci')?.source_rows?.toLocaleString() || '—'}</span></h1>
-        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>cmdb_ci</span> · {total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}</div>
-        <div className="toolbar">
+        <h1>Configuration items <span className="count mono">{sourceTotal?.toLocaleString() || '—'}</span></h1>
+        <div className="sub">
+          <span className="mono" style={{ color: 'var(--fg-4)' }}>cmdb_ci</span> · {total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}
+          {' · '}<a onClick={() => window.navigate('/cmdb')} style={{ cursor: 'pointer' }}>overview &amp; metrics →</a>
+        </div>
+        <div className="toolbar" style={{ flexWrap: 'wrap', gap: 6 }}>
+          <select value={filters.sys_class_name} onChange={e => set('sys_class_name', e.target.value)} style={selStyle} title="CI class">
+            <option value="">All classes</option>
+            {(metrics ? metrics.classes : []).map(c => <option key={c.value} value={c.value}>{opt(c)}</option>)}
+          </select>
+          <select value={filters.operational_status} onChange={e => set('operational_status', e.target.value)} style={selStyle} title="Operational status">
+            <option value="">Any status</option>
+            {(metrics ? metrics.operational_status : []).filter(s => s.value).map(s => <option key={s.value} value={s.value}>{opt(s)}</option>)}
+          </select>
+          {has('install_status') && (
+            <select value={filters.install_status} onChange={e => set('install_status', e.target.value)} style={selStyle} title="Install status">
+              <option value="">Any install state</option>
+              {(metrics ? metrics.install_status : []).filter(s => s.value).map(s => <option key={s.value} value={s.value}>{opt(s)}</option>)}
+            </select>
+          )}
+          {has('discovery_source') && (
+            <select value={filters.discovery_source} onChange={e => set('discovery_source', e.target.value)} style={selStyle} title="Discovery source">
+              <option value="">Any source</option>
+              {(metrics ? metrics.discovery_source : []).filter(s => s.value).map(s => <option key={s.value} value={s.value}>{opt(s)}</option>)}
+            </select>
+          )}
+          {has('last_discovered') && (
+            <select value={filters.stale} onChange={e => set('stale', e.target.value)} style={selStyle} title="Last discovered">
+              <option value="">Any age</option>
+              <option value="fresh7">Discovered ≤ 7 days</option>
+              <option value="stale90">Stale &gt; 90 days</option>
+              <option value="stale365">Stale &gt; 1 year</option>
+            </select>
+          )}
           <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter by name…"
-            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 240 }} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Name, IP, or FQDN…"
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 200 }} />
           <Pager page={page} setPage={setPage} lastPage={lastPage} />
         </div>
       </div>
       <table className="dt">
         <thead><tr>
-          <th>Name</th><th>Class</th><th style={{ width: 130 }}>Status</th><th>Owned by</th>
+          <th>Name</th><th>Class</th><th style={{ width: 120 }}>Status</th>
+          <th style={{ width: 96 }}>Install</th><th style={{ width: 120 }}>Discovery</th>
+          <th style={{ width: 104 }}>Last seen</th><th style={{ width: 160 }}>Owner / support</th>
         </tr></thead>
         <tbody>
           {loading && (resp.rows == null) && (
-            <tr><td colSpan={4} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+            <tr><td colSpan={7} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
               <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
             </td></tr>
           )}
           {!loading && resp.rows && resp.rows.length === 0 && (
-            <tr><td colSpan={4} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No matching CIs.</td></tr>
+            <tr><td colSpan={7} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>No matching CIs.</td></tr>
           )}
           {(resp.rows || []).map(c => {
-            const stCls = c.operational_status === 'Operational' ? 'green'
-                         : c.operational_status === 'Degraded' ? 'amber'
-                         : c.operational_status === 'Down' ? 'red' : '';
+            const op = c.__display_operational_status || c.operational_status;
+            const inst = c.__display_install_status || c.install_status;
+            const ld = c.last_discovered;
+            const age = ciAgeDays(ld, snapshotDate);
+            const ldColor = age == null ? 'var(--fg-4)' : age > 365 ? 'var(--c-red)' : age > 90 ? 'var(--c-amber)' : 'var(--fg-3)';
+            const owner = c.__display_owned_by || c.__display_support_group || '';
             return (
               <tr key={c.sys_id} onClick={() => window.navigate(`/cis/${c.sys_id}`)}>
                 <td className="num">{c.name}</td>
-                <td className="muted mono" style={{ fontSize: 12 }}>{c.sys_class_name}</td>
-                <td>{c.operational_status ? <span className={`chip ${stCls}`}><span className="swatch" />{c.operational_status}</span> : <span className="muted">—</span>}</td>
-                <td className="muted">{window.findGroup(c.owned_by)?.name || '—'}</td>
+                <td className="muted mono" style={{ fontSize: 12 }}>{c.__display_sys_class_name || c.sys_class_name}</td>
+                <td>{op ? <span className={`chip ${ciStatusChipClass(op)}`}><span className="swatch" />{op}</span> : <span className="muted">—</span>}</td>
+                <td className="muted" style={{ fontSize: 12 }}>{inst || '—'}</td>
+                <td className="muted" style={{ fontSize: 12 }}>{c.discovery_source || '—'}</td>
+                <td className="mono" style={{ fontSize: 11.5, color: ldColor }} title={ld || 'never discovered'}>{ld ? ld.slice(0, 10) : '—'}</td>
+                <td className="muted">{owner || '—'}</td>
               </tr>
             );
           })}

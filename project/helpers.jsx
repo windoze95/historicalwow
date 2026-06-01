@@ -74,6 +74,10 @@ function parseHash() {
     return { view: 'logic_home' };
   }
 
+  if (parts[0] === 'cmdb') {
+    return { view: 'cmdb_home' };
+  }
+
   if (parts[0] === 'sn-table') {
     if (parts.length < 2) return { view: 'logic_home' };
     return { view: 'sn_table_inspector', name: parts[1] };

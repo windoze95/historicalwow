@@ -162,6 +162,7 @@ function App() {
           {route.view === 'home' && <window.HomePage openPalette={() => setPaletteOpen(true)} />}
           {route.view === 'service_catalog_home' && <window.CatalogOverviewPage />}
           {route.view === 'logic_home' && <window.LogicHomePage />}
+          {route.view === 'cmdb_home' && <window.CMDBOverviewPage />}
           {route.view === 'sn_table_inspector' && <window.SnTableInspectorPage name={route.name} />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
           {route.view === 'list' && route.table === 'sys_script' && <window.BusinessRuleListPage />}
@@ -321,6 +322,7 @@ function Sidebar({ route }) {
     navItem('/delegations',     'link',     'Delegations',      'sys_user_delegate'),
     navItem('/knowledge',       'book',     'Knowledge',        'kb_knowledge'),
     navItem('/templates',       'file',     'Templates',        'sys_template'),
+    { id: '/cmdb',              icon: 'ci',    label: 'CMDB overview' },
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
     { sep: 'Logic' },
     { id: '/logic',             icon: 'settings', label: 'Overview' },
@@ -339,6 +341,7 @@ function Sidebar({ route }) {
     if (id === '/') return route.view === 'home';
     if (id === '/service-catalog') return route.view === 'service_catalog_home';
     if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
+    if (id === '/cmdb') return route.view === 'cmdb_home';
     const map = {
       '/incidents': 'incident', '/changes': 'change_request',
       '/problems': 'problem', '/requests': 'sc_request',

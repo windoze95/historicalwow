@@ -23,6 +23,7 @@ DB: /app/data/historicalwow.db (built by bin/build_sqlite.py).
 Static root: /app (HistoricalWow.html lives here).
 Attachments root: /app/data/attachments (mirror of host disk via volume mount).
 """
+import datetime
 import gzip
 import hmac
 import json
@@ -144,6 +145,7 @@ def warm_lookup_cache():
         _lookup_cache_set('manifest',         lambda: _build_manifest_payload())
         _lookup_cache_set('sys_user_lookup',  lambda: _build_sys_user_lookup_payload())
         _lookup_cache_set('cmdb_ci_lookup',   lambda: _build_cmdb_ci_lookup_payload())
+        _lookup_cache_set('cmdb_metrics',     lambda: _build_cmdb_metrics_payload())
         log.info('lookup cache warm')
     except Exception as e:
         log.warning('lookup cache warmup failed: %s (will lazy-build on demand)', e)
@@ -559,7 +561,8 @@ def list_table(handler, table, params):
     # Free-text search on number/short_description if present
     if q:
         like = f'%{q}%'
-        text_cols = [c for c in ('number', 'short_description', 'name', 'value') if c in cols]
+        text_cols = [c for c in ('number', 'short_description', 'name', 'value',
+                                 'ip_address', 'fqdn') if c in cols]
         if text_cols:
             where.append('(' + ' OR '.join(f'"{c}" LIKE ?' for c in text_cols) + ')')
             args.extend([like] * len(text_cols))
@@ -571,10 +574,32 @@ def list_table(handler, table, params):
     # "active only" silently return zero rows across every list page.
     RESERVED = {'limit', 'offset', 'q', 'order_by', 'dir', 'slim'}
     BOOL_COERCE = {'true': '1', 'false': '0'}
+    # Range filters: ?<col>_before=X / ?<col>_after=X compare an indexed column
+    # with </>= instead of equality. Drives the CI list's staleness filter
+    # (last_discovered_before=<cutoff>). Only applied when <col> is an actual
+    # indexed column and the value is non-empty, so on a DB built before the
+    # column existed the param is a harmless no-op (filter feature-detected off
+    # in the UI). A '_before' bound also excludes empty strings — "no date" is
+    # not "an early date", so an un-discovered CI shouldn't match "before X".
+    RANGE_OPS = (('_before', '<'), ('_after', '>='))
     for k, vs in params.items():
-        if k in RESERVED or k not in cols:
+        if k in RESERVED:
             continue
         val = vs[0] if vs else ''
+        is_range = False
+        for suf, op in RANGE_OPS:
+            if k.endswith(suf):
+                is_range = True
+                base = k[:-len(suf)]
+                if base in cols and val:
+                    where.append(f'"{base}" {op} ?')
+                    args.append(val)
+                    if op == '<':
+                        where.append(f'"{base}" != ?')
+                        args.append('')
+                break
+        if is_range or k not in cols:
+            continue
         val = BOOL_COERCE.get(val.lower(), val)
         where.append(f'"{k}" = ?')
         args.append(val)
@@ -837,6 +862,136 @@ def _build_cmdb_ci_lookup_payload():
     return out
 
 
+# --- CMDB metrics --------------------------------------------------------
+# Precomputed aggregates for the CMDB overview page and the CI-list filter
+# dropdowns. Same cache contract as the lookup payloads (keyed on db mtime,
+# warmed at startup), because for a frozen archive the numbers never change
+# between builds — computing them once per DB and serving a memcpy beats a
+# fan-out of GROUP BYs on every page load.
+#
+# Forward-compatible with the indexed-column additions to CMDB_INDEXED_COLS:
+# each dimension uses its indexed column when present (fast GROUP BY) and
+# falls back to json_extract on `raw` otherwise, so the page works on a DB
+# built before those columns existed (just slower to compute, once). The
+# `indexed_columns` field tells the viewer which dimensions are actually
+# filterable server-side (an un-indexed column can't be a list filter), so
+# the UI can feature-detect and hide filters that wouldn't work yet.
+
+def _cmdb_columns(conn):
+    try:
+        return {r['name'] for r in conn.execute('PRAGMA table_info("cmdb_ci")')}
+    except sqlite3.Error:
+        return set()
+
+
+def _cmdb_dist(conn, field, has_col, label_field=True):
+    """Distribution of cmdb_ci over `field` as [{value,label,count}] desc.
+
+    Groups by the indexed column when `has_col`, else by json_extract on raw.
+    The display label is read from the {value, display_value} envelope so the
+    UI shows 'Operational' / 'Windows Server', not the coded '1' / class name.
+    The label is a *bare* (non-aggregated) column, so SQLite evaluates the
+    json_extract once per group (≈ a few hundred), not once per row."""
+    val = f'"{field}"' if has_col else f"json_extract(raw,'$.{field}.value')"
+    lbl = f"json_extract(raw,'$.{field}.display_value')" if label_field else val
+    sql = (f"SELECT {val} AS v, {lbl} AS l, COUNT(*) AS n "
+           f"FROM cmdb_ci GROUP BY {val} ORDER BY n DESC")
+    # Collapse entries that render to the same label — ServiceNow can ship more
+    # than one coded value for a single status label (e.g. multiple 'Retired'
+    # install_status codes). Rows arrive count-desc, so the first occurrence
+    # (highest count) keeps the representative value, which is what a
+    # click-through filter resolves to.
+    merged = {}
+    for r in conn.execute(sql):
+        v = r['v'] if r['v'] is not None else ''
+        label = r['l'] or v or '(empty)'
+        if label in merged:
+            merged[label]['count'] += r['n']
+        else:
+            merged[label] = {'value': v, 'label': label, 'count': r['n']}
+    return sorted(merged.values(), key=lambda o: -o['count'])
+
+
+def _cmdb_staleness(conn, has_col, snapshot_date):
+    """Bucket CIs by how long before the snapshot they were last_discovered.
+    last_discovered is 'YYYY-MM-DD HH:MM:SS' which sorts chronologically, so
+    string compares against pre-computed cutoffs beat per-row julianday()."""
+    try:
+        ref = datetime.datetime.strptime((snapshot_date or '')[:10], '%Y-%m-%d')
+    except ValueError:
+        return []
+    fmt = lambda d: (ref - datetime.timedelta(days=d)).strftime('%Y-%m-%d %H:%M:%S')
+    c7, c30, c90, c365 = fmt(7), fmt(30), fmt(90), fmt(365)
+    ld = '"last_discovered"' if has_col else "json_extract(raw,'$.last_discovered.value')"
+    sql = (f"SELECT CASE "
+           f"WHEN {ld} IS NULL OR {ld}='' THEN 'never' "
+           f"WHEN {ld} >= ? THEN '0-7d' "
+           f"WHEN {ld} >= ? THEN '8-30d' "
+           f"WHEN {ld} >= ? THEN '31-90d' "
+           f"WHEN {ld} >= ? THEN '91-365d' "
+           f"ELSE '365d+' END AS bucket, COUNT(*) AS n "
+           f"FROM cmdb_ci GROUP BY bucket")
+    counts = {r['bucket']: r['n'] for r in conn.execute(sql, (c7, c30, c90, c365))}
+    order = ['0-7d', '8-30d', '31-90d', '91-365d', '365d+', 'never']
+    return [{'bucket': b, 'count': counts.get(b, 0)} for b in order if counts.get(b)]
+
+
+def _cmdb_nonempty(conn, field, has_col):
+    expr = f'"{field}"' if has_col else f"json_extract(raw,'$.{field}.value')"
+    return conn.execute(
+        f"SELECT COUNT(*) AS n FROM cmdb_ci WHERE {expr} IS NOT NULL AND {expr} != ''"
+    ).fetchone()['n']
+
+
+def _cmdb_relationships(conn):
+    """Relationship-type distribution + connected/orphan CI coverage. Guarded:
+    the connected-set query is the heaviest in the payload, so a failure here
+    degrades to 'no rel data' rather than sinking the whole metrics build."""
+    out = {}
+    try:
+        out['types'] = [
+            {'label': (r['type'] or '(empty)'), 'count': r['n']}
+            for r in conn.execute(
+                'SELECT type, COUNT(*) AS n FROM cmdb_rel_ci GROUP BY type ORDER BY n DESC')
+        ]
+        out['total_rels'] = conn.execute('SELECT COUNT(*) AS n FROM cmdb_rel_ci').fetchone()['n']
+        total = conn.execute('SELECT COUNT(*) AS n FROM cmdb_ci').fetchone()['n']
+        connected = conn.execute(
+            'SELECT COUNT(*) AS n FROM cmdb_ci WHERE sys_id IN '
+            '(SELECT parent FROM cmdb_rel_ci UNION SELECT child FROM cmdb_rel_ci)'
+        ).fetchone()['n']
+        out['connected'] = connected
+        out['orphans'] = max(0, total - connected)
+    except sqlite3.Error as e:
+        out['error'] = str(e)[:120]
+    return out
+
+
+def _build_cmdb_metrics_payload():
+    conn = get_conn()
+    cols = _cmdb_columns(conn)
+    total = conn.execute('SELECT COUNT(*) AS n FROM cmdb_ci').fetchone()['n']
+    snap = _build_manifest_payload()
+    snapshot_date = snap.get('snapshot_date') or (snap.get('captured_at') or '')[:10]
+    return {
+        'total': total,
+        'snapshot_date': snapshot_date,
+        # which dimensions are filterable server-side (indexed) — UI feature-detects
+        'indexed_columns': sorted(cols),
+        'classes': _cmdb_dist(conn, 'sys_class_name', 'sys_class_name' in cols),
+        'operational_status': _cmdb_dist(conn, 'operational_status', 'operational_status' in cols),
+        'install_status': _cmdb_dist(conn, 'install_status', 'install_status' in cols),
+        'discovery_source': _cmdb_dist(conn, 'discovery_source', 'discovery_source' in cols),
+        'staleness': _cmdb_staleness(conn, 'last_discovered' in cols, snapshot_date),
+        'ownership': {
+            'owned_by': _cmdb_nonempty(conn, 'owned_by', 'owned_by' in cols),
+            'support_group': _cmdb_nonempty(conn, 'support_group', 'support_group' in cols),
+            'total': total,
+        },
+        'relationships': _cmdb_relationships(conn),
+    }
+
+
 def _build_sys_user_lookup_payload():
     conn = get_conn()
     rows = conn.execute(
@@ -864,6 +1019,12 @@ def get_cmdb_ci_lookup(handler):
     """Compact CI lookup table — served from in-memory cache so first
     request is O(network), not O(1M-row scan + json + gzip)."""
     _serve_cached_lookup(handler, 'cmdb_ci_lookup', _build_cmdb_ci_lookup_payload)
+
+
+def get_cmdb_metrics(handler):
+    """CMDB overview aggregates (class/status/discovery/staleness/ownership/
+    relationships) — cached like the lookups since the archive is frozen."""
+    _serve_cached_lookup(handler, 'cmdb_metrics', _build_cmdb_metrics_payload)
 
 
 def get_hr_status(handler):
@@ -1181,6 +1342,8 @@ class Handler(BaseHTTPRequestHandler):
             return get_manifest(self)
         if path == '/api/cmdb_ci_lookup':
             return get_cmdb_ci_lookup(self)
+        if path == '/api/cmdb/metrics':
+            return get_cmdb_metrics(self)
         if path == '/api/sys_user_lookup':
             return get_sys_user_lookup(self)
         if path == '/api/hr-status':

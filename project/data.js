@@ -257,6 +257,16 @@ window.HistoricalWowData = (function () {
       downstream: (res.downstream || []).map(r => ({ ...flatten(r), ci: flatten(r.ci) })),
     };
   };
+  // CMDB overview aggregates (class/status/discovery/staleness/ownership/
+  // relationships) + the indexed-column set the CI-list filters feature-detect
+  // against. Cached per-snapshot in IDB like the lookup maps — the server
+  // computes it once per DB, so a repeat visit is a structured-clone, not a
+  // recompute.
+  data.fetchCmdbMetrics = async function () {
+    const snapshotId = (data.manifest && data.manifest.captured_at) || 'unknown';
+    return fetchWithIdbCache('cmdb_metrics', snapshotId, () => apiGet('/api/cmdb/metrics'));
+  };
+
   data.fetchSearch = async function (q, types) {
     const params = new URLSearchParams({ q });
     if (types && types.length) params.set('types', types.join(','));

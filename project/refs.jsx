@@ -995,7 +995,7 @@ function CmdbTile({ label, value, sub, accent, onClick }) {
 
 // Horizontal bar list. `items`: [{value,label,count}]. `linkFor(item)` returns
 // a hash path to deep-link the row (or null for non-filterable rows).
-function CmdbBars({ title, sub, items, color, total, linkFor, limit }) {
+function CmdbBars({ title, sub, items, color, total, linkFor, limit, emptyNote }) {
   const rows = limit ? (items || []).slice(0, limit) : (items || []);
   const max = rows.reduce((a, r) => Math.max(a, r.count), 0) || 1;
   return (
@@ -1005,7 +1005,7 @@ function CmdbBars({ title, sub, items, color, total, linkFor, limit }) {
         {sub && <span className="mono" style={{ color: 'var(--fg-4)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>{sub}</span>}
       </h2>
       <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 0', overflow: 'hidden' }}>
-        {rows.length === 0 && <div style={{ padding: 18, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>No data.</div>}
+        {rows.length === 0 && <div style={{ padding: 18, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>{emptyNote || 'No data.'}</div>}
         {rows.map((r, i) => {
           const href = linkFor && linkFor(r);
           const pct = total ? Math.round((r.count / total) * 1000) / 10 : null;
@@ -1078,7 +1078,8 @@ window.CMDBOverviewPage = function CMDBOverviewPage() {
 
   const tile = { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 26 };
   const owned = (m.ownership && m.ownership.owned_by) || 0;
-  const supported = (m.ownership && m.ownership.support_group) || 0;
+  // null = support_group not indexed yet (computed only once the column exists)
+  const supported = m.ownership ? m.ownership.support_group : null;
 
   return wrap(
     <>
@@ -1089,7 +1090,7 @@ window.CMDBOverviewPage = function CMDBOverviewPage() {
                   accent="var(--accent)" onClick={statusVal('Operational') ? () => window.navigate(`/cis?operational_status=${statusVal('Operational')}`) : undefined} />
         <CmdbTile label="Retired" value={(byLabel(m.operational_status, 'Retired') || {}).count}
                   accent="var(--c-amber)" onClick={statusVal('Retired') ? () => window.navigate(`/cis?operational_status=${statusVal('Retired')}`) : undefined} />
-        <CmdbTile label="Stale > 90 days" value={stale90} sub={idx.has('last_discovered') ? 'last discovered' : 'rebuild to filter'}
+        <CmdbTile label="Stale > 90 days" value={idx.has('last_discovered') ? stale90 : null} sub={idx.has('last_discovered') ? 'last discovered' : 'after next build'}
                   accent="var(--c-red)" onClick={idx.has('last_discovered') ? () => window.navigate('/cis?stale=stale90') : undefined} />
         <CmdbTile label="Orphans (no relationship)" value={rel.orphans} sub="not in cmdb_rel_ci" accent="var(--c-violet)" />
         <CmdbTile label="Business apps" value={bizApps ? bizApps.count : 0} sub={`${owned.toLocaleString()} owned`}
@@ -1101,16 +1102,19 @@ window.CMDBOverviewPage = function CMDBOverviewPage() {
                   total={m.total} color="var(--accent)" linkFor={classLink} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <CmdbBars title="Operational status" items={m.operational_status} total={m.total} color="var(--c-blue)" linkFor={opLink} />
-          <CmdbBars title="Install status" items={m.install_status} total={m.total} color="var(--c-violet)" linkFor={instLink} />
+          <CmdbBars title="Install status" items={m.install_status} total={m.total} color="var(--c-violet)" linkFor={instLink}
+                    emptyNote={idx.has('install_status') ? undefined : 'Available after the indexed-columns build'} />
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22, marginBottom: 24 }}>
-        <CmdbBars title="Discovery source" sub="how the CI got here" items={m.discovery_source} total={m.total} color="var(--c-blue)" linkFor={discoLink} />
+        <CmdbBars title="Discovery source" sub="how the CI got here" items={m.discovery_source} total={m.total} color="var(--c-blue)" linkFor={discoLink}
+                  emptyNote={idx.has('discovery_source') ? undefined : 'Available after the indexed-columns build'} />
         <div>
           <CmdbBars title="Freshness" sub="last_discovered vs snapshot"
                     items={(m.staleness || []).map(s => ({ value: s.bucket, label: s.bucket === 'never' ? 'never discovered' : s.bucket, count: s.count }))}
-                    total={m.total} color="var(--c-amber)" />
+                    total={m.total} color="var(--c-amber)"
+                    emptyNote={idx.has('last_discovered') ? undefined : 'Available after the indexed-columns build'} />
           {idx.has('last_discovered') && (
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <button className="filter-pill" onClick={() => window.navigate('/cis?stale=stale90')}>stale &gt; 90d →</button>
@@ -1131,7 +1135,7 @@ window.CMDBOverviewPage = function CMDBOverviewPage() {
               <span style={{ color: 'var(--fg-3)' }}>Owned (owned_by) — the curated app tier</span>
               <span className="mono">{owned.toLocaleString()}</span>
               <span style={{ color: 'var(--fg-3)' }}>Supported (support_group) — the infra tier</span>
-              <span className="mono">{supported.toLocaleString()}</span>
+              <span className="mono">{supported == null ? '— (after next build)' : supported.toLocaleString()}</span>
               <span style={{ color: 'var(--fg-3)' }}>Total CIs</span>
               <span className="mono">{m.total.toLocaleString()}</span>
             </div>

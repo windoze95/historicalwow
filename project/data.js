@@ -259,12 +259,14 @@ window.HistoricalWowData = (function () {
   };
   // CMDB overview aggregates (class/status/discovery/staleness/ownership/
   // relationships) + the indexed-column set the CI-list filters feature-detect
-  // against. Cached per-snapshot in IDB like the lookup maps — the server
-  // computes it once per DB, so a repeat visit is a structured-clone, not a
-  // recompute.
+  // against. NOT IDB-cached: the payload is small (a few KB gzipped) and it's
+  // schema-dependent — a column-only rebuild changes `indexed_columns` without
+  // changing manifest.captured_at, so a captured_at-keyed IDB entry would pin
+  // stale results and the new filters would never appear. The server already
+  // caches it in memory (keyed on db mtime) and serves it with an ETag +
+  // short max-age, so a plain fetch is cheap and self-healing.
   data.fetchCmdbMetrics = async function () {
-    const snapshotId = (data.manifest && data.manifest.captured_at) || 'unknown';
-    return fetchWithIdbCache('cmdb_metrics', snapshotId, () => apiGet('/api/cmdb/metrics'));
+    return apiGet('/api/cmdb/metrics');
   };
 
   data.fetchSearch = async function (q, types) {

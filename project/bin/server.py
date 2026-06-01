@@ -600,9 +600,21 @@ def list_table(handler, table, params):
                 break
         if is_range or k not in cols:
             continue
-        val = BOOL_COERCE.get(val.lower(), val)
-        where.append(f'"{k}" = ?')
-        args.append(val)
+        # Comma-separated value → IN(...). Lets a single filter option match
+        # several coded values that share a display label (the CMDB metrics
+        # merges e.g. multiple 'Retired' install_status codes into one option
+        # whose value is "7,3"). Our indexed filter values are codes/sys_ids/
+        # source names — none contain commas — so this only fires for those
+        # multi-code options.
+        if ',' in val:
+            parts = [BOOL_COERCE.get(x.lower(), x) for x in val.split(',') if x != '']
+            if not parts:
+                continue
+            where.append(f'"{k}" IN ({",".join("?" * len(parts))})')
+            args.extend(parts)
+        else:
+            where.append(f'"{k}" = ?')
+            args.append(BOOL_COERCE.get(val.lower(), val))
 
     # HR gate. Two shapes:
     #   incident itself      → filter on its own assignment_group.
@@ -898,18 +910,29 @@ def _cmdb_dist(conn, field, has_col, label_field=True):
            f"FROM cmdb_ci GROUP BY {val} ORDER BY n DESC")
     # Collapse entries that render to the same label — ServiceNow can ship more
     # than one coded value for a single status label (e.g. multiple 'Retired'
-    # install_status codes). Rows arrive count-desc, so the first occurrence
-    # (highest count) keeps the representative value, which is what a
-    # click-through filter resolves to.
+    # install_status codes). Rows arrive count-desc. The merged option carries
+    # ALL underlying coded values as a comma-joined `value`, so a click-through
+    # filter sends ?col=a,b and list_table expands it to IN(...). Without that,
+    # the dropdown count (sum across codes) wouldn't match the filtered list
+    # (a single code).
     merged = {}
     for r in conn.execute(sql):
         v = r['v'] if r['v'] is not None else ''
         label = r['l'] or v or '(empty)'
         if label in merged:
             merged[label]['count'] += r['n']
+            if v:
+                merged[label]['_vals'].append(v)
         else:
-            merged[label] = {'value': v, 'label': label, 'count': r['n']}
-    return sorted(merged.values(), key=lambda o: -o['count'])
+            merged[label] = {'value': v, 'label': label, 'count': r['n'],
+                             '_vals': [v] if v else []}
+    out = []
+    for o in sorted(merged.values(), key=lambda o: -o['count']):
+        vals = o.pop('_vals')
+        if len(vals) > 1:
+            o['value'] = ','.join(vals)
+        out.append(o)
+    return out
 
 
 def _cmdb_staleness(conn, has_col, snapshot_date):
@@ -1023,8 +1046,13 @@ def get_cmdb_ci_lookup(handler):
 
 def get_cmdb_metrics(handler):
     """CMDB overview aggregates (class/status/discovery/staleness/ownership/
-    relationships) — cached like the lookups since the archive is frozen."""
-    _serve_cached_lookup(handler, 'cmdb_metrics', _build_cmdb_metrics_payload)
+    relationships) — cached in memory keyed on db mtime. Shorter browser
+    max-age than the lookups: this payload carries `indexed_columns`, which
+    changes on a column-only rebuild that leaves the source snapshot (and thus
+    the lookup cache key) untouched, so we want clients to revalidate sooner
+    and pick up newly-filterable dimensions. The ETag still 304s the common
+    no-change case."""
+    _serve_cached_lookup(handler, 'cmdb_metrics', _build_cmdb_metrics_payload, max_age=600)
 
 
 def get_hr_status(handler):

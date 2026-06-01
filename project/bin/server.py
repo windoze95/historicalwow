@@ -991,10 +991,14 @@ def _cmdb_nonempty(conn, field, has_col):
 
 def _cmdb_relationships(conn, total):
     """Relationship-type distribution (indexed GROUP BY) + connected/orphan CI
-    coverage. `connected` counts distinct CIs appearing as a parent or child
-    via a UNION over the indexed parent/child columns — far cheaper than
-    probing every cmdb_ci row with sys_id IN (…). Guarded so a failure degrades
-    to 'no rel data' rather than sinking the whole metrics build."""
+    coverage. `connected` = distinct CIs that appear as a parent or child AND
+    exist in this cmdb_ci snapshot: a UNION over the indexed parent/child
+    columns, joined back to cmdb_ci on sys_id. The join matters — cmdb_rel_ci
+    can carry a dangling endpoint (a sys_id no longer in the snapshot), and
+    counting it would overstate `connected` (possibly past `total`) and zero
+    out `orphans`. Still far cheaper than probing every cmdb_ci row with
+    sys_id IN (…): we probe only the ~distinct endpoints against the PK. Guarded
+    so a failure degrades to 'no rel data' rather than sinking the build."""
     out = {}
     try:
         out['types'] = [
@@ -1008,7 +1012,7 @@ def _cmdb_relationships(conn, total):
             "  SELECT parent AS s FROM cmdb_rel_ci WHERE parent IS NOT NULL AND parent <> ''"
             '  UNION'
             "  SELECT child  AS s FROM cmdb_rel_ci WHERE child  IS NOT NULL AND child  <> ''"
-            ')'
+            ') u JOIN cmdb_ci c ON c.sys_id = u.s'
         ).fetchone()['n']
         out['connected'] = connected
         out['orphans'] = max(0, total - connected)

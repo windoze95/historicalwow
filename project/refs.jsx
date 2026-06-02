@@ -924,7 +924,7 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
                    style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', cursor: 'pointer' }}>
                 <window.Icon name="arrow_right" size={12} />
                 <span className="mono" style={{ fontSize: 12.5 }}>{u.ci.name}</span>
-                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{u.rel.type}</span>
+                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{u.rel.__display_type || u.rel.type}</span>
               </div>
             ))}
           </div>
@@ -939,7 +939,7 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
                    style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', cursor: 'pointer' }}>
                 <window.Icon name="arrow_right" size={12} />
                 <span className="mono" style={{ fontSize: 12.5 }}>{d.ci.name}</span>
-                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{d.rel.type}</span>
+                <span style={{ color: 'var(--fg-4)', fontSize: 11.5, marginLeft: 'auto' }}>{d.rel.__display_type || d.rel.type}</span>
               </div>
             ))}
           </div>

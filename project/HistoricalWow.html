@@ -5145,6 +5145,12 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
   if (!c) return <div className="empty">CI not in snapshot.</div>;
   const upstream   = relations.upstream   || [];
   const downstream = relations.downstream || [];
+  // operational_status is a coded value ('1'); the full record carries the
+  // label in __display_operational_status. (The compact lookup stub only has
+  // the code, so it can briefly read as the code until the full record loads.)
+  const opLabel = c.__display_operational_status || c.operational_status;
+  const opCls = opLabel === 'Operational' ? 'green' : opLabel === 'Degraded' ? 'amber'
+              : (opLabel === 'Down' || opLabel === 'Non-Operational') ? 'red' : '';
 
   return (
     <div className="ref-page">
@@ -5159,17 +5165,24 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
         <div className="info">
           <h1 className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 18 }}>{c.name}</h1>
           <div className="meta">
-            <span className={`chip ${c.operational_status === 'Operational' ? 'green' : c.operational_status === 'Degraded' ? 'amber' : 'red'}`}>{c.operational_status}</span>
-            <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{c.sys_class_name}</span>
+            {opLabel ? <span className={`chip ${opCls}`}>{opLabel}</span> : null}
+            <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{c.__display_sys_class_name || c.sys_class_name}</span>
           </div>
         </div>
       </div>
 
       <div className="ref-grid">
-        <div className="cell"><div className="label">Owned by</div><div className="val">{c.owned_by ? <span className="ref-link" onClick={() => window.navigate(`/groups/${c.owned_by}`)}>{window.findGroup(c.owned_by)?.name}</span> : '—'}</div></div>
-        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name}</div></div>
-        <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number}</div></div>
+        <div className="cell"><div className="label">Install status</div><div className="val">{c.__display_install_status || c.install_status || '—'}</div></div>
+        <div className="cell"><div className="label">Discovery source</div><div className="val">{c.discovery_source || '—'}</div></div>
+        <div className="cell"><div className="label">Last discovered</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.last_discovered ? window.fmtDate(c.last_discovered) : '—'}</div></div>
+        {/* owned_by is a sys_user reference (not a group) — show the resolved name and link to the user page */}
+        <div className="cell"><div className="label">Owned by</div><div className="val">{c.owned_by ? <span className="ref-link" onClick={() => window.navigate(`/users/${c.owned_by}`)}>{c.__display_owned_by || window.findUser(c.owned_by)?.name || c.owned_by}</span> : '—'}</div></div>
+        <div className="cell"><div className="label">Support group</div><div className="val">{c.support_group ? <span className="ref-link" onClick={() => window.navigate(`/groups/${c.support_group}`)}>{c.__display_support_group || window.findGroup(c.support_group)?.name || c.support_group}</span> : '—'}</div></div>
+        <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name || c.__display_company || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name || c.__display_location || '—'}</div></div>
+        <div className="cell"><div className="label">IP address</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.ip_address || '—'}</div></div>
+        <div className="cell"><div className="label">FQDN</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.fqdn || '—'}</div></div>
+        <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number || '—'}</div></div>
         <div className="cell">
           <div className="label">Asset record</div>
           <div className="val">
@@ -5181,7 +5194,7 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
                 : <span style={{ color: 'var(--fg-4)' }}>—</span>}
           </div>
         </div>
-        <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">Description</div><div className="val">{c.short_description}</div></div>
+        <div className="cell" style={{ gridColumn: '1 / -1' }}><div className="label">Description</div><div className="val">{c.short_description || '—'}</div></div>
       </div>
 
       <div className="ref-section">

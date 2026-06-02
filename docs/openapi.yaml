@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: HistoricalWow API
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
     Read-only HTTP API over a frozen ServiceNow archive. Returns records from
     a SQLite database that was built from an offline ServiceNow export — no
@@ -109,6 +109,73 @@ paths:
                     name: {type: string}
                     sys_class_name: {type: string}
                     operational_status: {type: string}
+        '304': {description: Not modified.}
+
+  /api/cmdb/metrics:
+    get:
+      tags: [manifest]
+      summary: CMDB overview metrics
+      description: |
+        Pre-computed aggregates over `cmdb_ci` and `cmdb_rel_ci` for the CMDB
+        overview page and the CI-list filter dropdowns: counts by class,
+        operational/install status, discovery source, last-discovered freshness,
+        ownership coverage, and relationship/orphan coverage. Cached in-memory
+        per DB build (same ETag / Cache-Control shape as the lookup blobs).
+
+        A dimension is only computed when its column is indexed — `indexed_columns`
+        lists what is available, so a client can tell which dimensions (and which
+        CI-list filters) are populated. Distribution entries carry the coded
+        `value` (comma-joined when several codes share one display label, so it
+        round-trips through the `IN (...)` filter), the display `label`, and the
+        `count`.
+      responses:
+        '200':
+          description: CMDB metrics.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer, description: Total cmdb_ci rows.}
+                  snapshot_date: {type: string}
+                  indexed_columns:
+                    type: array
+                    items: {type: string}
+                    description: cmdb_ci columns that are indexed (hence filterable / aggregatable).
+                  classes: {$ref: '#/components/schemas/CmdbDistribution'}
+                  operational_status: {$ref: '#/components/schemas/CmdbDistribution'}
+                  install_status: {$ref: '#/components/schemas/CmdbDistribution'}
+                  discovery_source: {$ref: '#/components/schemas/CmdbDistribution'}
+                  staleness:
+                    type: array
+                    description: last_discovered age buckets vs the snapshot date (empty until last_discovered is indexed).
+                    items:
+                      type: object
+                      properties:
+                        bucket: {type: string}
+                        count: {type: integer}
+                  ownership:
+                    type: object
+                    properties:
+                      owned_by: {type: integer, nullable: true, description: CIs with owned_by set (null until the column is indexed).}
+                      support_group: {type: integer, nullable: true}
+                      total: {type: integer}
+                  relationships:
+                    type: object
+                    properties:
+                      total_rels: {type: integer}
+                      connected: {type: integer, description: Distinct CIs appearing as a parent or child that exist in this snapshot.}
+                      orphans: {type: integer}
+                      types:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            label: {type: string}
+                            count: {type: integer}
         '304': {description: Not modified.}
 
   /api/sys_user_lookup:
@@ -450,6 +517,15 @@ paths:
         [tables.md](tables.md) and machine-readable as `x-filterable-columns`
         in [openapi-schemas.yaml](openapi-schemas.yaml).
 
+        **Range filters**: `?<col>_before=<value>` and `?<col>_after=<value>`
+        compare an indexed `<col>` with `<` and `>=` respectively (a `_before`
+        bound also excludes empty values, so "no value" is not treated as an
+        early one). This drives the CI staleness filter, e.g.
+        `cmdb_ci?last_discovered_before=2026-02-01`. A comma-separated filter
+        value is matched as `IN (...)` — e.g. `?install_status=7,3` — which is
+        how a single CMDB-metrics option can cover several codes that share one
+        display label.
+
         **HR gate**: when the gate is locked, the `incident` table hides
         rows whose `assignment_group` is the HR group, and child tables
         (`sys_journal_field`, `sys_audit`, `sys_attachment`, `task_ci`,
@@ -662,9 +738,10 @@ components:
       schema: {type: string}
       description: |
         Free-text needle. Matched with SQL `LIKE %q%` against whichever of
-        `number`, `short_description`, `name`, `value` actually exist on the
-        target table. A `q` against a table that has none of those columns
-        returns every row (footgun).
+        `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn`
+        actually exist on the target table (so `cmdb_ci` is searchable by IP or
+        hostname). A `q` against a table that has none of those columns returns
+        every row (footgun).
     OrderBy:
       name: order_by
       in: query
@@ -694,6 +771,20 @@ components:
       required: [error]
       properties:
         error: {type: string}
+
+    CmdbDistribution:
+      type: array
+      description: |
+        A `cmdb_ci` distribution, count-descending. `value` is the coded value
+        (comma-joined when several codes share one display label, so it can be
+        passed back to the list endpoint as an `IN (...)` filter); `label` is the
+        display label; `count` is the row count.
+      items:
+        type: object
+        properties:
+          value: {type: string}
+          label: {type: string}
+          count: {type: integer}
 
     ListEnvelope:
       type: object

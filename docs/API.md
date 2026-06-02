@@ -141,10 +141,11 @@ Use `?slim=1` to skip the `raw` envelope and return only the indexed columns —
 
 ### 4.3 Filtering
 
-Two filter shapes coexist on `/api/<table>`:
+Three filter shapes coexist on `/api/<table>`:
 
-1. **Free-text `q`** — substring match (`LIKE %q%`) against whichever of `number`, `short_description`, `name`, `value` exist on the target table. A `q` against a table that has none of these columns returns every row (see [§10](#10-footguns)).
-2. **Exact-match `?col=value`** — only on **indexed columns**. The full per-table list is in [`tables.md`](tables.md) and machine-readable as `x-filterable-columns` in [`openapi-schemas.yaml`](openapi-schemas.yaml).
+1. **Free-text `q`** — substring match (`LIKE %q%`) against whichever of `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn` exist on the target table (so `cmdb_ci` is searchable by IP / hostname). A `q` against a table that has none of these columns returns every row (see [§10](#10-footguns)).
+2. **Exact-match `?col=value`** — only on **indexed columns**. The full per-table list is in [`tables.md`](tables.md) and machine-readable as `x-filterable-columns` in [`openapi-schemas.yaml`](openapi-schemas.yaml). A comma-separated value is matched as `IN (...)`: `?install_status=7,3` matches either code (this is how one CMDB-metrics option can cover several codes that share a display label).
+3. **Range `?col_before=` / `?col_after=`** — on an indexed column, compares with `<` and `>=` respectively (a `_before` bound also excludes empty values, so "no value" isn't treated as an early one). Drives the CI staleness filter, e.g. `cmdb_ci?last_discovered_before=2026-02-01`.
 
 Boolean filters are auto-coerced: `?active=true` matches stored `1`, `?active=false` matches `0`. Other string forms (`Y`/`yes`/`1`-as-string) are **not** coerced — `?active=Y` would attempt to match stored `Y`, which doesn't exist. See [§10](#10-footguns).
 
@@ -188,7 +189,7 @@ Send `Accept-Encoding: gzip` to enable gzip on responses larger than 4 KiB. The 
 
 Two kinds of cache hints:
 
-- **`ETag` + `If-None-Match`** on the lookup blobs (`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`). Clients should cache aggressively and revalidate by sending the previous `ETag` back in `If-None-Match`. A match returns `304 Not Modified` with no body.
+- **`ETag` + `If-None-Match`** on the lookup blobs (`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`, `/api/cmdb/metrics`). Clients should cache aggressively and revalidate by sending the previous `ETag` back in `If-None-Match`. A match returns `304 Not Modified` with no body.
 - **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
 
 If you're operating a forward-proxy or CDN, the lookup blobs are the most valuable to cache.
@@ -220,6 +221,7 @@ Compact reference. Full details, request/response shapes, and try-it-out are in 
 | GET  | `/api/manifest` | manifest | Build manifest. |
 | GET  | `/api/cmdb_ci_lookup` | manifest | Compact CI sys_id → display fields. |
 | GET  | `/api/sys_user_lookup` | manifest | Compact user sys_id → display fields. |
+| GET  | `/api/cmdb/metrics` | manifest | CMDB overview aggregates (class / status / discovery / staleness / ownership / relationships). |
 | GET  | `/api/hr-status` | hr-gate | Gate state. |
 | POST | `/api/hr-unlock` | hr-gate | Exchange password for cookie. |
 | POST | `/api/hr-lock` | hr-gate | Invalidate cookie. |
@@ -276,6 +278,10 @@ The exporter's manifest. Contains snapshot date, source instance hostname, per-t
 ### `/api/cmdb_ci_lookup` and `/api/sys_user_lookup`
 
 Pre-built, in-memory `{sys_id: {<display fields>}}` blobs. Hit them once per session and join client-side instead of firing one `/api/cmdb_ci/<sys_id>` per row you need to display. The blobs are several MB compressed but compress 5–8× under gzip.
+
+### `/api/cmdb/metrics`
+
+Pre-computed CMDB overview aggregates over `cmdb_ci` + `cmdb_rel_ci`: counts by class, operational/install status, discovery source, and last-discovered freshness; ownership coverage (`owned_by` vs `support_group`); and relationship coverage (`connected` vs `orphans`, plus the relationship-type distribution). Cached in-memory per DB build (`ETag`). A dimension is only present once its column is indexed — read `indexed_columns` to see what's available. Distribution entries are `{value, label, count}`, with `value` comma-joined when several codes share a label (so it round-trips through the `IN (...)` filter described in [§4.3](#43-filtering)).
 
 ### `/api/search`
 
@@ -397,6 +403,7 @@ See [`docs/glossary.md`](glossary.md) for ServiceNow term explanations: `sys_id`
 | Version | Date | Notes |
 | --- | --- | --- |
 | `1.0.0` | 2026-05 | Initial publication. |
+| `1.1.0` | 2026-06 | Added `/api/cmdb/metrics` (CMDB overview aggregates). `/api/<table>` gains `?col_before=` / `?col_after=` range filters, comma-separated `IN (...)` filter values, and `ip_address` / `fqdn` in free-text search. `cmdb_ci` indexes additional columns (install status, discovery source, last discovered, support group, category, IP, FQDN). |
 
 ## 13. Reporting issues
 

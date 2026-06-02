@@ -252,10 +252,17 @@ window.HistoricalWowData = (function () {
   };
   data.fetchCIRelations = async function (sys_id) {
     const res = await apiGet(`/api/related/cmdb/${sys_id}`);
-    return {
-      upstream:   (res.upstream   || []).map(r => ({ ...flatten(r), ci: flatten(r.ci) })),
-      downstream: (res.downstream || []).map(r => ({ ...flatten(r), ci: flatten(r.ci) })),
-    };
+    // CIRefPage reads each item as { rel, ci }. The endpoint returns the
+    // relationship row's fields at the top level plus a `ci` envelope (absent
+    // when the parent/child sys_id is a dangling endpoint — a rel pointing at
+    // a CI not in this snapshot). Nest the rel under `rel` (so `u.rel.type`
+    // resolves, not undefined) and drop rows whose CI didn't resolve (so
+    // `u.ci.name` never dereferences null). Either of those was an uncaught
+    // throw that blanked the whole page once relations loaded.
+    const shape = (arr) => (arr || [])
+      .map(r => { const { ci, ...rel } = r; return { rel: flatten(rel), ci: ci ? flatten(ci) : null }; })
+      .filter(x => x.ci);
+    return { upstream: shape(res.upstream), downstream: shape(res.downstream) };
   };
   // CMDB overview aggregates (class/status/discovery/staleness/ownership/
   // relationships) + the indexed-column set the CI-list filters feature-detect

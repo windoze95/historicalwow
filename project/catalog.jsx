@@ -1426,6 +1426,18 @@
       : scripted ? 'scripted criterion'
       : members.length ? members.map(([l, v]) => `${l.toLowerCase()} ${String(v).split(',').length}`).join(' · ')
       : 'no members — matches everyone';
+    // Every other populated field, so the full criterion (incl. metadata or
+    // custom fields) is inspectable inline without leaving for a record page
+    // that wouldn't render user_criteria fields anyway.
+    const SHOWN = new Set(['name', 'description', 'group', 'role', 'user', 'company',
+      'department', 'location', 'script', 'advanced', 'active', 'match_all']);
+    const NOISE = new Set(['sys_tags', 'sys_mod_count', 'sys_domain', 'sys_domain_path',
+      'sys_class_name', 'sys_update_name', 'sys_overrides', 'sys_package', 'sys_scope', 'sys_policy']);
+    const otherFields = Object.keys(uc)
+      .filter(k => !k.startsWith('__display_') && !SHOWN.has(k) && !NOISE.has(k))
+      .map(k => [k, dv(uc, k)])
+      .filter(([, v]) => v != null && v !== '' && v !== '—')
+      .sort((a, b) => a[0].localeCompare(b[0]));
     return (
       <div style={{
         background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
@@ -1472,6 +1484,19 @@
             {!inactive && !members.length && !scripted && (
               <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic' }}>
                 No groups, roles, or users configured — this criterion matches everyone.
+              </div>
+            )}
+            {otherFields.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-4)', marginBottom: 4 }}>All fields</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,150px) 1fr', rowGap: 2, columnGap: 10, fontSize: 11 }}>
+                  {otherFields.map(([k, v]) => (
+                    <React.Fragment key={k}>
+                      <span className="mono" style={{ color: 'var(--fg-4)' }}>{k}</span>
+                      <span style={{ color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{String(v).slice(0, 200)}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
               </div>
             )}
           </div>

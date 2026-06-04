@@ -1419,14 +1419,18 @@
     ].map(([label, f]) => [label, dv(uc, f)]).filter(([, v]) => v && v !== '—');
     const scripted = isTrue(flat(uc.advanced));
     const script = flat(uc.script);
-    const summary = scripted ? 'scripted criterion'
+    // An inactive criterion is left in place but never evaluated, so don't
+    // describe it as a live grant/deny rule.
+    const inactive = flat(uc.active) === 'false' || flat(uc.active) === false;
+    const summary = inactive ? 'inactive · not enforced'
+      : scripted ? 'scripted criterion'
       : members.length ? members.map(([l, v]) => `${l.toLowerCase()} ${String(v).split(',').length}`).join(' · ')
       : 'no members — matches everyone';
     return (
       <div style={{
         background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
         border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
-        borderRadius: 8, padding: '8px 12px',
+        borderRadius: 8, padding: '8px 12px', opacity: inactive ? 0.6 : 1,
       }}>
         <div onClick={() => setOpen(o => !o)} title="Show / hide members"
           style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -1460,7 +1464,12 @@
                 }}>{script || '(no script body)'}</pre>
               </div>
             )}
-            {!members.length && !scripted && (
+            {inactive && (
+              <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic', marginTop: members.length ? 8 : 0 }}>
+                Inactive — this criterion isn't evaluated, so it grants/denies access to no one.
+              </div>
+            )}
+            {!inactive && !members.length && !scripted && (
               <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic' }}>
                 No groups, roles, or users configured — this criterion matches everyone.
               </div>

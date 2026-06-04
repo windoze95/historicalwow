@@ -2456,7 +2456,20 @@ flagging the omission.${excludedNote}
     }, [sys_id]);
 
     if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading flow…</div>;
-    if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Flow not in this snapshot.</div>;
+    // flow_inventory is a separate derived dataset that may not be generated
+    // yet (rollout window). The raw sys_hub_flow record is still in the
+    // archive, so fall back to it rather than dead-ending here.
+    if (rec === false) return (
+      <div className="empty">
+        <div className="glyph"><window.Icon name="info" /></div>
+        This flow isn't in the curated inventory yet.
+        <div style={{ marginTop: 12 }}>
+          <button className="filter-pill" onClick={() => window.navigate(window.recordUrl('sys_hub_flow', sys_id))}>
+            <window.Icon name="external" size={12} /> Open the raw sys_hub_flow record
+          </button>
+        </div>
+      </div>
+    );
 
     const name = flat(rec.name) || '(unnamed)';
     const active = isTrue(flat(rec.active));

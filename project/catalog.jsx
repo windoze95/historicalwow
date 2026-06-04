@@ -1402,33 +1402,46 @@
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {resolved.map(uc => {
-          // The criterion's actual members, resolved to display names. Lets you
-          // see e.g. which groups "IT - SAP" actually contains without leaving
-          // the page; the whole row also links to the full record.
-          const members = [
-            ['Groups', dv(uc, 'group')], ['Roles', dv(uc, 'role')], ['Users', dv(uc, 'user')],
-            ['Companies', dv(uc, 'company')], ['Departments', dv(uc, 'department')], ['Locations', dv(uc, 'location')],
-          ].filter(([, v]) => v && v !== '—');
-          const scripted = isTrue(flat(uc.advanced));
-          return (
-          <div key={uc.sys_id} title="Open the full user criteria record"
-            onClick={() => window.navigate(window.recordUrl('user_criteria', uc.sys_id))}
-            style={{
-              background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
-              border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
-              borderRadius: 8, padding: '8px 12px', cursor: 'pointer',
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <window.Icon name={kind === 'deny' ? 'lock' : 'shield'} size={12} />
-              <strong style={{ fontWeight: 500, color: 'var(--accent-fg)' }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
-              {scripted && <span style={{ ...chip, marginLeft: 'auto' }}>advanced (script)</span>}
-            </div>
-            {flat(uc.description) && (
-              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4 }}>{flat(uc.description)}</div>
-            )}
+        {resolved.map(uc => <UserCriterion key={uc.sys_id} uc={uc} kind={kind} />)}
+      </div>
+    );
+  }
+
+  // A single user_criteria entry. Click to expand its resolved members
+  // (groups / roles / users …) and, for scripted criteria, the script — so you
+  // can see who a criterion grants or denies without leaving the page. (The
+  // generic record route is task-oriented and wouldn't render these fields.)
+  function UserCriterion({ uc, kind }) {
+    const [open, setOpen] = useState(false);
+    const members = [
+      ['Groups', 'group'], ['Roles', 'role'], ['Users', 'user'],
+      ['Companies', 'company'], ['Departments', 'department'], ['Locations', 'location'],
+    ].map(([label, f]) => [label, dv(uc, f)]).filter(([, v]) => v && v !== '—');
+    const scripted = isTrue(flat(uc.advanced));
+    const script = flat(uc.script);
+    const summary = scripted ? 'scripted criterion'
+      : members.length ? members.map(([l, v]) => `${l.toLowerCase()} ${String(v).split(',').length}`).join(' · ')
+      : 'no members — matches everyone';
+    return (
+      <div style={{
+        background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
+        border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
+        borderRadius: 8, padding: '8px 12px',
+      }}>
+        <div onClick={() => setOpen(o => !o)} title="Show / hide members"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <window.Icon name={open ? 'chevron_down' : 'chevron_right'} size={11} />
+          <window.Icon name={kind === 'deny' ? 'lock' : 'shield'} size={12} />
+          <strong style={{ fontWeight: 500 }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>{summary}</span>
+        </div>
+        {flat(uc.description) && (
+          <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4, marginLeft: 19 }}>{flat(uc.description)}</div>
+        )}
+        {open && (
+          <div style={{ marginTop: 8, marginLeft: 19 }}>
             {members.length > 0 && (
-              <div style={{ fontSize: 11.5, marginTop: 6, color: 'var(--fg-2)' }}>
+              <div style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                 <span style={{ color: 'var(--fg-4)' }}>{isTrue(flat(uc.match_all)) ? 'Must match all — ' : 'Matches any — '}</span>
                 {members.map(([label, v]) => (
                   <div key={label} style={{ marginTop: 2 }}>
@@ -1437,14 +1450,23 @@
                 ))}
               </div>
             )}
-            {scripted && members.length === 0 && (
-              <div style={{ fontSize: 11.5, marginTop: 6, color: 'var(--fg-4)', fontStyle: 'italic' }}>
-                Scripted criterion — open the record for the script.
+            {scripted && (
+              <div style={{ marginTop: members.length ? 8 : 0 }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-4)', marginBottom: 4 }}>Script</div>
+                <pre style={{
+                  margin: 0, padding: '8px 10px', background: 'var(--bg)', border: '1px solid var(--border)',
+                  borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-2)',
+                  overflowX: 'auto', whiteSpace: 'pre-wrap', maxHeight: 280,
+                }}>{script || '(no script body)'}</pre>
+              </div>
+            )}
+            {!members.length && !scripted && (
+              <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic' }}>
+                No groups, roles, or users configured — this criterion matches everyone.
               </div>
             )}
           </div>
-          );
-        })}
+        )}
       </div>
     );
   }

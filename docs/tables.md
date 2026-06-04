@@ -1249,6 +1249,115 @@ Filterable columns:
 | `sys_class_name` | string |  |
 | `description` | string |  |
 
+### `flow_inventory`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `internal_name` | string |  |
+| `area` | string |  |
+| `category` | string |  |
+| `pattern` | string |  |
+| `catalog_item` | string |  |
+| `flow_type` | string |  |
+| `trigger_table` | string |  |
+| `run_count` | string |  |
+| `error_count` | string |  |
+| `last_run` | string |  |
+| `created_by` | string |  |
+| `curated` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `sys_updated_on` | string |  |
+
+### `sys_hub_action_instance_v2`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `flow` | string |  |
+| `order` | string |  |
+| `ui_id` | string |  |
+| `parent_ui_id` | string |  |
+| `action_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+
+### `sys_hub_action_instance`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `flow` | string |  |
+| `order` | string |  |
+| `ui_id` | string |  |
+| `parent_ui_id` | string |  |
+| `action_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+
+### `sys_hub_trigger_instance`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `flow` | string |  |
+| `trigger_type` | string |  |
+| `table` | string |  |
+| `sys_class_name` | string |  |
+
+### `sys_hub_trigger_instance_v2`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `flow` | string |  |
+| `trigger_type` | string |  |
+| `sys_class_name` | string |  |
+
+### `sys_hub_flow_logic`
+
+Tags: `cache-5min`
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `flow` | string |  |
+| `order` | string |  |
+| `ui_id` | string |  |
+| `parent_ui_id` | string |  |
+| `logic_definition` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+
 ### `sys_security_acl`
 
 Tags: `cache-5min`

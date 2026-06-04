@@ -298,6 +298,13 @@ REFERENCE_TABLES = {
     'sys_properties', 'sys_ui_action',
     'sys_dictionary', 'sys_dictionary_override',
     'sys_hub_flow',
+    # flow_inventory: derived, curated + enriched per-flow inventory (built by
+    # bin/gen_flow_inventory.py, not the exporter). Served like any other table.
+    'flow_inventory',
+    # Raw Flow Designer internals (steps / triggers / logic) behind each flow.
+    'sys_hub_action_instance_v2', 'sys_hub_action_instance',
+    'sys_hub_trigger_instance', 'sys_hub_trigger_instance_v2',
+    'sys_hub_flow_logic',
     'sys_security_acl',
     # Inbound email actions — rules that turn an inbound email into a record action.
     'sysevent_in_email_action',
@@ -1192,6 +1199,10 @@ CACHE_5MIN = {
     'sys_properties', 'sys_ui_action',
     'sys_dictionary', 'sys_dictionary_override',
     'sys_hub_flow',
+    'flow_inventory',
+    'sys_hub_action_instance_v2', 'sys_hub_action_instance',
+    'sys_hub_trigger_instance', 'sys_hub_trigger_instance_v2',
+    'sys_hub_flow_logic',
     'sys_security_acl',
 }
 

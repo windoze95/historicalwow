@@ -323,6 +323,16 @@ DEFAULT_TABLES = [
     'sys_dictionary',
     'sys_dictionary_override',
     'sys_hub_flow',
+    # Flow Designer internals — the steps, triggers, and flow-logic blocks
+    # behind each sys_hub_flow. The encoded `values` / `trigger_inputs` blobs
+    # are archived as-is (opaque); the curated flow_inventory dataset decodes
+    # them at build time. Both flow generations (modern *_v2 + legacy) are
+    # pulled so every flow's internals are captured.
+    'sys_hub_action_instance_v2',
+    'sys_hub_action_instance',
+    'sys_hub_trigger_instance',
+    'sys_hub_trigger_instance_v2',
+    'sys_hub_flow_logic',
     'sys_security_acl',
     # Inbound email actions — the rules that turn an inbound email into a
     # record action (create/update on a target table). Often the *how* behind

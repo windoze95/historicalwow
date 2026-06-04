@@ -6845,6 +6845,14 @@ Object.assign(window, {
               <Field label="Price">{flat(rec.price) || '—'}</Field>
               <Field label="Recurring price">{flat(rec.recurring_price) || '—'}</Field>
               <Field label="Workflow">{dv(rec, 'workflow') || '—'}</Field>
+              {flat(rec.flow_designer_flow) && (
+                <Field label="Flow">
+                  <a style={{ color: 'var(--accent-fg)', cursor: 'pointer' }}
+                     onClick={() => window.navigate(window.recordUrl('flow_inventory', flat(rec.flow_designer_flow)))}>
+                    {dv(rec, 'flow_designer_flow') || flat(rec.flow_designer_flow)}
+                  </a>
+                </Field>
+              )}
               <Field label="Availability">{dv(rec, 'availability') || '—'}</Field>
               <Field label="Created">{flat(rec.sys_created_on) || '—'} <span style={{ color: 'var(--fg-4)' }}>by {flat(rec.sys_created_by) || '—'}</span></Field>
               <Field label="Updated">{flat(rec.sys_updated_on) || '—'} <span style={{ color: 'var(--fg-4)' }}>by {flat(rec.sys_updated_by) || '—'}</span></Field>
@@ -7264,22 +7272,49 @@ Object.assign(window, {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {resolved.map(uc => (
-          <div key={uc.sys_id} style={{
-            background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
-            border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
-            borderRadius: 8, padding: '8px 12px',
-          }}>
+        {resolved.map(uc => {
+          // The criterion's actual members, resolved to display names. Lets you
+          // see e.g. which groups "IT - SAP" actually contains without leaving
+          // the page; the whole row also links to the full record.
+          const members = [
+            ['Groups', dv(uc, 'group')], ['Roles', dv(uc, 'role')], ['Users', dv(uc, 'user')],
+            ['Companies', dv(uc, 'company')], ['Departments', dv(uc, 'department')], ['Locations', dv(uc, 'location')],
+          ].filter(([, v]) => v && v !== '—');
+          const scripted = isTrue(flat(uc.advanced));
+          return (
+          <div key={uc.sys_id} title="Open the full user criteria record"
+            onClick={() => window.navigate(window.recordUrl('user_criteria', uc.sys_id))}
+            style={{
+              background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
+              border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
+              borderRadius: 8, padding: '8px 12px', cursor: 'pointer',
+            }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <window.Icon name={kind === 'deny' ? 'lock' : 'shield'} size={12} />
-              <strong style={{ fontWeight: 500 }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
-              {isTrue(flat(uc.advanced)) && <span style={{ ...chip, marginLeft: 'auto' }}>advanced (script)</span>}
+              <strong style={{ fontWeight: 500, color: 'var(--accent-fg)' }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
+              {scripted && <span style={{ ...chip, marginLeft: 'auto' }}>advanced (script)</span>}
             </div>
             {flat(uc.description) && (
               <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4 }}>{flat(uc.description)}</div>
             )}
+            {members.length > 0 && (
+              <div style={{ fontSize: 11.5, marginTop: 6, color: 'var(--fg-2)' }}>
+                <span style={{ color: 'var(--fg-4)' }}>{isTrue(flat(uc.match_all)) ? 'Must match all — ' : 'Matches any — '}</span>
+                {members.map(([label, v]) => (
+                  <div key={label} style={{ marginTop: 2 }}>
+                    <span style={{ color: 'var(--fg-3)' }}>{label}: </span>{v}
+                  </div>
+                ))}
+              </div>
+            )}
+            {scripted && members.length === 0 && (
+              <div style={{ fontSize: 11.5, marginTop: 6, color: 'var(--fg-4)', fontStyle: 'italic' }}>
+                Scripted criterion — open the record for the script.
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     );
   }

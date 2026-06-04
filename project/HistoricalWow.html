@@ -6845,6 +6845,14 @@ Object.assign(window, {
               <Field label="Price">{flat(rec.price) || '—'}</Field>
               <Field label="Recurring price">{flat(rec.recurring_price) || '—'}</Field>
               <Field label="Workflow">{dv(rec, 'workflow') || '—'}</Field>
+              {flat(rec.flow_designer_flow) && (
+                <Field label="Flow">
+                  <a style={{ color: 'var(--accent-fg)', cursor: 'pointer' }}
+                     onClick={() => window.navigate(window.recordUrl('flow_inventory', flat(rec.flow_designer_flow)))}>
+                    {dv(rec, 'flow_designer_flow') || flat(rec.flow_designer_flow)}
+                  </a>
+                </Field>
+              )}
               <Field label="Availability">{dv(rec, 'availability') || '—'}</Field>
               <Field label="Created">{flat(rec.sys_created_on) || '—'} <span style={{ color: 'var(--fg-4)' }}>by {flat(rec.sys_created_by) || '—'}</span></Field>
               <Field label="Updated">{flat(rec.sys_updated_on) || '—'} <span style={{ color: 'var(--fg-4)' }}>by {flat(rec.sys_updated_by) || '—'}</span></Field>
@@ -7264,22 +7272,105 @@ Object.assign(window, {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {resolved.map(uc => (
-          <div key={uc.sys_id} style={{
-            background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
-            border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
-            borderRadius: 8, padding: '8px 12px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <window.Icon name={kind === 'deny' ? 'lock' : 'shield'} size={12} />
-              <strong style={{ fontWeight: 500 }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
-              {isTrue(flat(uc.advanced)) && <span style={{ ...chip, marginLeft: 'auto' }}>advanced (script)</span>}
-            </div>
-            {flat(uc.description) && (
-              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4 }}>{flat(uc.description)}</div>
+        {resolved.map(uc => <UserCriterion key={uc.sys_id} uc={uc} kind={kind} />)}
+      </div>
+    );
+  }
+
+  // A single user_criteria entry. Click to expand its resolved members
+  // (groups / roles / users …) and, for scripted criteria, the script — so you
+  // can see who a criterion grants or denies without leaving the page. (The
+  // generic record route is task-oriented and wouldn't render these fields.)
+  function UserCriterion({ uc, kind }) {
+    const [open, setOpen] = useState(false);
+    const members = [
+      ['Groups', 'group'], ['Roles', 'role'], ['Users', 'user'],
+      ['Companies', 'company'], ['Departments', 'department'], ['Locations', 'location'],
+    ].map(([label, f]) => [label, dv(uc, f)]).filter(([, v]) => v && v !== '—');
+    const scripted = isTrue(flat(uc.advanced));
+    const script = flat(uc.script);
+    // An inactive criterion is left in place but never evaluated, so don't
+    // describe it as a live grant/deny rule.
+    const inactive = flat(uc.active) === 'false' || flat(uc.active) === false;
+    const summary = inactive ? 'inactive · not enforced'
+      : scripted ? 'scripted criterion'
+      : members.length ? members.map(([l, v]) => `${l.toLowerCase()} ${String(v).split(',').length}`).join(' · ')
+      : 'no members — matches everyone';
+    // Every other populated field, so the full criterion (incl. metadata or
+    // custom fields) is inspectable inline without leaving for a record page
+    // that wouldn't render user_criteria fields anyway.
+    const SHOWN = new Set(['name', 'description', 'group', 'role', 'user', 'company',
+      'department', 'location', 'script', 'advanced', 'active', 'match_all']);
+    const NOISE = new Set(['sys_tags', 'sys_mod_count', 'sys_domain', 'sys_domain_path',
+      'sys_class_name', 'sys_update_name', 'sys_overrides', 'sys_package', 'sys_scope', 'sys_policy']);
+    const otherFields = Object.keys(uc)
+      .filter(k => !k.startsWith('__display_') && !SHOWN.has(k) && !NOISE.has(k))
+      .map(k => [k, dv(uc, k)])
+      .filter(([, v]) => v != null && v !== '' && v !== '—')
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    return (
+      <div style={{
+        background: kind === 'deny' ? 'var(--c-red-bg)' : 'var(--accent-bg)',
+        border: '1px solid ' + (kind === 'deny' ? 'var(--c-red-border)' : 'var(--accent-border)'),
+        borderRadius: 8, padding: '8px 12px', opacity: inactive ? 0.6 : 1,
+      }}>
+        <div onClick={() => setOpen(o => !o)} title="Show / hide members"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <window.Icon name={open ? 'chevron_down' : 'chevron_right'} size={11} />
+          <window.Icon name={kind === 'deny' ? 'lock' : 'shield'} size={12} />
+          <strong style={{ fontWeight: 500 }}>{flat(uc.name) || '(unnamed criterion)'}</strong>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>{summary}</span>
+        </div>
+        {flat(uc.description) && (
+          <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4, marginLeft: 19 }}>{flat(uc.description)}</div>
+        )}
+        {open && (
+          <div style={{ marginTop: 8, marginLeft: 19 }}>
+            {members.length > 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                <span style={{ color: 'var(--fg-4)' }}>{isTrue(flat(uc.match_all)) ? 'Must match all — ' : 'Matches any — '}</span>
+                {members.map(([label, v]) => (
+                  <div key={label} style={{ marginTop: 2 }}>
+                    <span style={{ color: 'var(--fg-3)' }}>{label}: </span>{v}
+                  </div>
+                ))}
+              </div>
+            )}
+            {scripted && (
+              <div style={{ marginTop: members.length ? 8 : 0 }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-4)', marginBottom: 4 }}>Script</div>
+                <pre style={{
+                  margin: 0, padding: '8px 10px', background: 'var(--bg)', border: '1px solid var(--border)',
+                  borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-2)',
+                  overflowX: 'auto', whiteSpace: 'pre-wrap', maxHeight: 280,
+                }}>{script || '(no script body)'}</pre>
+              </div>
+            )}
+            {inactive && (
+              <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic', marginTop: members.length ? 8 : 0 }}>
+                Inactive — this criterion isn't evaluated, so it grants/denies access to no one.
+              </div>
+            )}
+            {!inactive && !members.length && !scripted && (
+              <div style={{ fontSize: 11.5, color: 'var(--fg-4)', fontStyle: 'italic' }}>
+                No groups, roles, or users configured — this criterion matches everyone.
+              </div>
+            )}
+            {otherFields.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-4)', marginBottom: 4 }}>All fields</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,150px) 1fr', rowGap: 2, columnGap: 10, fontSize: 11 }}>
+                  {otherFields.map(([k, v]) => (
+                    <React.Fragment key={k}>
+                      <span className="mono" style={{ color: 'var(--fg-4)' }}>{k}</span>
+                      <span style={{ color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{String(v).slice(0, 200)}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
-        ))}
+        )}
       </div>
     );
   }

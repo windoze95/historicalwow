@@ -45,6 +45,12 @@ REQUIRED_ENV = ('SN_INSTANCE', 'SN_CLIENT_ID', 'SN_CLIENT_SECRET',
 # "<step-number> - <Step Name>➛<Output Name>".
 PILL_SEP = '➛'
 
+# Some reference inputs point at a database view rather than a base table;
+# normalize to the real, archived table so the viewer can resolve a record.
+_REF_VIEW_TO_TABLE = {
+    'st_sys_catalog_items_and_variable_sets': 'sc_cat_item',
+}
+
 NS = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 _SS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
@@ -262,6 +268,12 @@ def decode_values(blob):
         entry = {'value': val}
         if disp not in ('', None) and disp != val:
             entry['display'] = disp
+        # Reference inputs carry the referenced table; keep it so the viewer can
+        # turn a sys_id value into a link to that record. (Data-pill values like
+        # "{{...}}" aren't sys_ids, so the viewer won't linkify them.)
+        ref = (it.get('parameter') or {}).get('reference')
+        if ref:
+            entry['ref'] = _REF_VIEW_TO_TABLE.get(ref, ref)
         out[name] = entry
     return out
 
@@ -436,12 +448,17 @@ def fnum(n):
 # ---------------------------------------------------------------------------
 # Assemble
 # ---------------------------------------------------------------------------
-def build_record(hdr, curated, actions, trigger, logic, stat, subflow_names,
+def build_record(hdr, curated, actions, trigger, logic, stat, subflow_by_name,
                  enriched_at):
     name = udv(hdr.get('name')) or uv(hdr.get('name')) or ''
     lc_steps = label_cache_steps(uv(hdr.get('label_cache')))
-    subflows = [{'name': n} for n in lc_steps
-                if n.split(' - ', 1)[-1] in subflow_names]
+    # Subflow steps (rendered as a link to the subflow's own flow record). Strip
+    # the "<n> - " step-number prefix to recover the real subflow name.
+    subflows = []
+    for n in lc_steps:
+        nm = n.split(' - ', 1)[-1]
+        if nm in subflow_by_name:
+            subflows.append({'name': nm, 'sys_id': subflow_by_name[nm]})
     endpoints = derive_endpoints(actions)
 
     trig = trigger
@@ -523,9 +540,9 @@ def main():
     print('Pulling flow headers (sys_hub_flow) ...')
     headers = paginate_all(ex, 'sys_hub_flow')
     print('  flows: %d' % len(headers))
-    subflow_names = {udv(h.get('name')) or uv(h.get('name'))
-                     for h in headers
-                     if (udv(h.get('type')) or '').lower() == 'subflow'}
+    subflow_by_name = {(udv(h.get('name')) or uv(h.get('name'))): uv(h.get('sys_id'))
+                       for h in headers
+                       if (uv(h.get('type')) or '').lower() == 'subflow'}
 
     print('Pulling action instances ...')
     actions_by_flow = group_actions(ex)
@@ -563,7 +580,7 @@ def main():
                 triggers_by_flow.get(sid),
                 logic_by_flow.get(sid, []),
                 dict(stats_by_flow.get(sid, empty_stat)),
-                subflow_names,
+                subflow_by_name,
                 enriched_at,
             )
             f.write(json.dumps(rec, ensure_ascii=False, separators=(',', ':')) + '\n')

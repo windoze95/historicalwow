@@ -436,7 +436,8 @@ def fnum(n):
 # ---------------------------------------------------------------------------
 # Assemble
 # ---------------------------------------------------------------------------
-def build_record(hdr, curated, actions, trigger, logic, stat, subflow_names):
+def build_record(hdr, curated, actions, trigger, logic, stat, subflow_names,
+                 enriched_at):
     name = udv(hdr.get('name')) or uv(hdr.get('name')) or ''
     lc_steps = label_cache_steps(uv(hdr.get('label_cache')))
     subflows = [{'name': n} for n in lc_steps
@@ -453,7 +454,11 @@ def build_record(hdr, curated, actions, trigger, logic, stat, subflow_names):
         'name': name,
         'internal_name': uv(hdr.get('internal_name')) or '',
         'sys_class_name': uv(hdr.get('sys_class_name')) or '',
-        'flow_type': udv(hdr.get('type')) or '',
+        # Normalize to a canonical, instance-agnostic label from the stored
+        # value ('flow'/'subflow'/'action') rather than the display, whose
+        # casing varies per instance ('SubFlow' vs 'Subflow'). Keeps the viewer
+        # type filter (exact server-side match) reliable.
+        'flow_type': (uv(hdr.get('type')) or '').capitalize(),
         'run_as': udv(hdr.get('run_as')) or '',
         'scope': udv(hdr.get('sys_scope')) or '',
         'status': udv(hdr.get('status')) or '',
@@ -488,7 +493,7 @@ def build_record(hdr, curated, actions, trigger, logic, stat, subflow_names):
             'first_run': stat['first_run'], 'last_run': stat['last_run'],
             'source_tables': stat.get('source_tables', []),
         },
-        '_enriched_at': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+        '_enriched_at': enriched_at,
     }
     return rec
 
@@ -535,6 +540,11 @@ def main():
     empty_stat = {'run_count': 0, 'error_count': 0, 'complete_count': 0,
                   'first_run': '', 'last_run': '', 'source_tables': []}
 
+    # One timestamp for the whole run — it's flow_inventory's build cursor
+    # (DELTA_FIELD), so every regeneration advances it and the incremental
+    # build re-loads all rows instead of skipping them as unchanged.
+    enriched_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     n, matched, skipped = 0, 0, 0
     with args.out.open('w', encoding='utf-8') as f:
@@ -554,6 +564,7 @@ def main():
                 logic_by_flow.get(sid, []),
                 dict(stats_by_flow.get(sid, empty_stat)),
                 subflow_names,
+                enriched_at,
             )
             f.write(json.dumps(rec, ensure_ascii=False, separators=(',', ':')) + '\n')
             n += 1

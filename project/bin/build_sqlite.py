@@ -878,6 +878,12 @@ SCHEMAS = {
 DELTA_FIELD = {
     'sys_audit':         'sys_created_on',
     'sys_journal_field': 'sys_created_on',
+    # flow_inventory is DERIVED: its enrichment (decoded steps, execution
+    # stats, narrative) changes while the underlying flow's sys_updated_on may
+    # not. Cursor on `_enriched_at` (stamped fresh every generation) so an
+    # incremental rebuild always re-loads the regenerated rows instead of
+    # skipping them as unchanged.
+    'flow_inventory':    '_enriched_at',
 }
 
 def _delta_field(table):

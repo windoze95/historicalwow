@@ -2269,6 +2269,353 @@ flagging the omission.${excludedNote}
     return lines.join('\n') + '\n';
   }
 
+  // =========================================================================
+  // Flow inventory — curated + enriched Flow Designer inventory.
+  // Derived dataset built by bin/gen_flow_inventory.py (fuses the curated
+  // spreadsheet with live step/trigger/stat enrichment); table flow_inventory.
+  // Each record's sys_id is the linked sys_hub_flow record.
+  // =========================================================================
+  function FlowTypeChip({ type }) {
+    const t = (type || '').toLowerCase();
+    const cls = t === 'subflow' ? 'violet' : t === 'action' ? 'amber' : 'blue';
+    return <span className={`chip ${cls}`}>{type || 'Flow'}</span>;
+  }
+  const flowInt = (v) => { const n = parseInt(flat(v), 10); return Number.isFinite(n) ? n : 0; };
+  // Humanize a Flow Designer trigger_type token for display.
+  const TRIGGER_LABEL = {
+    record_create: 'Record created', record_update: 'Record updated',
+    record_create_or_update: 'Record created or updated', record_delete: 'Record deleted',
+    scheduled: 'Scheduled', service_catalog: 'Service Catalog item',
+    sla_task: 'SLA task', inbound_email: 'Inbound email', metric: 'Metric',
+    daily: 'Daily schedule', weekly: 'Weekly schedule', monthly: 'Monthly schedule',
+  };
+
+  window.FlowInventoryListPage = function FlowInventoryListPage() {
+    const [q, setQ] = useState('');
+    const [debouncedQ, setDebouncedQ] = useState('');
+    const [page, setPage] = useState(0);
+    const [resp, setResp] = useState({ rows: null, total: 0 });
+    const [loading, setLoading] = useState(true);
+    const [curatedOnly, setCuratedOnly] = useState(true);
+    const [activeOnly, setActiveOnly] = useState(false);
+    const [typeFilter, setTypeFilter] = useState('');
+    const PSZ = 50;
+
+    useEffect(() => { const t = setTimeout(() => setDebouncedQ(q), 250); return () => clearTimeout(t); }, [q]);
+    useEffect(() => { setPage(0); }, [debouncedQ, curatedOnly, activeOnly, typeFilter]);
+    useEffect(() => { window.AuditLog.push('list', 'flow_inventory', ''); }, []);
+
+    useEffect(() => {
+      let cancel = false; setLoading(true);
+      const flt = {};
+      if (curatedOnly) flt.curated = 'true';
+      if (activeOnly) flt.active = 'true';
+      if (typeFilter) flt.flow_type = typeFilter;
+      data.fetchTaskList('flow_inventory', {
+        limit: PSZ, offset: page * PSZ, q: debouncedQ || undefined,
+        filters: flt, order_by: 'name', dir: 'asc',
+      }).then(r => { if (cancel) return; setResp(r); setLoading(false); })
+        .catch(() => { if (cancel) return; setResp({ rows: [], total: 0, missing: true }); setLoading(false); });
+      return () => { cancel = true; };
+    }, [debouncedQ, page, curatedOnly, activeOnly, typeFilter]);
+
+    const total = resp.total || 0;
+    const lastPage = Math.max(0, Math.ceil(total / PSZ) - 1);
+    const columns = [
+      { key: 'name', label: 'Flow', render: r => (
+        <NameWithDesc name={flat(r.name)} desc={flat(r.area) || flat(r.category) || flat(r.internal_name)} />
+      )},
+      { key: 'type', label: 'Type', w: 90, render: r => <FlowTypeChip type={flat(r.flow_type)} /> },
+      { key: 'pattern', label: 'Pattern', w: 170, render: r => (
+        flat(r.pattern) ? <span style={{ fontSize: 12 }}>{flat(r.pattern)}</span> : <span className="muted">—</span>
+      )},
+      { key: 'trigger', label: 'Trigger', w: 150, render: r => {
+        const t = flat(r.trigger_table);
+        return t
+          ? <a className="mono" style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); window.navigate(`/sn-table/${t}`); }}>{t}</a>
+          : <span className="muted">—</span>;
+      }},
+      { key: 'runs', label: 'Runs', w: 70, cls: 'num', render: r => (
+        <span className="mono">{flowInt(r.run_count).toLocaleString()}</span>
+      )},
+      { key: 'errors', label: 'Errors', w: 80, cls: 'num', render: r => (
+        flowInt(r.error_count) > 0
+          ? <span className="chip red">{flowInt(r.error_count).toLocaleString()}</span>
+          : <span className="muted">—</span>
+      )},
+      { key: 'active', label: 'Active', w: 80, render: r => (
+        isTrue(flat(r.active)) ? <span className="chip green">active</span> : <span className="chip">inactive</span>
+      )},
+    ];
+
+    return (
+      <div>
+        <PageHeader title="Flows" table="flow_inventory" total={total} page={page} lastPage={lastPage}
+          sub={curatedOnly ? "Love's-built (curated)" : 'all flows on the instance'}>
+          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, color: 'var(--fg)', outline: 'none' }}>
+            <option value="">All — type</option>
+            <option value="Flow">Flow</option>
+            <option value="SubFlow">Subflow</option>
+            <option value="Action">Action</option>
+          </select>
+          <button className={'toggle' + (curatedOnly ? ' on' : '')} onClick={() => setCuratedOnly(v => !v)}
+            style={{ padding: '0 12px', height: 26, fontSize: 12, borderRadius: 14 }}>
+            in-house only
+          </button>
+          <button className={'toggle' + (activeOnly ? ' on' : '')} onClick={() => setActiveOnly(v => !v)}
+            style={{ padding: '0 12px', height: 26, fontSize: 12, borderRadius: 14 }}>
+            active only
+          </button>
+          <div className="spacer" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name…"
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 260, color: 'var(--fg)' }} />
+          <Pager page={page} setPage={setPage} lastPage={lastPage} />
+        </PageHeader>
+        <table className="dt">
+          <thead><tr>{columns.map(c => <th key={c.key} style={{ width: c.w }} className={c.cls}>{c.label}</th>)}</tr></thead>
+          <tbody>
+            {loading && resp.rows == null && (
+              <tr><td colSpan={columns.length} style={{ padding: '60px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
+                <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+              </td></tr>
+            )}
+            {!loading && resp.missing && (
+              <tr><td colSpan={columns.length} style={{ padding: '40px 20px' }}>
+                <Empty icon="archive" text="The flow_inventory dataset isn't in this snapshot."
+                  hint="Run bin/gen_flow_inventory.py then rebuild the SQLite DB." />
+              </td></tr>
+            )}
+            {!loading && resp.rows && resp.rows.length === 0 && !resp.missing && (
+              <tr><td colSpan={columns.length} style={{ padding: '40px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>No matching flows.</td></tr>
+            )}
+            {(resp.rows || []).map(r => (
+              <tr key={r.sys_id} onClick={() => window.navigate(window.recordUrl('flow_inventory', r.sys_id))}>
+                {columns.map(c => <td key={c.key} className={c.cls}>{c.render(r)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // --- record page ---------------------------------------------------------
+  function FlowStepCard({ step, idx }) {
+    const cfg = step.config || {};
+    const keys = Object.keys(cfg);
+    const indent = step.parent_ui_id ? 18 : 0;
+    return (
+      <div style={{ marginLeft: indent, marginBottom: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 28 }}>{step.order || idx + 1}</span>
+          <strong style={{ fontWeight: 500, fontSize: 12.5 }}>{step.action_type || step.display_text || 'Step'}</strong>
+          {step.parent_ui_id && <span style={{ fontSize: 10, color: 'var(--fg-4)' }}>· nested</span>}
+        </div>
+        {step.display_text && step.display_text !== step.action_type && (
+          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 36 }}>{step.display_text}</div>
+        )}
+        {keys.length > 0 && (
+          <div style={{ marginTop: 6, marginLeft: 36, display: 'grid', gridTemplateColumns: 'minmax(80px,160px) 1fr', rowGap: 3, columnGap: 10, fontSize: 11.5 }}>
+            {keys.slice(0, 12).map(k => {
+              const v = cfg[k] || {};
+              const val = v.display || v.value || '';
+              return <React.Fragment key={k}>
+                <span className="mono" style={{ color: 'var(--fg-3)' }}>{k}</span>
+                <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{String(val).slice(0, 240) || '—'}</span>
+              </React.Fragment>;
+            })}
+            {keys.length > 12 && <span style={{ gridColumn: '1 / -1', color: 'var(--fg-4)', fontStyle: 'italic' }}>+ {keys.length - 12} more inputs</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function FlowStatTile({ label, value, tone }) {
+    const color = tone === 'bad' ? 'var(--red, #d9534f)' : tone === 'good' ? 'var(--green, #4a8)' : 'var(--fg)';
+    return (
+      <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+        <div style={{ fontSize: 10, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, color }}>{value}</div>
+      </div>
+    );
+  }
+
+  window.FlowInventoryRecordPage = function FlowInventoryRecordPage({ sys_id }) {
+    const [rec, setRec] = useState(null);
+    useEffect(() => {
+      let cancel = false; setRec(null);
+      L.fetchRecord('flow_inventory', sys_id).then(r => {
+        if (cancel) return;
+        if (!r) { setRec(false); return; }
+        setRec(r);
+        window.AuditLog.push('view', `flow_inventory/${flat(r.name) || sys_id.slice(0, 8)}`, flat(r.name) || '');
+      }).catch(() => { if (!cancel) setRec(false); });
+      return () => { cancel = true; };
+    }, [sys_id]);
+
+    if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading flow…</div>;
+    if (rec === false) return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Flow not in this snapshot.</div>;
+
+    const name = flat(rec.name) || '(unnamed)';
+    const active = isTrue(flat(rec.active));
+    const curated = isTrue(flat(rec.curated));
+    const steps = Array.isArray(rec.steps) ? rec.steps : [];
+    const lcSteps = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
+    const stats = (rec.stats && typeof rec.stats === 'object') ? rec.stats : {};
+    const trig = (rec.trigger && typeof rec.trigger === 'object') ? rec.trigger : null;
+    const endpoints = Array.isArray(rec.integration_endpoints) ? rec.integration_endpoints : [];
+    const subflows = Array.isArray(rec.subflows) ? rec.subflows : [];
+    const runs = flowInt(rec.run_count), errs = flowInt(rec.error_count);
+    const narrative = flat(rec.narrative) || '';
+    const known = flat(rec.known_issues) || '';
+    const notables = flat(rec.notables) || '';
+    const trigTable = trig && trig.table;
+    const trigType = trig && (TRIGGER_LABEL[trig.type] || trig.type);
+
+    return (
+      <div className="record">
+        <div className="left">
+          <div className="record-header">
+            <div className="crumbs">
+              <a onClick={() => window.navigate('/flows')}>Flows</a>
+              <window.Icon name="chevron_right" size={11} />
+              <span className="mono">{name}</span>
+            </div>
+            <h1>
+              <window.Icon name="change" size={22} />
+              <span style={{ flex: 1, minWidth: 0 }}>{name}</span>
+            </h1>
+            <div className="title-row">
+              {active ? <span className="chip green">active</span> : <span className="chip">inactive</span>}
+              <FlowTypeChip type={flat(rec.flow_type)} />
+              {curated ? <span className="chip blue">in-house</span> : <span className="chip">OOTB / stock</span>}
+              {flat(rec.scope) && <span style={chip}>{flat(rec.scope)}</span>}
+              {flat(rec.run_as) && <span style={chip}>runs as {flat(rec.run_as)}</span>}
+              {errs > 0 && <span className="chip red">{errs.toLocaleString()} errored runs</span>}
+              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
+                {flat(rec.internal_name) || sys_id.slice(0, 8)}
+              </span>
+            </div>
+          </div>
+
+          {narrative && (
+            <div className="section">
+              <h3>What it does</h3>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{narrative}</div>
+            </div>
+          )}
+
+          {known && (
+            <div className="section">
+              <h3>Known issues</h3>
+              <div style={{ background: 'var(--amber-bg, rgba(217,164,6,.08))', border: '1px solid var(--amber, #c9971a)', borderRadius: 6, padding: '10px 12px', fontSize: 12.5, color: 'var(--fg-2)' }}>
+                <window.Icon name="alert" size={13} /> {known}
+              </div>
+            </div>
+          )}
+
+          {trig && (
+            <div className="section">
+              <h3>Trigger</h3>
+              <div className="fields" style={{ display: 'grid', gridTemplateColumns: '160px 1fr', rowGap: 8, columnGap: 16 }}>
+                <Field label="Type">{trigType || '—'}</Field>
+                <Field label="Table">{trigTable
+                  ? <a className="mono" onClick={() => window.navigate(`/sn-table/${trigTable}`)}>{trigTable}</a>
+                  : <span className="muted">— (catalog / subflow)</span>}</Field>
+                {trig.condition && <Field label="Condition"><span className="mono" style={{ fontSize: 11.5, overflowWrap: 'anywhere' }}>{trig.condition}</span></Field>}
+              </div>
+            </div>
+          )}
+
+          {(steps.length > 0 || lcSteps.length > 0) && (
+            <div className="section">
+              <h3>Steps {steps.length > 0 && <span className="count mono">{steps.length}</span>}</h3>
+              {lcSteps.length > 0 && (
+                <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--fg-3)' }}>
+                  {lcSteps.map((s, i) => <span key={i} style={{ ...chip, marginRight: 4, marginBottom: 4 }}>{s}</span>)}
+                </div>
+              )}
+              {steps.length > 0
+                ? steps.map((s, i) => <FlowStepCard key={s.ui_id || i} step={s} idx={i} />)
+                : <Empty text="No decoded action steps for this flow (empty stub, or its steps live only in the compiled snapshot)." />}
+            </div>
+          )}
+
+          {(endpoints.length > 0 || subflows.length > 0) && (
+            <div className="section">
+              <h3>Integrations</h3>
+              {endpoints.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  {endpoints.map((e, i) => (
+                    <span key={i} className="chip blue" style={{ marginRight: 4, marginBottom: 4 }}>
+                      {e.kind === 'awx_job_template' ? `AWX job template ${e.id}` : e.kind === 'ansible_playbook' ? `playbook ${e.name}` : (e.id || e.name)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {subflows.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+                  Calls subflow{subflows.length > 1 ? 's' : ''}: {subflows.map((s, i) => <span key={i} style={{ ...chip, marginRight: 4 }}>{s.name}</span>)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {runs > 0 && (
+            <div className="section">
+              <h3>Execution history</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                <FlowStatTile label="Runs" value={runs.toLocaleString()} />
+                <FlowStatTile label="Errored" value={errs.toLocaleString()} tone={errs > 0 ? 'bad' : undefined} />
+                <FlowStatTile label="Completed" value={(stats.complete_count || 0).toLocaleString()} tone="good" />
+                <FlowStatTile label="Error rate" value={runs ? Math.round(errs / runs * 100) + '%' : '—'} tone={errs / runs > 0.2 ? 'bad' : undefined} />
+                <FlowStatTile label="Last run" value={(stats.last_run || flat(rec.last_run) || '—').slice(0, 10)} />
+                <FlowStatTile label="First run" value={(stats.first_run || '—').slice(0, 10)} />
+              </div>
+            </div>
+          )}
+
+          {notables && notables !== known && (
+            <div className="section">
+              <h3>Notables</h3>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap' }}>{notables}</div>
+            </div>
+          )}
+
+          <ManifestFooter />
+        </div>
+
+        <div className="right">
+          <div className="section" style={{ padding: '12px 14px' }}>
+            <h3 style={{ marginBottom: 8 }}>Flow record</h3>
+            <div className="fields" style={{ display: 'grid', gridTemplateColumns: '1fr', rowGap: 8 }}>
+              <Field label="Internal name"><span className="mono" style={{ fontSize: 11.5 }}>{flat(rec.internal_name) || '—'}</span></Field>
+              <Field label="Catalog item">{flat(rec.catalog_item) || '—'}</Field>
+              <Field label="Area">{flat(rec.area) || '—'}</Field>
+              <Field label="Status">{flat(rec.status) || '—'}</Field>
+              <Field label="Created by">{flat(rec.created_by) || '—'}</Field>
+              <Field label="Updated">{flat(rec.sys_updated_on) || '—'}</Field>
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <button className="filter-pill" style={{ justifyContent: 'flex-start' }}
+                onClick={() => window.navigate(window.recordUrl('sys_hub_flow', sys_id))}>
+                <window.Icon name="external" size={12} /> Open raw sys_hub_flow record
+              </button>
+              {trigTable && (
+                <button className="filter-pill" style={{ justifyContent: 'flex-start' }}
+                  onClick={() => window.navigate(`/sn-table/${trigTable}`)}>
+                  <window.Icon name="table" size={12} /> Logic on {trigTable}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   window.SnTableInspectorPage = function SnTableInspectorPage({ name }) {
     const [tab, setTab] = useState('br');
     const [d, setD] = useState({});
@@ -3508,7 +3855,9 @@ flagging the omission.${excludedNote}
             </tr></thead>
             <tbody>
               {r.rows.map(row => (
-                <tr key={row.sys_id}>
+                <tr key={row.sys_id} style={{ cursor: 'pointer' }}
+                    onClick={() => window.navigate(window.recordUrl('flow_inventory', row.sys_id))}
+                    title="Open the enriched flow record">
                   <td>{flat(row.name) || '—'}</td>
                   <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.internal_name) || <span className="muted">—</span>}</td>
                   <td className="mono" style={{ fontSize: 11.5 }}>{flat(row.type) || <span className="muted">—</span>}</td>

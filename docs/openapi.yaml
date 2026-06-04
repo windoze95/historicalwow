@@ -562,6 +562,7 @@ paths:
               - cmn_location
               - contract_sla
               - core_company
+              - flow_inventory
               - incident
               - incident_task
               - io_set_item
@@ -595,7 +596,12 @@ paths:
               - sys_dictionary_override
               - sys_email
               - sys_group_has_role
+              - sys_hub_action_instance
+              - sys_hub_action_instance_v2
               - sys_hub_flow
+              - sys_hub_flow_logic
+              - sys_hub_trigger_instance
+              - sys_hub_trigger_instance_v2
               - sys_journal_field
               - sys_properties
               - sys_script

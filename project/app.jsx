@@ -21,11 +21,12 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 // LOGIC_RECORD_TABLES is the smaller set.
 const LOGIC_LIST_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include',
-  'sysauto_script', 'sys_ui_policy', 'sys_data_policy2',
+  'sysauto_script', 'sys_ui_policy', 'sys_data_policy2', 'flow_inventory',
 ]);
 const LOGIC_RECORD_TABLES = new Set([
   'sys_script', 'sys_script_client', 'sys_script_include', 'sysauto_script',
   'sysevent_in_email_action', 'sysevent_email_action', 'contract_sla',
+  'flow_inventory',
 ]);
 
 function applyTweaks(t) {
@@ -171,6 +172,7 @@ function App() {
           {route.view === 'list' && route.table === 'sysauto_script' && <window.ScheduledJobListPage />}
           {route.view === 'list' && route.table === 'sys_ui_policy' && <window.UIPolicyListPage />}
           {route.view === 'list' && route.table === 'sys_data_policy2' && <window.DataPolicyListPage />}
+          {route.view === 'list' && route.table === 'flow_inventory' && <window.FlowInventoryListPage />}
           {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
           {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'record' && route.table === 'sys_script' && <window.BusinessRuleRecordPage sys_id={route.sys_id} />}
@@ -182,6 +184,7 @@ function App() {
           {route.view === 'record' && route.table === 'sysevent_in_email_action' && <window.InboundEmailActionRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sysevent_email_action' && <window.NotificationRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'contract_sla' && <window.SLADefinitionRecordPage sys_id={route.sys_id} />}
+          {route.view === 'record' && route.table === 'flow_inventory' && <window.FlowInventoryRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && !LOGIC_RECORD_TABLES.has(route.table) && route.table !== 'sc_cat_item' && route.table !== 'kb_knowledge' && route.table !== 'sys_template' && <window.RecordPage table={route.table} sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'reference_user' && <window.UserRefPage sys_id={route.sys_id} />}
           {route.view === 'reference_group' && <window.GroupRefPage sys_id={route.sys_id} />}
@@ -326,6 +329,7 @@ function Sidebar({ route }) {
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
     { sep: 'Logic' },
     { id: '/logic',             icon: 'settings', label: 'Overview' },
+    { id: '/flows',             icon: 'change',   label: 'Flows' },
     navItem('/business-rules',  'flag',     'Business rules',   'sys_script'),
     navItem('/client-scripts',  'change',   'Client scripts',   'sys_script_client'),
     navItem('/scheduled-jobs',  'history',  'Scheduled jobs',   'sysauto_script'),
@@ -356,6 +360,7 @@ function Sidebar({ route }) {
       '/software': 'cmdb_ci_spkg', '/software-installs': 'cmdb_software_instance',
       '/users': 'sys_user', '/groups': 'sys_user_group',
       '/delegations': 'sys_user_delegate', '/knowledge': 'kb_knowledge', '/templates': 'sys_template', '/cis': 'cmdb_ci',
+      '/flows': 'flow_inventory',
       '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
       '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',

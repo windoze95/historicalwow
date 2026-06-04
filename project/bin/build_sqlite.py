@@ -600,6 +600,70 @@ SCHEMAS = {
         ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
         ('description',    lambda r: _v(r.get('description'))),
     ],
+    # flow_inventory: DERIVED dataset — NOT pulled by the exporter. Built by
+    # project/bin/gen_flow_inventory.py, which fuses the curated spreadsheet
+    # inventory with live ServiceNow enrichment (decoded step configs, trigger,
+    # execution-outcome aggregates). One row per flow; sys_id == the linked
+    # sys_hub_flow record. The rich nested fields (steps, stats, narrative,
+    # trigger, endpoints) stay in raw and render on the record page; only the
+    # browse/search/filter columns are indexed. run_count/error_count are stored
+    # as TEXT (every indexed column is) — the generator writes them as strings.
+    'flow_inventory': [
+        ('name',           lambda r: _v(r.get('name'))),
+        ('internal_name',  lambda r: _v(r.get('internal_name'))),
+        ('area',           lambda r: _v(r.get('area'))),
+        ('category',       lambda r: _v(r.get('category'))),
+        ('pattern',        lambda r: _v(r.get('pattern'))),
+        ('catalog_item',   lambda r: _v(r.get('catalog_item'))),
+        ('flow_type',      lambda r: _v(r.get('flow_type'))),
+        ('trigger_table',  lambda r: _v(r.get('trigger_table'))),
+        ('run_count',      lambda r: _v(r.get('run_count'))),
+        ('error_count',    lambda r: _v(r.get('error_count'))),
+        ('last_run',       lambda r: _v(r.get('last_run'))),
+        ('created_by',     lambda r: _v(r.get('created_by'))),
+        ('curated',        lambda r: 1 if str(_v(r.get('curated')) or 'false').lower() == 'true' else 0),
+        ('active',         lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+        ('sys_updated_on', lambda r: _v(r.get('sys_updated_on'))),
+    ],
+    # Raw Flow Designer internals — the literal source records behind the
+    # curated flow_inventory above. Mirrored for archive completeness; the
+    # base64+gzip `values` / `trigger_inputs` blobs stay opaque in raw (only
+    # the curated flow_inventory decodes them). Both flow generations are
+    # captured — modern *_v2 plus the legacy tables — so all 589 flows are
+    # covered. `flow` is the link back to sys_hub_flow; `order` sequences the
+    # steps; `action_type` / `logic_definition` are refs so render via _dv.
+    'sys_hub_action_instance_v2': [
+        ('flow',          lambda r: _v(r.get('flow'))),
+        ('order',         lambda r: _v(r.get('order'))),
+        ('ui_id',         lambda r: _v(r.get('ui_id'))),
+        ('parent_ui_id',  lambda r: _v(r.get('parent_ui_id'))),
+        ('action_type',   lambda r: _dv(r.get('action_type'))),
+    ],
+    'sys_hub_action_instance': [
+        ('flow',          lambda r: _v(r.get('flow'))),
+        ('order',         lambda r: _v(r.get('order'))),
+        ('ui_id',         lambda r: _v(r.get('ui_id'))),
+        ('parent_ui_id',  lambda r: _v(r.get('parent_ui_id'))),
+        ('action_type',   lambda r: _dv(r.get('action_type'))),
+    ],
+    'sys_hub_trigger_instance': [
+        ('flow',           lambda r: _v(r.get('flow'))),
+        ('trigger_type',   lambda r: _v(r.get('trigger_type'))),
+        ('table',          lambda r: _v(r.get('table'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+    ],
+    'sys_hub_trigger_instance_v2': [
+        ('flow',           lambda r: _v(r.get('flow'))),
+        ('trigger_type',   lambda r: _v(r.get('trigger_type'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+    ],
+    'sys_hub_flow_logic': [
+        ('flow',             lambda r: _v(r.get('flow'))),
+        ('order',            lambda r: _v(r.get('order'))),
+        ('ui_id',            lambda r: _v(r.get('ui_id'))),
+        ('parent_ui_id',     lambda r: _v(r.get('parent_ui_id'))),
+        ('logic_definition', lambda r: _dv(r.get('logic_definition'))),
+    ],
     # ACLs. `name` is "table" or "table.field" or "table.action_xyz" — the
     # per-table inspector queries q=<table> and post-filters client-side
     # to that pattern, since the /api filter is exact-match.

@@ -1598,6 +1598,141 @@ components:
           type: string
       required: [sys_id]
       additionalProperties: true
+    FlowInventoryRow:
+      type: object
+      description: 'Row from the `flow_inventory` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        internal_name:
+          type: string
+        area:
+          type: string
+        category:
+          type: string
+        pattern:
+          type: string
+        catalog_item:
+          type: string
+        flow_type:
+          type: string
+        trigger_table:
+          type: string
+        run_count:
+          type: string
+        error_count:
+          type: string
+        last_run:
+          type: string
+        created_by:
+          type: string
+        curated:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        sys_updated_on:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SysHubActionInstanceV2Row:
+      type: object
+      description: 'Row from the `sys_hub_action_instance_v2` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        flow:
+          type: string
+        order:
+          type: string
+        ui_id:
+          type: string
+        parent_ui_id:
+          type: string
+        action_type:
+          type: string
+          description: Display value (label form).
+      required: [sys_id]
+      additionalProperties: true
+    SysHubActionInstanceRow:
+      type: object
+      description: 'Row from the `sys_hub_action_instance` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        flow:
+          type: string
+        order:
+          type: string
+        ui_id:
+          type: string
+        parent_ui_id:
+          type: string
+        action_type:
+          type: string
+          description: Display value (label form).
+      required: [sys_id]
+      additionalProperties: true
+    SysHubTriggerInstanceRow:
+      type: object
+      description: 'Row from the `sys_hub_trigger_instance` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        flow:
+          type: string
+        trigger_type:
+          type: string
+        table:
+          type: string
+        sys_class_name:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SysHubTriggerInstanceV2Row:
+      type: object
+      description: 'Row from the `sys_hub_trigger_instance_v2` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        flow:
+          type: string
+        trigger_type:
+          type: string
+        sys_class_name:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SysHubFlowLogicRow:
+      type: object
+      description: 'Row from the `sys_hub_flow_logic` table (cache-5min).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        flow:
+          type: string
+        order:
+          type: string
+        ui_id:
+          type: string
+        parent_ui_id:
+          type: string
+        logic_definition:
+          type: string
+          description: Display value (label form).
+      required: [sys_id]
+      additionalProperties: true
     SysSecurityAclRow:
       type: object
       description: 'Row from the `sys_security_acl` table (cache-5min).'
@@ -2139,6 +2274,12 @@ x-filterable-columns:
   sys_dictionary: [sys_id, name, element, internal_type, column_label, mandatory, default_value, reference, read_only, active]
   sys_dictionary_override: [sys_id, name, element, base_table, mandatory_override, read_only_override, default_value_override]
   sys_hub_flow: [sys_id, name, internal_name, active, type, sys_class_name, description]
+  flow_inventory: [sys_id, name, internal_name, area, category, pattern, catalog_item, flow_type, trigger_table, run_count, error_count, last_run, created_by, curated, active, sys_updated_on]
+  sys_hub_action_instance_v2: [sys_id, flow, order, ui_id, parent_ui_id, action_type]
+  sys_hub_action_instance: [sys_id, flow, order, ui_id, parent_ui_id, action_type]
+  sys_hub_trigger_instance: [sys_id, flow, trigger_type, table, sys_class_name]
+  sys_hub_trigger_instance_v2: [sys_id, flow, trigger_type, sys_class_name]
+  sys_hub_flow_logic: [sys_id, flow, order, ui_id, parent_ui_id, logic_definition]
   sys_security_acl: [sys_id, name, operation, type, active, admin_overrides, decision_type, sys_class_name]
   sysevent_in_email_action: [sys_id, name, type, table, action, event_name, order, active, stop_processing]
   sysevent_email_action: [sys_id, name, collection, type, event_name, order, active, action_insert, action_update]
@@ -2182,6 +2323,7 @@ x-cache-5min:
   - cmn_department
   - cmn_location
   - core_company
+  - flow_inventory
   - incident_task
   - io_set_item
   - item_option_new
@@ -2206,7 +2348,12 @@ x-cache-5min:
   - sys_data_policy_rule
   - sys_dictionary
   - sys_dictionary_override
+  - sys_hub_action_instance
+  - sys_hub_action_instance_v2
   - sys_hub_flow
+  - sys_hub_flow_logic
+  - sys_hub_trigger_instance
+  - sys_hub_trigger_instance_v2
   - sys_properties
   - sys_script
   - sys_script_client

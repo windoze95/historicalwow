@@ -49,6 +49,7 @@ window.URL_TO_TABLE = {
   'sla-definitions': 'contract_sla',
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
+  flows:             'flow_inventory',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])

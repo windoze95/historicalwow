@@ -2401,6 +2401,47 @@ flagging the omission.${excludedNote}
   };
 
   // --- record page ---------------------------------------------------------
+  const SYSID_RE = /^[0-9a-f]{32}$/;
+  // slushbucket / glide-list reference value: "sysid:table,sysid:table"
+  const GLIDELIST_RE = /^[0-9a-f]{32}:[a-z0-9_]+(,[0-9a-f]{32}:[a-z0-9_]+)*$/;
+  const flowLink = { color: 'var(--accent-fg)', cursor: 'pointer' };
+  // Render a decoded step-config value, turning record references into links to
+  // the record they point at: a real sys_id with a known reference table, or a
+  // glide-list of sysid:table pairs. Data-pill values ("{{...}}") and scalars
+  // render as plain text.
+  function FlowConfigValue({ entry }) {
+    const val = (entry && entry.value != null) ? String(entry.value) : '';
+    const disp = (entry && entry.display != null) ? String(entry.display) : '';
+    const ref = entry && entry.ref;
+    if (ref && SYSID_RE.test(val)) {
+      return (
+        <a className="mono" style={flowLink}
+           onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl(ref, val)); }}>
+          {disp || val}
+        </a>
+      );
+    }
+    if (GLIDELIST_RE.test(val)) {
+      return (
+        <span className="mono">
+          {val.split(',').map((pair, i) => {
+            const [sid, tbl] = pair.split(':');
+            return (
+              <React.Fragment key={i}>
+                {i > 0 && <span style={{ color: 'var(--fg-4)' }}>, </span>}
+                <a style={flowLink}
+                   onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl(tbl, sid)); }}>
+                  {tbl} {sid.slice(0, 8)}…
+                </a>
+              </React.Fragment>
+            );
+          })}
+        </span>
+      );
+    }
+    return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{(disp || val).slice(0, 240) || '—'}</span>;
+  }
+
   function FlowStepCard({ step, idx }) {
     const cfg = step.config || {};
     const keys = Object.keys(cfg);
@@ -2417,14 +2458,12 @@ flagging the omission.${excludedNote}
         )}
         {keys.length > 0 && (
           <div style={{ marginTop: 6, marginLeft: 36, display: 'grid', gridTemplateColumns: 'minmax(80px,160px) 1fr', rowGap: 3, columnGap: 10, fontSize: 11.5 }}>
-            {keys.slice(0, 12).map(k => {
-              const v = cfg[k] || {};
-              const val = v.display || v.value || '';
-              return <React.Fragment key={k}>
+            {keys.slice(0, 12).map(k => (
+              <React.Fragment key={k}>
                 <span className="mono" style={{ color: 'var(--fg-3)' }}>{k}</span>
-                <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{String(val).slice(0, 240) || '—'}</span>
-              </React.Fragment>;
-            })}
+                <FlowConfigValue entry={cfg[k]} />
+              </React.Fragment>
+            ))}
             {keys.length > 12 && <span style={{ gridColumn: '1 / -1', color: 'var(--fg-4)', fontStyle: 'italic' }}>+ {keys.length - 12} more inputs</span>}
           </div>
         )}
@@ -2570,7 +2609,12 @@ flagging the omission.${excludedNote}
               )}
               {subflows.length > 0 && (
                 <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
-                  Calls subflow{subflows.length > 1 ? 's' : ''}: {subflows.map((s, i) => <span key={i} style={{ ...chip, marginRight: 4 }}>{s.name}</span>)}
+                  Calls subflow{subflows.length > 1 ? 's' : ''}: {subflows.map((s, i) => (
+                    s.sys_id
+                      ? <a key={i} style={{ ...chip, marginRight: 4, color: 'var(--accent-fg)', borderColor: 'var(--accent-border)', cursor: 'pointer' }}
+                           onClick={() => window.navigate(window.recordUrl('flow_inventory', s.sys_id))}>{s.name}</a>
+                      : <span key={i} style={{ ...chip, marginRight: 4 }}>{s.name}</span>
+                  ))}
                 </div>
               )}
             </div>

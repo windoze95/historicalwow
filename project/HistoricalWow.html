@@ -9913,8 +9913,140 @@ flagging the omission.${excludedNote}
     );
   }
 
+  // Assemble EVERYTHING known about a flow into one copy-pasteable markdown
+  // document — enough to reconstruct / reverse-engineer it (e.g. paste into an
+  // LLM). Pulls the full, untruncated decoded config for every step.
+  function flowContextMarkdown(rec) {
+    const g = (k) => flat(rec[k]) || '';
+    const out = [];
+    out.push(`# Flow: ${g('name')}`, '');
+    out.push(`- internal_name: ${g('internal_name')}`);
+    out.push(`- sys_id: ${g('sys_id')}`);
+    out.push(`- type: ${g('flow_type')}`);
+    out.push(`- run_as: ${g('run_as')}`);
+    out.push(`- scope: ${g('scope')}`);
+    out.push(`- status: ${g('status')}`);
+    out.push(`- active: ${isTrue(g('active'))}`);
+    if (g('catalog_item')) out.push(`- catalog_item: ${g('catalog_item')}`);
+    if (g('area')) out.push(`- area: ${g('area')}`);
+    if (g('pattern')) out.push(`- pattern: ${g('pattern')}`);
+    out.push('');
+    const trig = rec.trigger;
+    if (trig && (trig.type || trig.table || trig.condition)) {
+      out.push('## Trigger');
+      out.push(`- type: ${trig.type || ''}`);
+      if (trig.table) out.push(`- table: ${trig.table}`);
+      if (trig.condition) out.push(`- condition: ${trig.condition}`);
+      out.push('');
+    }
+    if (g('narrative')) out.push('## What it does (curated narrative)', g('narrative'), '');
+    if (g('known_issues')) out.push('## Known issues', g('known_issues'), '');
+    const lc = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
+    if (lc.length) { out.push('## Steps (as ServiceNow renders them)'); lc.forEach(s => out.push(`- ${s}`)); out.push(''); }
+    const steps = Array.isArray(rec.steps) ? rec.steps : [];
+    if (steps.length) {
+      out.push('## Step details (actions, in order)');
+      steps.forEach((s, i) => {
+        out.push('', `### [order ${s.order || i + 1}] ${s.action_type || 'Step'}${s.parent_ui_id ? ' (nested)' : ''}`);
+        if (s.display_text && s.display_text !== s.action_type) out.push(s.display_text);
+        out.push(`- ui_id: ${s.ui_id || ''}${s.parent_ui_id ? `   parent_ui_id: ${s.parent_ui_id}` : ''}`);
+        const cfg = s.config || {};
+        const keys = Object.keys(cfg);
+        if (keys.length) {
+          out.push('- inputs:');
+          keys.forEach(k => {
+            const v = cfg[k] || {};
+            const val = v.value != null ? String(v.value) : '';
+            const disp = (v.display != null && v.display !== val) ? `   (display: ${v.display})` : '';
+            const ref = v.ref ? `   [ref -> ${v.ref}]` : '';
+            out.push(`    - ${k}: ${val}${disp}${ref}`);
+          });
+        }
+      });
+      out.push('');
+    }
+    const logic = Array.isArray(rec.logic_blocks) ? rec.logic_blocks : [];
+    if (logic.length) {
+      out.push('## Flow logic (control blocks)');
+      logic.forEach(b => out.push(`- [order ${b.order || ''}] ${b.kind || ''}${b.display_text ? ` - ${b.display_text}` : ''} (ui_id ${b.ui_id || ''})`));
+      out.push('');
+    }
+    const subs = Array.isArray(rec.subflows) ? rec.subflows : [];
+    if (subs.length) { out.push('## Subflows called'); subs.forEach(s => out.push(`- ${s.name}${s.sys_id ? ` (${s.sys_id})` : ''}`)); out.push(''); }
+    const eps = Array.isArray(rec.integration_endpoints) ? rec.integration_endpoints : [];
+    if (eps.length) { out.push('## Integration endpoints'); eps.forEach(e => out.push(`- ${e.kind}: ${e.id || e.name || ''}${e.step ? ` (step: ${e.step})` : ''}`)); out.push(''); }
+    const st = rec.stats || {};
+    if (st.run_count) {
+      out.push('## Execution history');
+      out.push(`- runs: ${st.run_count}, errored: ${st.error_count}, completed: ${st.complete_count}`);
+      if (st.first_run) out.push(`- first run: ${st.first_run}`);
+      if (st.last_run) out.push(`- last run: ${st.last_run}`);
+      out.push('');
+    }
+    if (g('notables')) out.push('## Notables', g('notables'), '');
+    out.push(`_Source: ServiceNow flow archive (sys_hub_flow ${g('sys_id')}). Raw step/trigger/logic records are mirrored in sys_hub_action_instance_v2 / sys_hub_trigger_instance / sys_hub_flow_logic (filter by flow=${g('sys_id')})._`);
+    return out.join('\n');
+  }
+
+  // Clipboard write that also works over plain HTTP (no secure-context
+  // clipboard API): falls back to a temporary textarea + execCommand.
+  function flowCopyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    } catch (e) { /* fall through */ }
+    return new Promise((resolve, reject) => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        ok ? resolve() : reject(new Error('copy failed'));
+      } catch (e) { reject(e); }
+    });
+  }
+  function flowDownloadText(filename, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function FlowContextModal({ text, flowName, onClose }) {
+    const [copied, setCopied] = useState(false);
+    const copy = () => flowCopyText(text)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })
+      .catch(() => {});
+    const fname = (flowName || 'flow').replace(/[^\w.-]+/g, '_') + '.flow-context.md';
+    return (
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, width: 'min(920px, 94vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <window.Icon name="change" size={15} />
+            <strong style={{ fontWeight: 500 }}>Reconstruction context — {flowName}</strong>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>everything known about this flow — paste into an LLM or doc to rebuild it</span>
+          </div>
+          <textarea readOnly value={text} onFocus={e => e.target.select()}
+            style={{ flex: 1, margin: 0, padding: '12px 14px', border: 'none', background: 'var(--bg)', color: 'var(--fg-2)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.5, resize: 'none', outline: 'none', minHeight: 340 }} />
+          <div style={{ display: 'flex', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
+            <button className="filter-pill" onClick={copy}>
+              <window.Icon name={copied ? 'check' : 'file'} size={12} /> {copied ? 'Copied!' : 'Copy all'}
+            </button>
+            <button className="filter-pill" onClick={() => flowDownloadText(fname, text)}>
+              <window.Icon name="download" size={12} /> Download .md
+            </button>
+            <span style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 11, color: 'var(--fg-4)' }}>{text.length.toLocaleString()} chars</span>
+            <button className="filter-pill" onClick={onClose}>close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   window.FlowInventoryRecordPage = function FlowInventoryRecordPage({ sys_id }) {
     const [rec, setRec] = useState(null);
+    const [ctxOpen, setCtxOpen] = useState(false);
     useEffect(() => {
       let cancel = false; setRec(null);
       L.fetchRecord('flow_inventory', sys_id).then(r => {
@@ -9978,7 +10110,11 @@ flagging the omission.${excludedNote}
               {flat(rec.scope) && <span style={chip}>{flat(rec.scope)}</span>}
               {flat(rec.run_as) && <span style={chip}>runs as {flat(rec.run_as)}</span>}
               {errs > 0 && <span className="chip red">{errs.toLocaleString()} errored runs</span>}
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)' }}>
+              <button className="filter-pill" onClick={() => setCtxOpen(true)} style={{ marginLeft: 'auto' }}
+                title="Copy everything known about this flow, to reconstruct / reverse-engineer it">
+                <window.Icon name="file" size={12} /> Reconstruction context
+              </button>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)', marginLeft: 6 }}>
                 {flat(rec.internal_name) || sys_id.slice(0, 8)}
               </span>
             </div>
@@ -10101,6 +10237,7 @@ flagging the omission.${excludedNote}
             </div>
           </div>
         </div>
+        {ctxOpen && <FlowContextModal text={flowContextMarkdown(rec)} flowName={name} onClose={() => setCtxOpen(false)} />}
       </div>
     );
   };

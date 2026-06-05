@@ -764,6 +764,47 @@ SCHEMAS = {
         ('name',   lambda r: _v(r.get('name'))),
         ('active', lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
     ],
+    # --- Service Portal definition (portals, pages, layout chain, widget
+    # instances + widget source). Widget server/client scripts, templates and
+    # CSS stay in raw; only browse/link columns are indexed. ---
+    'sp_portal': [
+        ('url_suffix', lambda r: _v(r.get('url_suffix'))),
+        ('title',      lambda r: _v(r.get('title'))),
+    ],
+    'sp_page': [
+        ('id',       lambda r: _v(r.get('id'))),
+        ('title',    lambda r: _v(r.get('title'))),
+        ('internal', lambda r: 1 if str(_v(r.get('internal')) or 'false').lower() == 'true' else 0),
+        ('public',   lambda r: 1 if str(_v(r.get('public')) or 'false').lower() == 'true' else 0),
+    ],
+    'sp_container': [
+        ('title', lambda r: _v(r.get('title'))),
+        ('name',  lambda r: _v(r.get('name'))),
+        ('order', lambda r: _v(r.get('order'))),
+    ],
+    'sp_row': [
+        ('sp_column', lambda r: _v(r.get('sp_column'))),
+        ('order',     lambda r: _v(r.get('order'))),
+    ],
+    'sp_column': [
+        ('sp_row', lambda r: _v(r.get('sp_row'))),
+        ('size',   lambda r: _v(r.get('size'))),
+        ('order',  lambda r: _v(r.get('order'))),
+    ],
+    # Widget instances — what ties a widget to a page (via sp_column) with its
+    # configured options. title/order/active index the placement.
+    'sp_instance': [
+        ('sp_widget', lambda r: _v(r.get('sp_widget'))),
+        ('sp_column', lambda r: _v(r.get('sp_column'))),
+        ('title',     lambda r: _v(r.get('title'))),
+        ('order',     lambda r: _v(r.get('order'))),
+        ('active',    lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    'sp_widget': [
+        ('id',     lambda r: _v(r.get('id'))),
+        ('name',   lambda r: _v(r.get('name'))),
+        ('public', lambda r: 1 if str(_v(r.get('public')) or 'false').lower() == 'true' else 0),
+    ],
     # Record templates. `table` is the target table; the field-values payload
     # (`template`) stays in raw.
     'sys_template': [

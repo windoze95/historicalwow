@@ -591,6 +591,13 @@ paths:
               - sc_task
               - sn_contract_renewal_task
               - sn_ent_facility_asset
+              - sp_column
+              - sp_container
+              - sp_instance
+              - sp_page
+              - sp_portal
+              - sp_row
+              - sp_widget
               - std_change_proposal
               - std_change_record_producer
               - sys_attachment

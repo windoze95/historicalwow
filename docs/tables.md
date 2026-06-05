@@ -1532,6 +1532,98 @@ Filterable columns:
 | `name` | string |  |
 | `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
+### `sp_portal`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `url_suffix` | string |  |
+| `title` | string |  |
+
+### `sp_page`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `id` | string |  |
+| `title` | string |  |
+| `internal` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `public` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `sp_container`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `title` | string |  |
+| `name` | string |  |
+| `order` | string |  |
+
+### `sp_row`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `sp_column` | string |  |
+| `order` | string |  |
+
+### `sp_column`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `sp_row` | string |  |
+| `size` | string |  |
+| `order` | string |  |
+
+### `sp_instance`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `sp_widget` | string |  |
+| `sp_column` | string |  |
+| `title` | string |  |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `sp_widget`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `id` | string |  |
+| `name` | string |  |
+| `public` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
 ### `sys_template`
 
 Tags: `reference`

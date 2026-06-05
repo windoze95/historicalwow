@@ -353,6 +353,17 @@ DEFAULT_TABLES = [
     'em_impact_rule',             # alert impact rules
     'em_connector_definition',    # event connector definitions (pull scripts)
     'em_connector_instance',      # event connector instances (per-source config)
+    # Service Portal definition — the portals, pages, layout chain
+    # (container/row/column), widget instances and widget source. Captures the
+    # literal definition behind portal pages (e.g. the System Status page) so
+    # they can be understood/reconstructed once the instance is gone.
+    'sp_portal',
+    'sp_page',
+    'sp_container',
+    'sp_row',
+    'sp_column',
+    'sp_instance',
+    'sp_widget',                  # widget source (server/client scripts, template)
     # Record templates, CI outages, standard-change record producers, and SLA
     # definitions — operational/reference context.
     'sys_template',
@@ -387,6 +398,8 @@ TABLE_PAGE_SIZE = {
     'kb_knowledge':         200,  # full article bodies (display_value=all, can embed
                                   # images) — small pages so a byte-capped short page
                                   # can't end the offset scan early and drop rows
+    'sp_widget':            200,  # widget source: server/client scripts + template +
+                                  # css + option_schema can each be several KB/row
 }
 
 # Append-only tables don't populate sys_updated_on (records are inserted, never

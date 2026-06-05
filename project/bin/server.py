@@ -586,7 +586,7 @@ def list_table(handler, table, params):
     if q:
         like = f'%{q}%'
         text_cols = [c for c in ('number', 'short_description', 'name', 'value',
-                                 'ip_address', 'fqdn') if c in cols]
+                                 'ip_address', 'fqdn', 'event_name') if c in cols]
         if text_cols:
             where.append('(' + ' OR '.join(f'"{c}" LIKE ?' for c in text_cols) + ')')
             args.extend([like] * len(text_cols))

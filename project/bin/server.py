@@ -848,9 +848,10 @@ def _flow_record_raw(raw_str):
 
 
 def _flow_order_key(rec):
-    s = str(rec.get('order') or '0').split('➛')[0].split('-')[0]
-    digits = ''.join(ch for ch in s if ch.isdigit())
-    return int(digits) if digits else 0
+    # Compare the full compound order path ("10", "10➛11") so a nested step
+    # never sorts before its enclosing block; Python tuples order lexically.
+    parts = re.split(r'[➛\-]', str(rec.get('order') or '0'))
+    return tuple(int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts) or (0,)
 
 
 def get_flow_reconstruction(handler, flow_id):

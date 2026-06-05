@@ -2281,8 +2281,11 @@ flagging the omission.${excludedNote}
     return <span className={`chip ${cls}`}>{type || 'Flow'}</span>;
   }
   const flowInt = (v) => { const n = parseInt(flat(v), 10); return Number.isFinite(n) ? n : 0; };
-  // ServiceNow step order is sparse ("10", "10➛11"); sort by the leading int.
-  const flowOrderNum = (o) => { const m = String(o == null ? '' : o).match(/\d+/); return m ? parseInt(m[0], 10) : 0; };
+  // ServiceNow step order is sparse and can be compound ("10", "10➛11");
+  // compare the full numeric path so a nested step never sorts before the
+  // block that encloses it (e.g. block "10" must precede child "10➛11").
+  const flowOrderKey = (o) => String(o == null ? '' : o).split(/[➛-]/).map(s => { const m = s.match(/\d+/); return m ? parseInt(m[0], 10) : 0; });
+  const flowOrderCmp = (a, b) => { const ka = flowOrderKey(a), kb = flowOrderKey(b), n = Math.max(ka.length, kb.length); for (let i = 0; i < n; i++) { const d = (ka[i] || 0) - (kb[i] || 0); if (d) return d; } return 0; };
   // Humanize a Flow Designer trigger_type token for display.
   const TRIGGER_LABEL = {
     record_create: 'Record created', record_update: 'Record updated',
@@ -2708,7 +2711,7 @@ flagging the omission.${excludedNote}
     const flowItems = [
       ...steps.map(s => ({ item: s, kind: 'action' })),
       ...reconLogic.map(l => ({ item: l, kind: 'logic' })),
-    ].sort((a, b) => flowOrderNum(a.item.order) - flowOrderNum(b.item.order));
+    ].sort((a, b) => flowOrderCmp(a.item.order, b.item.order));
     const lcSteps = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
     const stats = (rec.stats && typeof rec.stats === 'object') ? rec.stats : {};
     const trig = (rec.trigger && typeof rec.trigger === 'object') ? rec.trigger : null;

@@ -10074,7 +10074,9 @@ flagging the omission.${excludedNote}
       }
     };
     useEffect(() => {
-      let cancel = false; setRec(null);
+      // Reset per-flow state — the component instance is reused across flow
+      // records, so stale raw data would otherwise show flow A under flow B.
+      let cancel = false; setRec(null); setRawData(null); setCtxOpen(false);
       L.fetchRecord('flow_inventory', sys_id).then(r => {
         if (cancel) return;
         if (!r) { setRec(false); return; }

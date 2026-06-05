@@ -340,6 +340,19 @@ DEFAULT_TABLES = [
     'sysevent_in_email_action',
     # Outbound notification definitions (sibling of the inbound actions above).
     'sysevent_email_action',
+    # Event/alert LOGIC — definitions, rules and templates around events and
+    # alerts (NOT the operational event/alert firehose, which is deliberately
+    # excluded). Classic platform event engine + ITOM Event Management rules.
+    # Small config tables; default incremental on sys_updated_on.
+    'sysevent_register',          # event registry: every event that can be fired
+    'sysevent_script_action',     # scripts triggered by events
+    'sysevent_email_template',    # notification content templates
+    'em_match_rule',              # Event Management: event match/processing rules
+    'em_alert_correlation_rule',  # alert correlation rules
+    'em_alert_management_rule',   # alert management/grouping rules
+    'em_impact_rule',             # alert impact rules
+    'em_connector_definition',    # event connector definitions (pull scripts)
+    'em_connector_instance',      # event connector instances (per-source config)
     # Record templates, CI outages, standard-change record producers, and SLA
     # definitions — operational/reference context.
     'sys_template',

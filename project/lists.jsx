@@ -439,7 +439,7 @@ function UserList() {
               <td className="num">{u.user_name}</td>
               <td>{u.title}</td>
               <td className="muted">{window.findDepartment(u.department)?.name || '—'}</td>
-              <td className="muted">{u.location ? <a className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl('cmn_location', u.location)); }}>{window.findLocation(u.location)?.name || (String(u.location).slice(0, 8) + '…')}</a> : '—'}</td>
+              <td className="muted">{u.location ? <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl('cmn_location', u.location)); }}>{window.findLocation(u.location)?.name || (String(u.location).slice(0, 8) + '…')}</span> : '—'}</td>
             </tr>
           ))}
           {rows.length > display.length && (

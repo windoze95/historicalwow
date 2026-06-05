@@ -50,6 +50,16 @@ window.URL_TO_TABLE = {
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
   flows:             'flow_inventory',
+  // Event/alert logic
+  'event-registry':            'sysevent_register',
+  'event-script-actions':      'sysevent_script_action',
+  'notification-templates':    'sysevent_email_template',
+  'event-match-rules':         'em_match_rule',
+  'alert-correlation-rules':   'em_alert_correlation_rule',
+  'alert-management-rules':    'em_alert_management_rule',
+  'alert-impact-rules':        'em_impact_rule',
+  'event-connectors':          'em_connector_definition',
+  'event-connector-instances': 'em_connector_instance',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])

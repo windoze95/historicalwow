@@ -337,38 +337,36 @@ function Sidebar({ route }) {
     navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
     navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
     navItem('/sla-definitions', 'history',  'SLA definitions',  'contract_sla'),
-    navItem('/inbound-email-actions', 'arrow_right', 'Inbound email actions', 'sysevent_in_email_action'),
-    navItem('/notifications',   'change',   'Notifications',    'sysevent_email_action'),
-  ].filter(it => it !== null);
+    { sep: 'Events & notifications' },
+    navItem('/event-registry',         'history',     'Event registry',         'sysevent_register'),
+    navItem('/notifications',          'change',      'Notifications',          'sysevent_email_action'),
+    navItem('/notification-templates', 'file',        'Notification templates', 'sysevent_email_template'),
+    navItem('/event-script-actions',   'settings',    'Script actions',         'sysevent_script_action'),
+    navItem('/inbound-email-actions',  'arrow_right', 'Inbound email actions',  'sysevent_in_email_action'),
+    { sep: 'Event management' },
+    navItem('/event-match-rules',        'flag',   'Event match rules',       'em_match_rule'),
+    navItem('/alert-correlation-rules',  'link',   'Alert correlation rules', 'em_alert_correlation_rule'),
+    navItem('/alert-management-rules',   'shield', 'Alert management rules',   'em_alert_management_rule'),
+    navItem('/alert-impact-rules',       'ci',     'Impact rules',            'em_impact_rule'),
+    navItem('/event-connectors',         'db',     'Connector definitions',   'em_connector_definition'),
+    navItem('/event-connector-instances','db',     'Connector instances',     'em_connector_instance'),
+  ]
+    .filter(it => it !== null)
+    // Drop a section header that has no items under it — every navItem below an
+    // empty-table section filters to null above, which would otherwise leave a
+    // dangling label (e.g. "Event management" with nothing beneath it).
+    .filter((it, i, arr) => !it.sep || (arr[i + 1] && !arr[i + 1].sep));
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
     if (id === '/') return route.view === 'home';
     if (id === '/service-catalog') return route.view === 'service_catalog_home';
     if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
     if (id === '/cmdb') return route.view === 'cmdb_home';
-    const map = {
-      '/incidents': 'incident', '/changes': 'change_request',
-      '/problems': 'problem', '/requests': 'sc_request',
-      '/requested-items': 'sc_req_item', '/catalog-tasks': 'sc_task',
-      '/catalog-items': 'sc_cat_item',
-      '/group-approvals': 'sysapproval_group', '/asset-tasks': 'asset_task',
-      '/contract-renewal-tasks': 'sn_contract_renewal_task',
-      '/hardware': 'alm_hardware', '/licenses': 'alm_license',
-      '/consumables': 'alm_consumable', '/facilities': 'alm_facility',
-      '/facility-assets': 'sn_ent_facility_asset',
-      '/stockrooms': 'alm_stockroom', '/assets': 'alm_asset',
-      '/software': 'cmdb_ci_spkg', '/software-installs': 'cmdb_software_instance',
-      '/users': 'sys_user', '/groups': 'sys_user_group',
-      '/delegations': 'sys_user_delegate', '/knowledge': 'kb_knowledge', '/templates': 'sys_template', '/cis': 'cmdb_ci',
-      '/flows': 'flow_inventory',
-      '/business-rules': 'sys_script', '/client-scripts': 'sys_script_client',
-      '/script-includes': 'sys_script_include', '/scheduled-jobs': 'sysauto_script',
-      '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
-      '/sla-definitions': 'contract_sla',
-      '/inbound-email-actions': 'sysevent_in_email_action', '/notifications': 'sysevent_email_action',
-    };
-    return map[id] && ((route.view === 'list' && route.table === map[id]) ||
-           (route.view === 'record' && map[id] === route.table) ||
+    // Derive the slug→table mapping from URL_TO_TABLE instead of duplicating it
+    // here — the two would otherwise drift as routes are added or renamed.
+    const table = window.URL_TO_TABLE[id.slice(1)];
+    return table && ((route.view === 'list' && route.table === table) ||
+           (route.view === 'record' && table === route.table) ||
            (route.view?.startsWith('reference_') && (
              (id === '/users' && route.view === 'reference_user') ||
              (id === '/groups' && route.view === 'reference_group') ||

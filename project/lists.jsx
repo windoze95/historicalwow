@@ -59,6 +59,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
     return <TaskList key={table} table={table} />;
   }
+  if (EVENT_LIST_CONFIG[table]) return <RefTableList key={table} table={table} />;
   return null;
 };
 
@@ -859,6 +860,108 @@ function TemplateList() {
                 ? <span className="chip" style={{ fontSize: 10.5 }}>global</span>
                 : <span className="muted" style={{ fontSize: 11.5 }}>personal</span>}</td>
               <td>{isOn(t.active) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---- generic reference-table list ----------------------------------------
+// Event/alert logic tables (and any future raw-mirror reference table) are
+// browsed through one configurable list rather than a bespoke component each.
+// Columns are the indexed columns chosen in build_sqlite SCHEMAS, so a slim
+// fetch carries them as flat values. Each col: { k: column, l: label, w?: px,
+// strong?, mono?, muted?, bool? }. order_by must be an indexed column.
+const EVENT_LIST_CONFIG = {
+  sysevent_register: { title: 'Event registry', order_by: 'event_name', cols: [
+    { k: 'event_name', l: 'Event', mono: 1, strong: 1 }, { k: 'table', l: 'Table', mono: 1 },
+    { k: 'sys_class_name', l: 'Class', muted: 1 } ] },
+  sysevent_script_action: { title: 'Script actions', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'event_name', l: 'Event', mono: 1 },
+    { k: 'order', l: 'Order', w: 70, mono: 1 }, { k: 'active', l: 'Active', w: 80, bool: 1 } ] },
+  sysevent_email_template: { title: 'Notification templates', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'collection', l: 'Target table', mono: 1 } ] },
+  em_match_rule: { title: 'Event match rules', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'table', l: 'Table', mono: 1 }, { k: 'ci_type', l: 'CI type' },
+    { k: 'order', l: 'Order', w: 70, mono: 1 }, { k: 'active', l: 'Active', w: 80, bool: 1 } ] },
+  em_alert_correlation_rule: { title: 'Alert correlation rules', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'table', l: 'Table', mono: 1 },
+    { k: 'relationship_type', l: 'Relationship' }, { k: 'order', l: 'Order', w: 70, mono: 1 },
+    { k: 'active', l: 'Active', w: 80, bool: 1 } ] },
+  em_alert_management_rule: { title: 'Alert management rules', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'type', l: 'Type' },
+    { k: 'order', l: 'Order', w: 70, mono: 1 }, { k: 'active', l: 'Active', w: 80, bool: 1 } ] },
+  em_impact_rule: { title: 'Impact rules', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'contribution_type', l: 'Contribution' } ] },
+  em_connector_definition: { title: 'Connector definitions', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'script_type', l: 'Script type' } ] },
+  em_connector_instance: { title: 'Connector instances', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'active', l: 'Active', w: 80, bool: 1 } ] },
+};
+
+function RefTableList({ table }) {
+  const cfg = EVENT_LIST_CONFIG[table];
+  const data = window.HistoricalWowData;
+  const [q, setQ] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const [page, setPage] = React.useState(0);
+  const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => { const t = setTimeout(() => setDebouncedQ(q), 250); return () => clearTimeout(t); }, [q]);
+  React.useEffect(() => { setPage(0); }, [debouncedQ, table]);
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    data.fetchTaskList(table, { limit: PAGE_SIZE, offset: page * PAGE_SIZE, q: debouncedQ, order_by: cfg.order_by, dir: 'asc', slim: 1 })
+      .then(r => { if (!cancelled) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setResp({ rows: [], total: 0 }); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [table, debouncedQ, page]);
+
+  const cols = cfg.cols;
+  const total = resp.total || 0;
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const headerCount = data.manifest.tables.find(t => t.table === table)?.source_rows;
+  const isOn = v => v === true || v === 'true' || v === 1 || v === '1';
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>{cfg.title} <span className="count mono">{headerCount?.toLocaleString() || total.toLocaleString()}</span></h1>
+        <div className="sub"><span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> · {total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}</div>
+        <div className="toolbar">
+          <div className="spacer" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…"
+            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 240 }} />
+          <Pager page={page} setPage={setPage} lastPage={lastPage} />
+        </div>
+      </div>
+      <table className="dt">
+        <thead><tr>{cols.map(c => <th key={c.k} style={c.w ? { width: c.w } : null}>{c.l}</th>)}</tr></thead>
+        <tbody>
+          {loading && resp.rows == null && (
+            <tr><td colSpan={cols.length} style={{ padding: 60, color: 'var(--fg-4)', textAlign: 'center' }}>
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
+            </td></tr>
+          )}
+          {!loading && resp.rows && resp.rows.length === 0 && (
+            <tr><td colSpan={cols.length} style={{ padding: 40, color: 'var(--fg-4)', textAlign: 'center' }}>None in this snapshot.</td></tr>
+          )}
+          {(resp.rows || []).map(r => (
+            <tr key={r.sys_id} onClick={() => window.navigate(window.recordUrl(table, r.sys_id))}>
+              {cols.map(c => {
+                const v = r[c.k];
+                let cell;
+                if (c.bool) cell = isOn(v) ? <span className="chip" style={{ fontSize: 10.5 }}>active</span> : <span className="muted">—</span>;
+                else if (v == null || v === '') cell = <span className="muted">—</span>;
+                else if (c.strong) cell = <strong style={{ fontWeight: 500 }}>{v}</strong>;
+                else if (c.mono) cell = <span className="mono" style={{ fontSize: 12 }}>{v}</span>;
+                else cell = v;
+                return <td key={c.k} className={c.muted ? 'muted' : ''}>{cell}</td>;
+              })}
             </tr>
           ))}
         </tbody>

@@ -2281,6 +2281,11 @@ flagging the omission.${excludedNote}
     return <span className={`chip ${cls}`}>{type || 'Flow'}</span>;
   }
   const flowInt = (v) => { const n = parseInt(flat(v), 10); return Number.isFinite(n) ? n : 0; };
+  // ServiceNow step order is sparse and can be compound ("10", "10➛11");
+  // compare the full numeric path so a nested step never sorts before the
+  // block that encloses it (e.g. block "10" must precede child "10➛11").
+  const flowOrderKey = (o) => String(o == null ? '' : o).split(/[➛-]/).map(s => { const m = s.match(/\d+/); return m ? parseInt(m[0], 10) : 0; });
+  const flowOrderCmp = (a, b) => { const ka = flowOrderKey(a), kb = flowOrderKey(b), n = Math.max(ka.length, kb.length); for (let i = 0; i < n; i++) { const d = (ka[i] || 0) - (kb[i] || 0); if (d) return d; } return 0; };
   // Humanize a Flow Designer trigger_type token for display.
   const TRIGGER_LABEL = {
     record_create: 'Record created', record_update: 'Record updated',
@@ -2441,6 +2446,26 @@ flagging the omission.${excludedNote}
     }
     const sv = String(disp || val);
     return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{sv ? (sv.length > 240 ? sv.slice(0, 240) + '…' : sv) : '—'}</span>;
+  }
+
+  // A control-flow block (FOR-EACH / IF / etc.) shown inline among the steps so
+  // the loop/condition structure is visible and the step numbering reads whole.
+  function FlowLogicCard({ block }) {
+    const ld = block.logic_definition;
+    const kind = (ld && typeof ld === 'object' ? (ld.display || ld.value) : ld) || 'Logic';
+    const indent = block.parent_ui_id ? 18 : 0;
+    return (
+      <div style={{ marginLeft: indent, marginBottom: 8, background: 'var(--accent-bg)', border: '1px dashed var(--accent-border)', borderRadius: 6, padding: '6px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 28 }}>{block.order}</span>
+          <strong style={{ fontWeight: 600, fontSize: 11, color: 'var(--accent-fg)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{kind}</strong>
+          {block.parent_ui_id && <span style={{ fontSize: 10, color: 'var(--fg-4)' }}>· nested</span>}
+        </div>
+        {block.display_text && block.display_text !== kind && (
+          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 36 }}>{block.display_text}</div>
+        )}
+      </div>
+    );
   }
 
   function FlowStepCard({ step, idx }) {
@@ -2646,11 +2671,10 @@ flagging the omission.${excludedNote}
       return () => { cancel = true; };
     }, [sys_id]);
 
-    // Lazily fetch the raw flow records the first time the modal opens. The
-    // cancel flag drops a stale response if the user navigates to another flow
-    // before it settles, so the modal never shows a different flow's data.
+    // Fetch the raw flow records (also used to interleave the control-flow
+    // blocks into the step list, and for the reconstruction modal). The cancel
+    // flag drops a stale response if the user navigates to another flow first.
     useEffect(() => {
-      if (!ctxOpen || rawData != null) return;
       let cancel = false;
       setRawData('loading');
       fetch('/api/flow_reconstruction/' + sys_id)
@@ -2658,7 +2682,7 @@ flagging the omission.${excludedNote}
         .then(d => { if (!cancel) setRawData(d); })
         .catch(() => { if (!cancel) setRawData('error'); });
       return () => { cancel = true; };
-    }, [ctxOpen, sys_id]);
+    }, [sys_id]);
 
     if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading flow…</div>;
     // flow_inventory is a separate derived dataset that may not be generated
@@ -2680,6 +2704,14 @@ flagging the omission.${excludedNote}
     const active = isTrue(flat(rec.active));
     const curated = isTrue(flat(rec.curated));
     const steps = Array.isArray(rec.steps) ? rec.steps : [];
+    // Interleave the control-flow blocks (FOR-EACH / IF, recovered by the
+    // reconstruction endpoint) with the action steps, ordered by ServiceNow's
+    // own step order, so the nested structure and numbering read completely.
+    const reconLogic = (rawData && rawData !== 'loading' && rawData !== 'error' && Array.isArray(rawData.logic)) ? rawData.logic : [];
+    const flowItems = [
+      ...steps.map(s => ({ item: s, kind: 'action' })),
+      ...reconLogic.map(l => ({ item: l, kind: 'logic' })),
+    ].sort((a, b) => flowOrderCmp(a.item.order, b.item.order));
     const lcSteps = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
     const stats = (rec.stats && typeof rec.stats === 'object') ? rec.stats : {};
     const trig = (rec.trigger && typeof rec.trigger === 'object') ? rec.trigger : null;
@@ -2759,8 +2791,10 @@ flagging the omission.${excludedNote}
                   {lcSteps.map((s, i) => <span key={i} style={{ ...chip, marginRight: 4, marginBottom: 4 }}>{s}</span>)}
                 </div>
               )}
-              {steps.length > 0
-                ? steps.map((s, i) => <FlowStepCard key={s.ui_id || i} step={s} idx={i} />)
+              {flowItems.length > 0
+                ? flowItems.map((fi, i) => fi.kind === 'logic'
+                    ? <FlowLogicCard key={fi.item.ui_id || ('l' + i)} block={fi.item} />
+                    : <FlowStepCard key={fi.item.ui_id || ('a' + i)} step={fi.item} idx={i} />)
                 : <Empty text="No decoded action steps for this flow (empty stub, or its steps live only in the compiled snapshot)." />}
             </div>
           )}

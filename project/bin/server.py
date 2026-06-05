@@ -848,9 +848,10 @@ def _flow_record_raw(raw_str):
 
 
 def _flow_order_key(rec):
-    s = str(rec.get('order') or '0').split('➛')[0].split('-')[0]
-    digits = ''.join(ch for ch in s if ch.isdigit())
-    return int(digits) if digits else 0
+    # Compare the full compound order path ("10", "10➛11") so a nested step
+    # never sorts before its enclosing block; Python tuples order lexically.
+    parts = re.split(r'[➛\-]', str(rec.get('order') or '0'))
+    return tuple(int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts) or (0,)
 
 
 def get_flow_reconstruction(handler, flow_id):
@@ -883,7 +884,47 @@ def get_flow_reconstruction(handler, flow_id):
 
     actions = _by_flow('sys_hub_action_instance_v2') + _by_flow('sys_hub_action_instance')
     triggers = _by_flow('sys_hub_trigger_instance') + _by_flow('sys_hub_trigger_instance_v2')
-    logic = _by_flow('sys_hub_flow_logic')
+
+    # Flow-logic (FOR-EACH / IF / etc.) records are attributed to a shared
+    # base/snapshot flow, not the instance, so `flow=<id>` misses them. Recover
+    # them by ui_id instead: each nested step references its block via
+    # parent_ui_id, and blocks are keyed by a stable (globally-unique) ui_id.
+    # Follow parent chains so blocks nested inside other blocks are included too.
+    def _logic_via_ui_ids():
+        if not _exists('sys_hub_flow_logic'):
+            return []
+        # Start with blocks correctly attributed to this flow (keeps flow-owned
+        # blocks that no action's parent_ui_id reaches, e.g. an empty branch).
+        found, noid = {}, []
+        for rec in _by_flow('sys_hub_flow_logic'):
+            uid = rec.get('ui_id')
+            if uid:
+                found.setdefault(uid, rec)
+            else:
+                noid.append(rec)
+        # Then add blocks recovered by ui_id — flow-logic rows are often
+        # attributed to a shared snapshot flow, so follow the steps' parent
+        # chains and union the results (deduped by ui_id).
+        want = {a.get('parent_ui_id') for a in actions if a.get('parent_ui_id')}
+        seen = set()
+        for _ in range(12):
+            todo = [u for u in want if u and u not in seen and u not in found]
+            if not todo:
+                break
+            seen.update(todo)
+            ph = ','.join('?' * len(todo))
+            for (raw,) in conn.execute(
+                    'SELECT raw FROM sys_hub_flow_logic WHERE ui_id IN (%s)' % ph,
+                    tuple(todo)).fetchall():
+                rec = _flow_record_raw(raw)
+                uid = rec.get('ui_id')
+                if uid and uid not in found:
+                    found[uid] = rec
+                    if rec.get('parent_ui_id'):
+                        want.add(rec['parent_ui_id'])
+        return sorted(list(found.values()) + noid, key=_flow_order_key)
+
+    logic = _logic_via_ui_ids()
 
     if flow is None and not (actions or triggers or logic):
         return _send_error(handler, HTTPStatus.NOT_FOUND, 'flow not in snapshot')

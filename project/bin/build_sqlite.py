@@ -701,6 +701,69 @@ SCHEMAS = {
         ('action_insert', lambda r: 1 if str(_v(r.get('action_insert')) or 'false').lower() == 'true' else 0),
         ('action_update', lambda r: 1 if str(_v(r.get('action_update')) or 'false').lower() == 'true' else 0),
     ],
+    # --- Event/alert LOGIC (definitions, rules, templates — not the
+    # operational event/alert firehose). Scripts, filters and message bodies
+    # stay in raw; only browse/search/filter columns are indexed. Index columns
+    # were verified present per table (a missing field would index to NULL). ---
+    # Event registry: every event that can be fired (event_name) + related table.
+    'sysevent_register': [
+        ('event_name',     lambda r: _v(r.get('event_name'))),
+        ('table',          lambda r: _v(r.get('table'))),
+        ('sys_class_name', lambda r: _v(r.get('sys_class_name'))),
+    ],
+    # Script actions triggered by events. condition_script/script stay in raw.
+    'sysevent_script_action': [
+        ('name',       lambda r: _v(r.get('name'))),
+        ('event_name', lambda r: _v(r.get('event_name'))),
+        ('order',      lambda r: _v(r.get('order'))),
+        ('active',     lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # Notification content templates. `collection` is the target table; message
+    # bodies (message_html/message_text) stay in raw.
+    'sysevent_email_template': [
+        ('name',       lambda r: _v(r.get('name'))),
+        ('collection', lambda r: _v(r.get('collection'))),
+    ],
+    # ITOM Event Management — event match/processing rules. filter/threshold
+    # stay in raw.
+    'em_match_rule': [
+        ('name',    lambda r: _v(r.get('name'))),
+        ('table',   lambda r: _v(r.get('table'))),
+        ('ci_type', lambda r: _dv(r.get('ci_type'))),
+        ('order',   lambda r: _v(r.get('order'))),
+        ('active',  lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # Alert correlation rules. correlation script/filters stay in raw.
+    'em_alert_correlation_rule': [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('table',             lambda r: _v(r.get('table'))),
+        ('relationship_type', lambda r: _dv(r.get('relationship_type'))),
+        ('order',             lambda r: _v(r.get('order'))),
+        ('active',            lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # Alert management/grouping rules. alert_filter stays in raw.
+    'em_alert_management_rule': [
+        ('name',   lambda r: _v(r.get('name'))),
+        ('type',   lambda r: _dv(r.get('type'))),
+        ('order',  lambda r: _v(r.get('order'))),
+        ('active', lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
+    # Alert impact rules. impact_rule_definition stays in raw.
+    'em_impact_rule': [
+        ('name',              lambda r: _v(r.get('name'))),
+        ('contribution_type', lambda r: _dv(r.get('contribution_type'))),
+    ],
+    # Event connector definitions (scripts that pull/normalize events).
+    # javascript_to_run/groovy_script stay in raw.
+    'em_connector_definition': [
+        ('name',        lambda r: _v(r.get('name'))),
+        ('script_type', lambda r: _dv(r.get('script_type'))),
+    ],
+    # Event connector instances (per-source config).
+    'em_connector_instance': [
+        ('name',   lambda r: _v(r.get('name'))),
+        ('active', lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
+    ],
     # Record templates. `table` is the target table; the field-values payload
     # (`template`) stays in raw.
     'sys_template': [

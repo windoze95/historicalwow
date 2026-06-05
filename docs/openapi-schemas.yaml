@@ -1821,6 +1821,160 @@ components:
           description: ServiceNow boolean stored as 0 or 1.
       required: [sys_id]
       additionalProperties: true
+    SyseventRegisterRow:
+      type: object
+      description: 'Row from the `sysevent_register` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        event_name:
+          type: string
+        table:
+          type: string
+        sys_class_name:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SyseventScriptActionRow:
+      type: object
+      description: 'Row from the `sysevent_script_action` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        event_name:
+          type: string
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    SyseventEmailTemplateRow:
+      type: object
+      description: 'Row from the `sysevent_email_template` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        collection:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    EmMatchRuleRow:
+      type: object
+      description: 'Row from the `em_match_rule` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        table:
+          type: string
+        ci_type:
+          type: string
+          description: Display value (label form).
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    EmAlertCorrelationRuleRow:
+      type: object
+      description: 'Row from the `em_alert_correlation_rule` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        table:
+          type: string
+        relationship_type:
+          type: string
+          description: Display value (label form).
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    EmAlertManagementRuleRow:
+      type: object
+      description: 'Row from the `em_alert_management_rule` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        type:
+          type: string
+          description: Display value (label form).
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    EmImpactRuleRow:
+      type: object
+      description: 'Row from the `em_impact_rule` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        contribution_type:
+          type: string
+          description: Display value (label form).
+      required: [sys_id]
+      additionalProperties: true
+    EmConnectorDefinitionRow:
+      type: object
+      description: 'Row from the `em_connector_definition` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        script_type:
+          type: string
+          description: Display value (label form).
+      required: [sys_id]
+      additionalProperties: true
+    EmConnectorInstanceRow:
+      type: object
+      description: 'Row from the `em_connector_instance` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        name:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     SysTemplateRow:
       type: object
       description: 'Row from the `sys_template` table (reference).'
@@ -2283,6 +2437,15 @@ x-filterable-columns:
   sys_security_acl: [sys_id, name, operation, type, active, admin_overrides, decision_type, sys_class_name]
   sysevent_in_email_action: [sys_id, name, type, table, action, event_name, order, active, stop_processing]
   sysevent_email_action: [sys_id, name, collection, type, event_name, order, active, action_insert, action_update]
+  sysevent_register: [sys_id, event_name, table, sys_class_name]
+  sysevent_script_action: [sys_id, name, event_name, order, active]
+  sysevent_email_template: [sys_id, name, collection]
+  em_match_rule: [sys_id, name, table, ci_type, order, active]
+  em_alert_correlation_rule: [sys_id, name, table, relationship_type, order, active]
+  em_alert_management_rule: [sys_id, name, type, order, active]
+  em_impact_rule: [sys_id, name, contribution_type]
+  em_connector_definition: [sys_id, name, script_type]
+  em_connector_instance: [sys_id, name, active]
   sys_template: [sys_id, name, table, short_description, user, active, global]
   cmdb_ci_outage: [sys_id, number, cmdb_ci, type, begin, end, short_description, u_outage_status, task_number]
   std_change_record_producer: [sys_id, name, short_description, table_name, category, sys_class_name, active]

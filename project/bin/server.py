@@ -313,6 +313,12 @@ REFERENCE_TABLES = {
     # record producers, and SLA definitions.
     'sysevent_email_action', 'sys_template', 'cmdb_ci_outage',
     'std_change_record_producer', 'contract_sla',
+    # Event/alert LOGIC — event registry, event-triggered scripts, notification
+    # templates, and ITOM Event Management rules. The definitions/rules around
+    # events and alerts (the operational event/alert rows are excluded).
+    'sysevent_register', 'sysevent_script_action', 'sysevent_email_template',
+    'em_match_rule', 'em_alert_correlation_rule', 'em_alert_management_rule',
+    'em_impact_rule', 'em_connector_definition', 'em_connector_instance',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 

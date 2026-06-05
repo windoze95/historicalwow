@@ -562,6 +562,12 @@ paths:
               - cmn_location
               - contract_sla
               - core_company
+              - em_alert_correlation_rule
+              - em_alert_management_rule
+              - em_connector_definition
+              - em_connector_instance
+              - em_impact_rule
+              - em_match_rule
               - flow_inventory
               - incident
               - incident_task
@@ -622,7 +628,10 @@ paths:
               - sysapproval_group
               - sysauto_script
               - sysevent_email_action
+              - sysevent_email_template
               - sysevent_in_email_action
+              - sysevent_register
+              - sysevent_script_action
               - task_ci
               - task_sla
               - topic

@@ -1413,6 +1413,125 @@ Filterable columns:
 | `action_insert` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `action_update` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
+### `sysevent_register`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `event_name` | string |  |
+| `table` | string |  |
+| `sys_class_name` | string |  |
+
+### `sysevent_script_action`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `event_name` | string |  |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `sysevent_email_template`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `collection` | string |  |
+
+### `em_match_rule`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `table` | string |  |
+| `ci_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `em_alert_correlation_rule`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `table` | string |  |
+| `relationship_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `em_alert_management_rule`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+| `order` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
+### `em_impact_rule`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `contribution_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+
+### `em_connector_definition`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `script_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
+
+### `em_connector_instance`
+
+Tags: `reference`
+
+Filterable columns:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `sys_id` | string | Primary key; reference target for cross-table lookups. |
+| `name` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+
 ### `sys_template`
 
 Tags: `reference`

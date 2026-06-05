@@ -883,7 +883,36 @@ def get_flow_reconstruction(handler, flow_id):
 
     actions = _by_flow('sys_hub_action_instance_v2') + _by_flow('sys_hub_action_instance')
     triggers = _by_flow('sys_hub_trigger_instance') + _by_flow('sys_hub_trigger_instance_v2')
-    logic = _by_flow('sys_hub_flow_logic')
+
+    # Flow-logic (FOR-EACH / IF / etc.) records are attributed to a shared
+    # base/snapshot flow, not the instance, so `flow=<id>` misses them. Recover
+    # them by ui_id instead: each nested step references its block via
+    # parent_ui_id, and blocks are keyed by a stable (globally-unique) ui_id.
+    # Follow parent chains so blocks nested inside other blocks are included too.
+    def _logic_via_ui_ids():
+        if not _exists('sys_hub_flow_logic'):
+            return _by_flow('sys_hub_flow_logic')
+        want = {a.get('parent_ui_id') for a in actions if a.get('parent_ui_id')}
+        found, seen = {}, set()
+        for _ in range(12):
+            todo = [u for u in want if u and u not in seen and u not in found]
+            if not todo:
+                break
+            seen.update(todo)
+            ph = ','.join('?' * len(todo))
+            for (raw,) in conn.execute(
+                    'SELECT raw FROM sys_hub_flow_logic WHERE ui_id IN (%s)' % ph,
+                    tuple(todo)).fetchall():
+                rec = _flow_record_raw(raw)
+                uid = rec.get('ui_id')
+                if uid and uid not in found:
+                    found[uid] = rec
+                    if rec.get('parent_ui_id'):
+                        want.add(rec['parent_ui_id'])
+        # fall back to the flow= attribution if ui_id recovery found nothing
+        return sorted(found.values(), key=_flow_order_key) or _by_flow('sys_hub_flow_logic')
+
+    logic = _logic_via_ui_ids()
 
     if flow is None and not (actions or triggers or logic):
         return _send_error(handler, HTTPStatus.NOT_FOUND, 'flow not in snapshot')

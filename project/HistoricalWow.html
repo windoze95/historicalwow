@@ -10063,16 +10063,7 @@ flagging the omission.${excludedNote}
     const [rec, setRec] = useState(null);
     const [ctxOpen, setCtxOpen] = useState(false);
     const [rawData, setRawData] = useState(null);   // raw decoded ServiceNow flow records
-    const openCtx = () => {
-      setCtxOpen(true);
-      if (rawData == null) {
-        setRawData('loading');
-        fetch('/api/flow_reconstruction/' + sys_id)
-          .then(r => r.ok ? r.json() : Promise.reject(r))
-          .then(d => setRawData(d))
-          .catch(() => setRawData('error'));
-      }
-    };
+    const openCtx = () => setCtxOpen(true);
     useEffect(() => {
       // Reset per-flow state — the component instance is reused across flow
       // records, so stale raw data would otherwise show flow A under flow B.
@@ -10085,6 +10076,20 @@ flagging the omission.${excludedNote}
       }).catch(() => { if (!cancel) setRec(false); });
       return () => { cancel = true; };
     }, [sys_id]);
+
+    // Lazily fetch the raw flow records the first time the modal opens. The
+    // cancel flag drops a stale response if the user navigates to another flow
+    // before it settles, so the modal never shows a different flow's data.
+    useEffect(() => {
+      if (!ctxOpen || rawData != null) return;
+      let cancel = false;
+      setRawData('loading');
+      fetch('/api/flow_reconstruction/' + sys_id)
+        .then(r => r.ok ? r.json() : Promise.reject(r))
+        .then(d => { if (!cancel) setRawData(d); })
+        .catch(() => { if (!cancel) setRawData('error'); });
+      return () => { cancel = true; };
+    }, [ctxOpen, sys_id]);
 
     if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading flow…</div>;
     // flow_inventory is a separate derived dataset that may not be generated

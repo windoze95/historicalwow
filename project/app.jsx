@@ -326,6 +326,7 @@ function Sidebar({ route }) {
     navItem('/delegations',     'link',     'Delegations',      'sys_user_delegate'),
     navItem('/knowledge',       'book',     'Knowledge',        'kb_knowledge'),
     navItem('/templates',       'file',     'Templates',        'sys_template'),
+    navItem('/locations',       'pin',      'Locations',        'cmn_location'),
     { id: '/cmdb',              icon: 'ci',    label: 'CMDB overview' },
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
     { sep: 'Logic' },

@@ -24,6 +24,7 @@ Static root: /app (HistoricalWow.html lives here).
 Attachments root: /app/data/attachments (mirror of host disk via volume mount).
 """
 import datetime
+import base64
 import gzip
 import hmac
 import json
@@ -797,6 +798,102 @@ def get_variables_for(handler, ritm_sys_id):
     _json_response(handler, {'rows': out, 'cat_item': out[0]['cat_item_name'] if out else None})
 
 
+# Base64+gzip blob fields Flow Designer stores its configured data in (action
+# inputs, trigger config, logic inputs, compiled snapshots). Decoding them
+# turns the archived flow internals into readable structure.
+_FLOW_BLOB_FIELDS = frozenset({
+    'values', 'trigger_inputs', 'inputs', 'extended_inputs',
+    'workflow_inputs', 'action_inputs', 'decision_table_inputs', 'outputs',
+})
+
+
+def _decode_flow_blob(s):
+    """Decode a Flow Designer field: base64+gzip JSON, else plain JSON, else the
+    string unchanged."""
+    if not isinstance(s, str) or not s:
+        return s
+    try:
+        return json.loads(gzip.decompress(base64.b64decode(s)).decode('utf-8'))
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        return json.loads(s)
+    except Exception:                                            # noqa: BLE001
+        return s
+
+
+def _flow_record_raw(raw_str):
+    """Unwrap an archived flow record to its real stored values (the `value`
+    side of each envelope) and decode the encoded blob fields in place, so the
+    result is the actual ServiceNow data, usable."""
+    try:
+        env = json.loads(raw_str)
+    except Exception:                                            # noqa: BLE001
+        return {}
+    out = {}
+    for k, v in env.items():
+        if isinstance(v, dict):
+            val, disp = v.get('value'), v.get('display_value')
+        else:
+            val, disp = v, None
+        if k in _FLOW_BLOB_FIELDS or k == 'label_cache':
+            out[k] = _decode_flow_blob(val)
+        elif disp not in (None, '', val):
+            # reference field — keep both the stored sys_id and its resolved
+            # name so the raw data is still legible.
+            out[k] = {'value': val, 'display': disp}
+        else:
+            out[k] = val
+    return out
+
+
+def _flow_order_key(rec):
+    s = str(rec.get('order') or '0').split('➛')[0].split('-')[0]
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    return int(digits) if digits else 0
+
+
+def get_flow_reconstruction(handler, flow_id):
+    """Raw ServiceNow source data for a flow — the actual records behind it
+    (header, triggers, action steps, flow-logic blocks) with the base64+gzip
+    config blobs decoded. The unprocessed, multi-table data used to reverse-
+    engineer how a flow works."""
+    conn = get_conn()
+
+    def _exists(table):
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)).fetchone() is not None
+
+    def _by_flow(table):
+        if not _exists(table):
+            return []
+        rows = conn.execute('SELECT raw FROM "%s" WHERE flow = ?' % table,
+                            (flow_id,)).fetchall()
+        recs = [_flow_record_raw(r[0]) for r in rows if r[0]]
+        recs.sort(key=_flow_order_key)
+        return recs
+
+    flow = None
+    if _exists('sys_hub_flow'):
+        r = conn.execute('SELECT raw FROM sys_hub_flow WHERE sys_id = ?',
+                         (flow_id,)).fetchone()
+        if r and r[0]:
+            flow = _flow_record_raw(r[0])
+
+    actions = _by_flow('sys_hub_action_instance_v2') + _by_flow('sys_hub_action_instance')
+    triggers = _by_flow('sys_hub_trigger_instance') + _by_flow('sys_hub_trigger_instance_v2')
+    logic = _by_flow('sys_hub_flow_logic')
+
+    if flow is None and not (actions or triggers or logic):
+        return _send_error(handler, HTTPStatus.NOT_FOUND, 'flow not in snapshot')
+
+    _json_response(handler, {
+        'flow': flow, 'triggers': triggers, 'actions': actions, 'logic': logic,
+        'counts': {'actions': len(actions), 'triggers': len(triggers), 'logic': len(logic)},
+    }, cache_seconds=300)
+
+
 def get_ci_relations(handler, sys_id):
     conn = get_conn()
     upstream = conn.execute(
@@ -1441,6 +1538,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r'^/api/sla-stats/(user|group)/([a-f0-9]{1,32})$', path)
         if m:
             return get_sla_stats(self, m.group(1), m.group(2))
+        m = re.match(r'^/api/flow_reconstruction/([a-f0-9]{1,32})$', path)
+        if m:
+            return get_flow_reconstruction(self, m.group(1))
 
         m = re.match(r'^/api/([a-z_][a-z_0-9]*)$', path)
         if m:

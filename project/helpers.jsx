@@ -89,6 +89,10 @@ function parseHash() {
     return { view: 'cmdb_home' };
   }
 
+  if (parts[0] === 'service-status') {
+    return { view: 'service_status_home' };
+  }
+
   if (parts[0] === 'sn-table') {
     if (parts.length < 2) return { view: 'logic_home' };
     return { view: 'sn_table_inspector', name: parts[1] };

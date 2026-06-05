@@ -941,6 +941,93 @@ def get_flow_reconstruction(handler, flow_id):
     }, cache_seconds=300)
 
 
+# Worse status wins when several outages touch the same CI on the same day.
+_OUTAGE_RANK = {
+    'outage': 3, 'service degradation': 2, 'degradation': 2,
+    'planned': 1, 'planned maintenance': 1,
+}
+
+
+def get_service_status(handler, params):
+    """Reconstruct the System Status outage grid from cmdb_ci_outage: for each
+    CI that had an outage in a recent window, the worst outage status per day.
+    This is the data behind the live Service Portal status page (which renders
+    cmdb_ci_outage records); the window is anchored at the most recent outage in
+    the snapshot, since the archive is historical."""
+    conn = get_conn()
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cmdb_ci_outage'").fetchone() is None:
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+    try:
+        days = max(1, min(180, int(params.get('days', ['30'])[0])))
+    except (ValueError, TypeError):
+        days = 30
+
+    def _val(env, k, disp=False):
+        v = env.get(k)
+        if isinstance(v, dict):
+            return (v.get('display_value') if disp else v.get('value')) or ''
+        return v or ''
+
+    outages, max_day = [], None
+    for (raw,) in conn.execute('SELECT raw FROM cmdb_ci_outage').fetchall():
+        if not raw:
+            continue
+        try:
+            env = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        begin = _val(env, 'begin')[:10]
+        if not begin:
+            continue
+        outages.append({
+            'ci': _val(env, 'cmdb_ci'), 'name': _val(env, 'cmdb_ci', disp=True) or _val(env, 'cmdb_ci'),
+            'begin': begin, 'end': _val(env, 'end')[:10], 'type': _val(env, 'type', disp=True) or 'Outage',
+            'begin_full': _val(env, 'begin'), 'end_full': _val(env, 'end'),
+            'desc': _val(env, 'short_description'), 'number': _val(env, 'number'),
+        })
+        if max_day is None or begin > max_day:
+            max_day = begin
+    if not outages:
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+
+    try:
+        end_d = datetime.date.fromisoformat(max_day)
+    except ValueError:
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+    start_d = end_d - datetime.timedelta(days=days - 1)
+    dates = [(start_d + datetime.timedelta(days=i)).isoformat() for i in range(days)]
+    dateset = set(dates)
+
+    services = {}
+    for o in outages:
+        try:
+            b = datetime.date.fromisoformat(o['begin'])
+            e = datetime.date.fromisoformat(o['end']) if o['end'] else end_d   # open outage → ongoing
+        except ValueError:
+            continue
+        if e < b:
+            e = b
+        b, e = max(b, start_d), min(e, end_d)
+        if e < b:
+            continue                                          # outage entirely outside the window
+        rank = _OUTAGE_RANK.get(o['type'].strip().lower(), 3)
+        s = services.setdefault(o['ci'] or o['name'], {'ci': o['ci'], 'name': o['name'], 'days': {}, 'outages': []})
+        s['outages'].append({'type': o['type'], 'begin': o['begin_full'], 'end': o['end_full'], 'desc': o['desc'], 'number': o['number']})
+        d = b
+        while d <= e:
+            iso = d.isoformat()
+            if iso in dateset and rank > _OUTAGE_RANK.get(str(s['days'].get(iso, '')).strip().lower(), 0):
+                s['days'][iso] = o['type']
+            d += datetime.timedelta(days=1)
+
+    out = sorted(services.values(), key=lambda x: (x['name'] or '').lower())
+    _json_response(handler, {
+        'window': {'start': start_d.isoformat(), 'end': end_d.isoformat(), 'days': days},
+        'dates': dates,
+        'services': out,
+    }, cache_seconds=300)
+
+
 def get_ci_relations(handler, sys_id):
     conn = get_conn()
     upstream = conn.execute(
@@ -1588,6 +1675,8 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r'^/api/flow_reconstruction/([a-f0-9]{1,32})$', path)
         if m:
             return get_flow_reconstruction(self, m.group(1))
+        if path == '/api/service_status':
+            return get_service_status(self, params)
 
         m = re.match(r'^/api/([a-z_][a-z_0-9]*)$', path)
         if m:

@@ -970,6 +970,103 @@ function RefTableList({ table }) {
   );
 }
 
+// ---- Service status (reconstructed outage grid) -------------------------
+// Rebuilds the live Service Portal "System Status" grid from the archived
+// cmdb_ci_outage records: services that had outages in a recent window, each
+// CI's worst status per day. The /api/service_status endpoint anchors the
+// window at the most recent outage in the snapshot (the archive is historical).
+window.ServiceStatusPage = function ServiceStatusPage() {
+  const [days, setDays] = React.useState(30);
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    fetch('/api/service_status?days=' + days)
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(d => { if (!cancel) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancel) { setData({ services: [], dates: [], window: null }); setLoading(false); } });
+    return () => { cancel = true; };
+  }, [days]);
+
+  const statusOf = (st) => {
+    if (!st) return { bg: 'var(--green, #3fb950)', label: 'No issues' };
+    const s = String(st).toLowerCase();
+    if (s.indexOf('degrad') >= 0) return { bg: '#d29922', label: st };
+    if (s.indexOf('planned') >= 0) return { bg: '#388bfd', label: st };
+    return { bg: 'var(--red, #f85149)', label: st };
+  };
+  const fmtDay = (iso) => { const p = iso.split('-'); return (+p[1]) + '/' + (+p[2]); };
+  const stick = { position: 'sticky', left: 0, background: 'var(--bg)', zIndex: 1 };
+
+  const services = (data && data.services) || [];
+  const dates = (data && data.dates) || [];
+  const win = data && data.window;
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Service status {services.length > 0 && <span className="count mono">{services.length}</span>}</h1>
+        <div className="sub">
+          Reconstructed from <span className="mono">cmdb_ci_outage</span> — the data behind the live System Status page.
+          {win && <> · {win.start} → {win.end}</>}
+        </div>
+        <div className="toolbar">
+          <div className="spacer" />
+          {[7, 14, 30, 60].map(d => (
+            <button key={d} className="filter-pill" onClick={() => setDays(d)}
+              style={days === d ? { background: 'var(--accent-bg)', borderColor: 'var(--accent-border)', color: 'var(--accent-fg)' } : null}>{d}d</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12, flexWrap: 'wrap' }}>
+        {[['var(--green, #3fb950)', 'No issues'], ['var(--red, #f85149)', 'Outage'], ['#d29922', 'Degradation'], ['#388bfd', 'Planned']].map(([c, l]) => (
+          <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: c, display: 'inline-block' }} /> {l}
+          </span>
+        ))}
+      </div>
+
+      {loading && <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading outages…</div>}
+      {!loading && services.length === 0 && <div className="empty">No outages recorded in this window.</div>}
+      {!loading && services.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="dt" style={{ minWidth: 'max-content' }}>
+            <thead>
+              <tr>
+                <th style={{ ...stick, minWidth: 200 }}>Service</th>
+                {dates.map(d => <th key={d} style={{ textAlign: 'center', fontWeight: 400, fontSize: 10.5, color: 'var(--fg-4)', padding: '4px 3px' }}>{fmtDay(d)}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {services.map(s => (
+                <tr key={s.ci || s.name}>
+                  <td style={stick}>
+                    {s.ci
+                      ? <a onClick={() => window.navigate(window.recordUrl('cmdb_ci', s.ci))} style={{ cursor: 'pointer' }}>{s.name || '(unnamed CI)'}</a>
+                      : <span>{s.name || '(unspecified CI)'}</span>}
+                    <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>{s.outages.length} outage{s.outages.length !== 1 ? 's' : ''}</span>
+                  </td>
+                  {dates.map(d => {
+                    const info = statusOf(s.days[d]);
+                    return (
+                      <td key={d} style={{ textAlign: 'center', padding: '4px 3px' }} title={fmtDay(d) + ': ' + info.label}>
+                        <span style={{ width: 11, height: 11, borderRadius: '50%', background: info.bg, display: 'inline-block', verticalAlign: 'middle' }} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ---- CIs (paginated via API since cmdb_ci has 1M+ records) ---------------
 // Filters: class + operational status are always available (indexed columns).
 // Install status / discovery source / staleness are feature-detected against

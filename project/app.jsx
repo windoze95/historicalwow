@@ -164,6 +164,7 @@ function App() {
           {route.view === 'service_catalog_home' && <window.CatalogOverviewPage />}
           {route.view === 'logic_home' && <window.LogicHomePage />}
           {route.view === 'cmdb_home' && <window.CMDBOverviewPage />}
+          {route.view === 'service_status_home' && <window.ServiceStatusPage />}
           {route.view === 'sn_table_inspector' && <window.SnTableInspectorPage name={route.name} />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
           {route.view === 'list' && route.table === 'sys_script' && <window.BusinessRuleListPage />}
@@ -344,6 +345,7 @@ function Sidebar({ route }) {
     navItem('/event-script-actions',   'settings',    'Script actions',         'sysevent_script_action'),
     navItem('/inbound-email-actions',  'arrow_right', 'Inbound email actions',  'sysevent_in_email_action'),
     { sep: 'Event management' },
+    { id: '/service-status', icon: 'incident', label: 'Service status' },
     navItem('/event-match-rules',        'flag',   'Event match rules',       'em_match_rule'),
     navItem('/alert-correlation-rules',  'link',   'Alert correlation rules', 'em_alert_correlation_rule'),
     navItem('/alert-management-rules',   'shield', 'Alert management rules',   'em_alert_management_rule'),
@@ -362,6 +364,7 @@ function Sidebar({ route }) {
     if (id === '/service-catalog') return route.view === 'service_catalog_home';
     if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
     if (id === '/cmdb') return route.view === 'cmdb_home';
+    if (id === '/service-status') return route.view === 'service_status_home';
     // Derive the slug→table mapping from URL_TO_TABLE instead of duplicating it
     // here — the two would otherwise drift as routes are added or renamed.
     const table = window.URL_TO_TABLE[id.slice(1)];

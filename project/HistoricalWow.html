@@ -1434,6 +1434,16 @@ window.URL_TO_TABLE = {
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
   flows:             'flow_inventory',
+  // Event/alert logic
+  'event-registry':            'sysevent_register',
+  'event-script-actions':      'sysevent_script_action',
+  'notification-templates':    'sysevent_email_template',
+  'event-match-rules':         'em_match_rule',
+  'alert-correlation-rules':   'em_alert_correlation_rule',
+  'alert-management-rules':    'em_alert_management_rule',
+  'alert-impact-rules':        'em_impact_rule',
+  'event-connectors':          'em_connector_definition',
+  'event-connector-instances': 'em_connector_instance',
 };
 window.TABLE_TO_URL = Object.fromEntries(
   Object.entries(window.URL_TO_TABLE).map(([k, v]) => [v, k])
@@ -12043,8 +12053,19 @@ function Sidebar({ route }) {
     navItem('/ui-policies',     'shield',   'UI policies',      'sys_ui_policy'),
     navItem('/data-policies',   'lock',     'Data policies',    'sys_data_policy2'),
     navItem('/sla-definitions', 'history',  'SLA definitions',  'contract_sla'),
-    navItem('/inbound-email-actions', 'arrow_right', 'Inbound email actions', 'sysevent_in_email_action'),
-    navItem('/notifications',   'change',   'Notifications',    'sysevent_email_action'),
+    { sep: 'Events & notifications' },
+    navItem('/event-registry',         'history',     'Event registry',         'sysevent_register'),
+    navItem('/notifications',          'change',      'Notifications',          'sysevent_email_action'),
+    navItem('/notification-templates', 'file',        'Notification templates', 'sysevent_email_template'),
+    navItem('/event-script-actions',   'settings',    'Script actions',         'sysevent_script_action'),
+    navItem('/inbound-email-actions',  'arrow_right', 'Inbound email actions',  'sysevent_in_email_action'),
+    { sep: 'Event management' },
+    navItem('/event-match-rules',        'flag',   'Event match rules',       'em_match_rule'),
+    navItem('/alert-correlation-rules',  'link',   'Alert correlation rules', 'em_alert_correlation_rule'),
+    navItem('/alert-management-rules',   'shield', 'Alert management rules',   'em_alert_management_rule'),
+    navItem('/alert-impact-rules',       'ci',     'Impact rules',            'em_impact_rule'),
+    navItem('/event-connectors',         'db',     'Connector definitions',   'em_connector_definition'),
+    navItem('/event-connector-instances','db',     'Connector instances',     'em_connector_instance'),
   ].filter(it => it !== null);
   const fmt = (n) => n >= 1000 ? Math.round(n/100)/10 + 'k' : n;
   const isActive = (id) => {
@@ -12072,6 +12093,11 @@ function Sidebar({ route }) {
       '/ui-policies': 'sys_ui_policy', '/data-policies': 'sys_data_policy2',
       '/sla-definitions': 'contract_sla',
       '/inbound-email-actions': 'sysevent_in_email_action', '/notifications': 'sysevent_email_action',
+      '/event-registry': 'sysevent_register', '/event-script-actions': 'sysevent_script_action',
+      '/notification-templates': 'sysevent_email_template',
+      '/event-match-rules': 'em_match_rule', '/alert-correlation-rules': 'em_alert_correlation_rule',
+      '/alert-management-rules': 'em_alert_management_rule', '/alert-impact-rules': 'em_impact_rule',
+      '/event-connectors': 'em_connector_definition', '/event-connector-instances': 'em_connector_instance',
     };
     return map[id] && ((route.view === 'list' && route.table === map[id]) ||
            (route.view === 'record' && map[id] === route.table) ||

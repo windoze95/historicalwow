@@ -524,7 +524,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       <div className="ref-grid">
         <div className="cell"><div className="label">Manager</div><div className="val">{r.manager ? <window.UserCell sys_id={r.manager} displayName={r.__display_manager} /> : '—'}</div></div>
         <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(r.department)?.name || r.__display_department || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(r.location)?.name || r.__display_location || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{r.location ? <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', r.location))}>{window.findLocation(r.location)?.name || r.__display_location || (String(r.location).slice(0, 8) + '…')}</span> : '—'}</div></div>
         {(() => {
           const cc = window.findCostCenter(r.cost_center) ||
                      window.findCostCenter(window.findDepartment(r.department)?.cost_center);
@@ -910,7 +910,7 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
         <div className="cell"><div className="label">Owned by</div><div className="val">{c.owned_by ? <span className="ref-link" onClick={() => window.navigate(`/users/${c.owned_by}`)}>{c.__display_owned_by || window.findUser(c.owned_by)?.name || c.owned_by}</span> : '—'}</div></div>
         <div className="cell"><div className="label">Support group</div><div className="val">{c.support_group ? <span className="ref-link" onClick={() => window.navigate(`/groups/${c.support_group}`)}>{c.__display_support_group || window.findGroup(c.support_group)?.name || c.support_group}</span> : '—'}</div></div>
         <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name || c.__display_company || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name || c.__display_location || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{c.location ? <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', c.location))}>{window.findLocation(c.location)?.name || c.__display_location || (String(c.location).slice(0, 8) + '…')}</span> : '—'}</div></div>
         <div className="cell"><div className="label">IP address</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.ip_address || '—'}</div></div>
         <div className="cell"><div className="label">FQDN</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.fqdn || '—'}</div></div>
         <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number || '—'}</div></div>

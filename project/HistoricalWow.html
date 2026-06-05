@@ -1433,6 +1433,7 @@ window.URL_TO_TABLE = {
   'sla-definitions': 'contract_sla',
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
+  locations:         'cmn_location',
   flows:             'flow_inventory',
   // Event/alert logic
   'event-registry':            'sysevent_register',
@@ -1677,6 +1678,7 @@ window.Icon = function Icon({ name, size = 14, strokeWidth = 1.6 }) {
     users: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.5 3-6 6-6s6 2.5 6 6" /><circle cx="17" cy="9" r="2.6" /><path d="M14 13.5c1-.6 2-.9 3-.9 3 0 5 2 5 5" /></>,
     ci: <><rect x="3" y="3" width="7" height="7" rx="1.2" /><rect x="14" y="3" width="7" height="7" rx="1.2" /><rect x="3" y="14" width="7" height="7" rx="1.2" /><rect x="14" y="14" width="7" height="7" rx="1.2" /></>,
     home: <><path d="M3 12 12 4l9 8" /><path d="M5 11v9h14v-9" /></>,
+    pin: <><path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></>,
     chevron_right: <><path d="m9 6 6 6-6 6" /></>,
     chevron_down: <><path d="m6 9 6 6 6-6" /></>,
     download: <><path d="M12 4v12" /><path d="m6 12 6 6 6-6" /><path d="M5 20h14" /></>,
@@ -2041,7 +2043,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
     return <TaskList key={table} table={table} />;
   }
-  if (EVENT_LIST_CONFIG[table]) return <RefTableList key={table} table={table} />;
+  if (REF_LIST_CONFIG[table]) return <RefTableList key={table} table={table} />;
   return null;
 };
 
@@ -2421,7 +2423,7 @@ function UserList() {
               <td className="num">{u.user_name}</td>
               <td>{u.title}</td>
               <td className="muted">{window.findDepartment(u.department)?.name || '—'}</td>
-              <td className="muted">{window.findLocation(u.location)?.name || '—'}</td>
+              <td className="muted">{u.location ? <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl('cmn_location', u.location)); }}>{window.findLocation(u.location)?.name || (String(u.location).slice(0, 8) + '…')}</span> : '—'}</td>
             </tr>
           ))}
           {rows.length > display.length && (
@@ -2851,12 +2853,14 @@ function TemplateList() {
 }
 
 // ---- generic reference-table list ----------------------------------------
-// Event/alert logic tables (and any future raw-mirror reference table) are
-// browsed through one configurable list rather than a bespoke component each.
-// Columns are the indexed columns chosen in build_sqlite SCHEMAS, so a slim
-// fetch carries them as flat values. Each col: { k: column, l: label, w?: px,
-// strong?, mono?, muted?, bool? }. order_by must be an indexed column.
-const EVENT_LIST_CONFIG = {
+// Reference tables (event/alert logic, locations, and any future raw-mirror
+// table) are browsed through one configurable list rather than a bespoke
+// component each. Columns are the indexed columns chosen in build_sqlite
+// SCHEMAS, so a slim fetch carries them as flat values. Each col: { k: column,
+// l: label, w?: px, strong?, mono?, muted?, bool? }. order_by must be indexed.
+const REF_LIST_CONFIG = {
+  cmn_location: { title: 'Locations', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'city', l: 'City' }, { k: 'state', l: 'State' } ] },
   sysevent_register: { title: 'Event registry', order_by: 'event_name', cols: [
     { k: 'event_name', l: 'Event', mono: 1, strong: 1 }, { k: 'table', l: 'Table', mono: 1 },
     { k: 'sys_class_name', l: 'Class', muted: 1 } ] },
@@ -2884,7 +2888,7 @@ const EVENT_LIST_CONFIG = {
 };
 
 function RefTableList({ table }) {
-  const cfg = EVENT_LIST_CONFIG[table];
+  const cfg = REF_LIST_CONFIG[table];
   const data = window.HistoricalWowData;
   const [q, setQ] = React.useState('');
   const [debouncedQ, setDebouncedQ] = React.useState('');
@@ -3427,7 +3431,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
           : <RecordHeader rec={rec} table={table} />}
         {isAsset
           ? <AssetFieldsSection rec={rec} table={table} showRaw={showRaw} />
-          : <FieldsSection rec={rec} table={table} showRaw={showRaw} />}
+          : (window.TASK_TABLES && window.TASK_TABLES.includes(table))
+            ? <FieldsSection rec={rec} table={table} showRaw={showRaw} />
+            : <GenericFieldsSection rec={rec} table={table} showRaw={showRaw} />}
         {isAsset && assetCITickets && assetCITickets.length > 0 && (
           <AssetCITicketsSection rows={assetCITickets} ci={rec.ci} ci_display={rec.__display_ci} />
         )}
@@ -3702,10 +3708,7 @@ function AssetRef({ rec, field, kind, fallback }) {
     const d = window.findDepartment?.(v);
     return d ? <span>{d.name}</span> : <span>{display || sys_id_short(v)}</span>;
   }
-  if (kind === 'location') {
-    const l = window.findLocation?.(v);
-    return l ? <span>{l.name}</span> : <span>{display || sys_id_short(v)}</span>;
-  }
+  if (kind === 'location') return <RefLink kind="location" sys_id={v} fallback={display} />;
   if (kind === 'cost_center') {
     const cc = window.HistoricalWowData.cost_centers.find(c => c.sys_id === v);
     return cc ? <span>{cc.name || cc.code}</span> : <span>{display || sys_id_short(v)}</span>;
@@ -3967,6 +3970,14 @@ function RefLink({ kind, sys_id, fallback }) {
     if (!c) return renderUnresolved();
     return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c.name || fallback}</span>;
   }
+  if (kind === 'location') {
+    // Every location is eager-loaded, and the record is fetchable regardless,
+    // so always link. Incident-style records carry no __display_location, so
+    // the name comes from the lookup; fall back to the display value / sys_id.
+    const l = window.findLocation(sys_id);
+    const label = (l && l.name) || fallback || (sys_id.slice(0, 8) + '…');
+    return <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', sys_id))}>{label}</span>;
+  }
   return <span>{fallback || ''}</span>;
 }
 
@@ -3980,6 +3991,34 @@ function CatalogParentLink({ sys_id, display, target_table }) {
       <span className="mono" style={{ marginRight: 4 }}>{display || sys_id_short(sys_id)}</span>
       <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>· {window.taskLabel(target_table, 'singular')}</span>
     </span>
+  );
+}
+
+// Generic key-value dump for reference tables with no bespoke layout (locations,
+// event/alert rules, notification templates, etc.). The task FieldsSection would
+// force task-shaped fields (Number/Priority/State) that don't exist here, so
+// those records would render mostly blank; this shows the record's actual
+// populated fields instead, preferring the resolved __display_<field> value.
+function GenericFieldsSection({ rec, table, showRaw }) {
+  const SKIP = new Set(['sys_id', 'raw', 'sys_tags', 'sys_mod_count']);
+  const humanize = (k) => k.replace(/^u_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const keys = Object.keys(rec).filter(k =>
+    !k.startsWith('__display_') && !SKIP.has(k) &&
+    rec[k] !== undefined && rec[k] !== null && rec[k] !== '' && typeof rec[k] !== 'object');
+  const PRI = { name: 0, title: 1, short_description: 2, description: 3 };
+  keys.sort((a, b) => (PRI[a] != null ? PRI[a] : 50) - (PRI[b] != null ? PRI[b] : 50) || a.localeCompare(b));
+  return (
+    <div className="section">
+      <h3>Fields</h3>
+      <div className="fields">
+        <Field label="sys_id" showRaw={false}><span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{rec.sys_id}</span></Field>
+        {keys.map(k => (
+          <Field key={k} label={humanize(k)} showRaw={showRaw} raw={rec[k]}>
+            <span>{rec['__display_' + k] || String(rec[k])}</span>
+          </Field>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -4008,6 +4047,7 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} fallback={rec.__display_assigned_to} /></Field>
           <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} fallback={rec.__display_assignment_group} /></Field>
           <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
+          {rec.location && <Field label="Location" showRaw={showRaw} raw={rec.location}><RefLink kind="location" sys_id={rec.location} fallback={rec.__display_location} /></Field>}
         </div>
       </div>
       {showCatalog && (rec.request_item || rec.request || rec.cat_item) && (
@@ -5008,7 +5048,7 @@ window.UserRefPage = function UserRefPage({ sys_id }) {
       <div className="ref-grid">
         <div className="cell"><div className="label">Manager</div><div className="val">{r.manager ? <window.UserCell sys_id={r.manager} displayName={r.__display_manager} /> : '—'}</div></div>
         <div className="cell"><div className="label">Department</div><div className="val">{window.findDepartment(r.department)?.name || r.__display_department || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(r.location)?.name || r.__display_location || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{r.location ? <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', r.location))}>{window.findLocation(r.location)?.name || r.__display_location || (String(r.location).slice(0, 8) + '…')}</span> : '—'}</div></div>
         {(() => {
           const cc = window.findCostCenter(r.cost_center) ||
                      window.findCostCenter(window.findDepartment(r.department)?.cost_center);
@@ -5394,7 +5434,7 @@ window.CIRefPage = function CIRefPage({ sys_id }) {
         <div className="cell"><div className="label">Owned by</div><div className="val">{c.owned_by ? <span className="ref-link" onClick={() => window.navigate(`/users/${c.owned_by}`)}>{c.__display_owned_by || window.findUser(c.owned_by)?.name || c.owned_by}</span> : '—'}</div></div>
         <div className="cell"><div className="label">Support group</div><div className="val">{c.support_group ? <span className="ref-link" onClick={() => window.navigate(`/groups/${c.support_group}`)}>{c.__display_support_group || window.findGroup(c.support_group)?.name || c.support_group}</span> : '—'}</div></div>
         <div className="cell"><div className="label">Company</div><div className="val">{window.findCompany(c.company)?.name || c.__display_company || '—'}</div></div>
-        <div className="cell"><div className="label">Location</div><div className="val">{window.findLocation(c.location)?.name || c.__display_location || '—'}</div></div>
+        <div className="cell"><div className="label">Location</div><div className="val">{c.location ? <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', c.location))}>{window.findLocation(c.location)?.name || c.__display_location || (String(c.location).slice(0, 8) + '…')}</span> : '—'}</div></div>
         <div className="cell"><div className="label">IP address</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.ip_address || '—'}</div></div>
         <div className="cell"><div className="label">FQDN</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.fqdn || '—'}</div></div>
         <div className="cell"><div className="label">Serial</div><div className="val mono" style={{ fontSize: 12.5 }}>{c.serial_number || '—'}</div></div>
@@ -12246,6 +12286,7 @@ function Sidebar({ route }) {
     navItem('/delegations',     'link',     'Delegations',      'sys_user_delegate'),
     navItem('/knowledge',       'book',     'Knowledge',        'kb_knowledge'),
     navItem('/templates',       'file',     'Templates',        'sys_template'),
+    navItem('/locations',       'pin',      'Locations',        'cmn_location'),
     { id: '/cmdb',              icon: 'ci',    label: 'CMDB overview' },
     navItem('/cis',             'ci',       'Configuration items', 'cmdb_ci'),
     { sep: 'Logic' },

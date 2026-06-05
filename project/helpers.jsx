@@ -49,6 +49,7 @@ window.URL_TO_TABLE = {
   'sla-definitions': 'contract_sla',
   'inbound-email-actions': 'sysevent_in_email_action',
   'notifications':   'sysevent_email_action',
+  locations:         'cmn_location',
   flows:             'flow_inventory',
   // Event/alert logic
   'event-registry':            'sysevent_register',
@@ -293,6 +294,7 @@ window.Icon = function Icon({ name, size = 14, strokeWidth = 1.6 }) {
     users: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.5 3-6 6-6s6 2.5 6 6" /><circle cx="17" cy="9" r="2.6" /><path d="M14 13.5c1-.6 2-.9 3-.9 3 0 5 2 5 5" /></>,
     ci: <><rect x="3" y="3" width="7" height="7" rx="1.2" /><rect x="14" y="3" width="7" height="7" rx="1.2" /><rect x="3" y="14" width="7" height="7" rx="1.2" /><rect x="14" y="14" width="7" height="7" rx="1.2" /></>,
     home: <><path d="M3 12 12 4l9 8" /><path d="M5 11v9h14v-9" /></>,
+    pin: <><path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></>,
     chevron_right: <><path d="m9 6 6 6-6 6" /></>,
     chevron_down: <><path d="m6 9 6 6 6-6" /></>,
     download: <><path d="M12 4v12" /><path d="m6 12 6 6 6-6" /><path d="M5 20h14" /></>,

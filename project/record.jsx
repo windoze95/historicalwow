@@ -179,7 +179,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
           : <RecordHeader rec={rec} table={table} />}
         {isAsset
           ? <AssetFieldsSection rec={rec} table={table} showRaw={showRaw} />
-          : <FieldsSection rec={rec} table={table} showRaw={showRaw} />}
+          : (window.TASK_TABLES && window.TASK_TABLES.includes(table))
+            ? <FieldsSection rec={rec} table={table} showRaw={showRaw} />
+            : <GenericFieldsSection rec={rec} table={table} showRaw={showRaw} />}
         {isAsset && assetCITickets && assetCITickets.length > 0 && (
           <AssetCITicketsSection rows={assetCITickets} ci={rec.ci} ci_display={rec.__display_ci} />
         )}
@@ -454,10 +456,7 @@ function AssetRef({ rec, field, kind, fallback }) {
     const d = window.findDepartment?.(v);
     return d ? <span>{d.name}</span> : <span>{display || sys_id_short(v)}</span>;
   }
-  if (kind === 'location') {
-    const l = window.findLocation?.(v);
-    return l ? <span>{l.name}</span> : <span>{display || sys_id_short(v)}</span>;
-  }
+  if (kind === 'location') return <RefLink kind="location" sys_id={v} fallback={display} />;
   if (kind === 'cost_center') {
     const cc = window.HistoricalWowData.cost_centers.find(c => c.sys_id === v);
     return cc ? <span>{cc.name || cc.code}</span> : <span>{display || sys_id_short(v)}</span>;
@@ -719,6 +718,14 @@ function RefLink({ kind, sys_id, fallback }) {
     if (!c) return renderUnresolved();
     return <span className="ref-link" onClick={() => window.navigate(`/cis/${sys_id}`)}>{c.name || fallback}</span>;
   }
+  if (kind === 'location') {
+    // Every location is eager-loaded, and the record is fetchable regardless,
+    // so always link. Incident-style records carry no __display_location, so
+    // the name comes from the lookup; fall back to the display value / sys_id.
+    const l = window.findLocation(sys_id);
+    const label = (l && l.name) || fallback || (sys_id.slice(0, 8) + '…');
+    return <span className="ref-link" onClick={() => window.navigate(window.recordUrl('cmn_location', sys_id))}>{label}</span>;
+  }
   return <span>{fallback || ''}</span>;
 }
 
@@ -732,6 +739,34 @@ function CatalogParentLink({ sys_id, display, target_table }) {
       <span className="mono" style={{ marginRight: 4 }}>{display || sys_id_short(sys_id)}</span>
       <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>· {window.taskLabel(target_table, 'singular')}</span>
     </span>
+  );
+}
+
+// Generic key-value dump for reference tables with no bespoke layout (locations,
+// event/alert rules, notification templates, etc.). The task FieldsSection would
+// force task-shaped fields (Number/Priority/State) that don't exist here, so
+// those records would render mostly blank; this shows the record's actual
+// populated fields instead, preferring the resolved __display_<field> value.
+function GenericFieldsSection({ rec, table, showRaw }) {
+  const SKIP = new Set(['sys_id', 'raw', 'sys_tags', 'sys_mod_count']);
+  const humanize = (k) => k.replace(/^u_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const keys = Object.keys(rec).filter(k =>
+    !k.startsWith('__display_') && !SKIP.has(k) &&
+    rec[k] !== undefined && rec[k] !== null && rec[k] !== '' && typeof rec[k] !== 'object');
+  const PRI = { name: 0, title: 1, short_description: 2, description: 3 };
+  keys.sort((a, b) => (PRI[a] != null ? PRI[a] : 50) - (PRI[b] != null ? PRI[b] : 50) || a.localeCompare(b));
+  return (
+    <div className="section">
+      <h3>Fields</h3>
+      <div className="fields">
+        <Field label="sys_id" showRaw={false}><span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{rec.sys_id}</span></Field>
+        {keys.map(k => (
+          <Field key={k} label={humanize(k)} showRaw={showRaw} raw={rec[k]}>
+            <span>{rec['__display_' + k] || String(rec[k])}</span>
+          </Field>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -760,6 +795,7 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} fallback={rec.__display_assigned_to} /></Field>
           <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} fallback={rec.__display_assignment_group} /></Field>
           <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
+          {rec.location && <Field label="Location" showRaw={showRaw} raw={rec.location}><RefLink kind="location" sys_id={rec.location} fallback={rec.__display_location} /></Field>}
         </div>
       </div>
       {showCatalog && (rec.request_item || rec.request || rec.cat_item) && (

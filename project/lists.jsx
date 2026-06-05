@@ -59,7 +59,7 @@ const ListPage = window.ListPage = function ListPage({ table }) {
   if (window.TASK_TABLES && window.TASK_TABLES.includes(table)) {
     return <TaskList key={table} table={table} />;
   }
-  if (EVENT_LIST_CONFIG[table]) return <RefTableList key={table} table={table} />;
+  if (REF_LIST_CONFIG[table]) return <RefTableList key={table} table={table} />;
   return null;
 };
 
@@ -439,7 +439,7 @@ function UserList() {
               <td className="num">{u.user_name}</td>
               <td>{u.title}</td>
               <td className="muted">{window.findDepartment(u.department)?.name || '—'}</td>
-              <td className="muted">{window.findLocation(u.location)?.name || '—'}</td>
+              <td className="muted">{u.location ? <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl('cmn_location', u.location)); }}>{window.findLocation(u.location)?.name || (String(u.location).slice(0, 8) + '…')}</span> : '—'}</td>
             </tr>
           ))}
           {rows.length > display.length && (
@@ -869,12 +869,14 @@ function TemplateList() {
 }
 
 // ---- generic reference-table list ----------------------------------------
-// Event/alert logic tables (and any future raw-mirror reference table) are
-// browsed through one configurable list rather than a bespoke component each.
-// Columns are the indexed columns chosen in build_sqlite SCHEMAS, so a slim
-// fetch carries them as flat values. Each col: { k: column, l: label, w?: px,
-// strong?, mono?, muted?, bool? }. order_by must be an indexed column.
-const EVENT_LIST_CONFIG = {
+// Reference tables (event/alert logic, locations, and any future raw-mirror
+// table) are browsed through one configurable list rather than a bespoke
+// component each. Columns are the indexed columns chosen in build_sqlite
+// SCHEMAS, so a slim fetch carries them as flat values. Each col: { k: column,
+// l: label, w?: px, strong?, mono?, muted?, bool? }. order_by must be indexed.
+const REF_LIST_CONFIG = {
+  cmn_location: { title: 'Locations', order_by: 'name', cols: [
+    { k: 'name', l: 'Name', strong: 1 }, { k: 'city', l: 'City' }, { k: 'state', l: 'State' } ] },
   sysevent_register: { title: 'Event registry', order_by: 'event_name', cols: [
     { k: 'event_name', l: 'Event', mono: 1, strong: 1 }, { k: 'table', l: 'Table', mono: 1 },
     { k: 'sys_class_name', l: 'Class', muted: 1 } ] },
@@ -902,7 +904,7 @@ const EVENT_LIST_CONFIG = {
 };
 
 function RefTableList({ table }) {
-  const cfg = EVENT_LIST_CONFIG[table];
+  const cfg = REF_LIST_CONFIG[table];
   const data = window.HistoricalWowData;
   const [q, setQ] = React.useState('');
   const [debouncedQ, setDebouncedQ] = React.useState('');

@@ -2581,28 +2581,43 @@ flagging the omission.${excludedNote}
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function FlowContextModal({ text, flowName, onClose }) {
+  function FlowContextModal({ rec, rawData, flowName, onClose }) {
+    const [view, setView] = useState('raw');   // 'raw' | 'summary'
     const [copied, setCopied] = useState(false);
+    const isRaw = view === 'raw';
+    const rawText = (rawData === 'loading') ? '// Loading the raw ServiceNow records for this flow…'
+      : (!rawData || rawData === 'error') ? '// Could not load the raw flow data from the archive.'
+      : JSON.stringify(rawData, null, 2);
+    const text = isRaw ? rawText : flowContextMarkdown(rec);
     const copy = () => flowCopyText(text)
       .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })
       .catch(() => {});
-    const fname = (flowName || 'flow').replace(/[^\w.-]+/g, '_') + '.flow-context.md';
+    const fname = (flowName || 'flow').replace(/[^\w.-]+/g, '_') + (isRaw ? '.servicenow.json' : '.summary.md');
+    const tab = (id, label) => (
+      <button key={id} className="filter-pill" onClick={() => setView(id)}
+        style={view === id ? { background: 'var(--accent-bg)', borderColor: 'var(--accent-border)', color: 'var(--accent-fg)' } : null}>{label}</button>
+    );
     return (
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, width: 'min(920px, 94vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }}>
+        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, width: 'min(960px, 95vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
             <window.Icon name="change" size={15} />
             <strong style={{ fontWeight: 500 }}>Reconstruction context — {flowName}</strong>
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-4)' }}>everything known about this flow — paste into an LLM or doc to rebuild it</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{tab('raw', 'Raw ServiceNow data')}{tab('summary', 'Readable summary')}</div>
+          </div>
+          <div style={{ padding: '6px 16px', fontSize: 11, color: 'var(--fg-4)', borderBottom: '1px solid var(--border)' }}>
+            {isRaw
+              ? 'The actual archived flow records — header, trigger, action steps and logic blocks — with the base64+gzip config blobs decoded. The real source data to reverse-engineer the flow.'
+              : 'A curated, readable digest assembled from the same data.'}
           </div>
           <textarea readOnly value={text} onFocus={e => e.target.select()}
-            style={{ flex: 1, margin: 0, padding: '12px 14px', border: 'none', background: 'var(--bg)', color: 'var(--fg-2)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.5, resize: 'none', outline: 'none', minHeight: 340 }} />
+            style={{ flex: 1, margin: 0, padding: '12px 14px', border: 'none', background: 'var(--bg)', color: 'var(--fg-2)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.5, resize: 'none', outline: 'none', minHeight: 360 }} />
           <div style={{ display: 'flex', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
             <button className="filter-pill" onClick={copy}>
               <window.Icon name={copied ? 'check' : 'file'} size={12} /> {copied ? 'Copied!' : 'Copy all'}
             </button>
             <button className="filter-pill" onClick={() => flowDownloadText(fname, text)}>
-              <window.Icon name="download" size={12} /> Download .md
+              <window.Icon name="download" size={12} /> Download {isRaw ? '.json' : '.md'}
             </button>
             <span style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 11, color: 'var(--fg-4)' }}>{text.length.toLocaleString()} chars</span>
             <button className="filter-pill" onClick={onClose}>close</button>
@@ -2615,8 +2630,12 @@ flagging the omission.${excludedNote}
   window.FlowInventoryRecordPage = function FlowInventoryRecordPage({ sys_id }) {
     const [rec, setRec] = useState(null);
     const [ctxOpen, setCtxOpen] = useState(false);
+    const [rawData, setRawData] = useState(null);   // raw decoded ServiceNow flow records
+    const openCtx = () => setCtxOpen(true);
     useEffect(() => {
-      let cancel = false; setRec(null);
+      // Reset per-flow state — the component instance is reused across flow
+      // records, so stale raw data would otherwise show flow A under flow B.
+      let cancel = false; setRec(null); setRawData(null); setCtxOpen(false);
       L.fetchRecord('flow_inventory', sys_id).then(r => {
         if (cancel) return;
         if (!r) { setRec(false); return; }
@@ -2625,6 +2644,20 @@ flagging the omission.${excludedNote}
       }).catch(() => { if (!cancel) setRec(false); });
       return () => { cancel = true; };
     }, [sys_id]);
+
+    // Lazily fetch the raw flow records the first time the modal opens. The
+    // cancel flag drops a stale response if the user navigates to another flow
+    // before it settles, so the modal never shows a different flow's data.
+    useEffect(() => {
+      if (!ctxOpen || rawData != null) return;
+      let cancel = false;
+      setRawData('loading');
+      fetch('/api/flow_reconstruction/' + sys_id)
+        .then(r => r.ok ? r.json() : Promise.reject(r))
+        .then(d => { if (!cancel) setRawData(d); })
+        .catch(() => { if (!cancel) setRawData('error'); });
+      return () => { cancel = true; };
+    }, [ctxOpen, sys_id]);
 
     if (rec === null) return <div className="empty"><div className="dot-pulse" style={{ marginBottom: 12 }} />loading flow…</div>;
     // flow_inventory is a separate derived dataset that may not be generated
@@ -2678,8 +2711,8 @@ flagging the omission.${excludedNote}
               {flat(rec.scope) && <span style={chip}>{flat(rec.scope)}</span>}
               {flat(rec.run_as) && <span style={chip}>runs as {flat(rec.run_as)}</span>}
               {errs > 0 && <span className="chip red">{errs.toLocaleString()} errored runs</span>}
-              <button className="filter-pill" onClick={() => setCtxOpen(true)} style={{ marginLeft: 'auto' }}
-                title="Copy everything known about this flow, to reconstruct / reverse-engineer it">
+              <button className="filter-pill" onClick={openCtx} style={{ marginLeft: 'auto' }}
+                title="The raw ServiceNow flow records (decoded) to reconstruct / reverse-engineer this flow">
                 <window.Icon name="file" size={12} /> Reconstruction context
               </button>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)', marginLeft: 6 }}>
@@ -2805,7 +2838,7 @@ flagging the omission.${excludedNote}
             </div>
           </div>
         </div>
-        {ctxOpen && <FlowContextModal text={flowContextMarkdown(rec)} flowName={name} onClose={() => setCtxOpen(false)} />}
+        {ctxOpen && <FlowContextModal rec={rec} rawData={rawData} flowName={name} onClose={() => setCtxOpen(false)} />}
       </div>
     );
   };

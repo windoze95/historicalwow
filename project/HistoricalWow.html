@@ -9980,7 +9980,7 @@ flagging the omission.${excludedNote}
     const rawObj = raw || item;
     const rawText = JSON.stringify(rawObj, null, 2);
     const copy = () => flowCopyText(rawText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
-    const meta = [['order', sv(item.order)], ['ui_id', sv(item.ui_id)], ['parent_ui_id', sv(item.parent_ui_id)]].filter(m => m[1]);
+    const meta = [['order', sv(item.order)], ['ui_id', sv(item.ui_id)], ['parent_ui_id', sv(item.parent_ui_id)]].filter(m => m[1] != null && m[1] !== '');
     return (
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, width: 'min(860px, 95vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }}>
@@ -10242,11 +10242,11 @@ flagging the omission.${excludedNote}
     ]);
     // Full decoded ServiceNow records keyed by ui_id, so the step modal can show
     // the literal source record (curated `steps` carry only the trimmed config).
-    const rawByUid = {};
-    if (haveRaw) [...(rawData.actions || []), ...(rawData.logic || [])].forEach(r => { const u = r && r.ui_id; if (u) rawByUid[String(u)] = r; });
+    const rawByUid = new Map();   // ui_id -> full record; Map (not {}) since keys come from data
+    if (haveRaw) [...(rawData.actions || []), ...(rawData.logic || [])].forEach(r => { const u = r && r.ui_id; if (u) rawByUid.set(String(u), r); });
     const openStep = (fi) => setStepModal({
       item: fi.item, number: fi.number, kind: fi.kind === 'logic' ? 'Control flow' : 'Action',
-      raw: rawByUid[String(fi.item.ui_id || '')] || null,
+      raw: rawByUid.get(String(fi.item.ui_id || '')) || null,
     });
     const lcSteps = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
     const stats = (rec.stats && typeof rec.stats === 'object') ? rec.stats : {};

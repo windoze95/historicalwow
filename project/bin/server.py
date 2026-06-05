@@ -892,9 +892,21 @@ def get_flow_reconstruction(handler, flow_id):
     # Follow parent chains so blocks nested inside other blocks are included too.
     def _logic_via_ui_ids():
         if not _exists('sys_hub_flow_logic'):
-            return _by_flow('sys_hub_flow_logic')
+            return []
+        # Start with blocks correctly attributed to this flow (keeps flow-owned
+        # blocks that no action's parent_ui_id reaches, e.g. an empty branch).
+        found, noid = {}, []
+        for rec in _by_flow('sys_hub_flow_logic'):
+            uid = rec.get('ui_id')
+            if uid:
+                found.setdefault(uid, rec)
+            else:
+                noid.append(rec)
+        # Then add blocks recovered by ui_id — flow-logic rows are often
+        # attributed to a shared snapshot flow, so follow the steps' parent
+        # chains and union the results (deduped by ui_id).
         want = {a.get('parent_ui_id') for a in actions if a.get('parent_ui_id')}
-        found, seen = {}, set()
+        seen = set()
         for _ in range(12):
             todo = [u for u in want if u and u not in seen and u not in found]
             if not todo:
@@ -910,8 +922,7 @@ def get_flow_reconstruction(handler, flow_id):
                     found[uid] = rec
                     if rec.get('parent_ui_id'):
                         want.add(rec['parent_ui_id'])
-        # fall back to the flow= attribution if ui_id recovery found nothing
-        return sorted(found.values(), key=_flow_order_key) or _by_flow('sys_hub_flow_logic')
+        return sorted(list(found.values()) + noid, key=_flow_order_key)
 
     logic = _logic_via_ui_ids()
 

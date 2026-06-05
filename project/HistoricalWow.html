@@ -9871,7 +9871,8 @@ flagging the omission.${excludedNote}
         </span>
       );
     }
-    return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{(disp || val).slice(0, 240) || '—'}</span>;
+    const sv = String(disp || val);
+    return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{sv ? (sv.length > 240 ? sv.slice(0, 240) + '…' : sv) : '—'}</span>;
   }
 
   function FlowStepCard({ step, idx }) {
@@ -9889,10 +9890,10 @@ flagging the omission.${excludedNote}
           <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 36 }}>{step.display_text}</div>
         )}
         {keys.length > 0 && (
-          <div style={{ marginTop: 6, marginLeft: 36, display: 'grid', gridTemplateColumns: 'minmax(80px,160px) 1fr', rowGap: 3, columnGap: 10, fontSize: 11.5 }}>
+          <div style={{ marginTop: 6, marginLeft: 36, display: 'grid', gridTemplateColumns: 'minmax(110px,190px) 1fr', rowGap: 4, columnGap: 12, fontSize: 11.5 }}>
             {keys.slice(0, 12).map(k => (
               <React.Fragment key={k}>
-                <span className="mono" style={{ color: 'var(--fg-3)' }}>{k}</span>
+                <span className="mono" style={{ color: 'var(--fg-3)', overflowWrap: 'anywhere', minWidth: 0, alignSelf: 'start' }}>{k}</span>
                 <FlowConfigValue entry={cfg[k]} />
               </React.Fragment>
             ))}

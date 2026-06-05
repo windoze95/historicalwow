@@ -2286,6 +2286,40 @@ flagging the omission.${excludedNote}
   // block that encloses it (e.g. block "10" must precede child "10➛11").
   const flowOrderKey = (o) => String(o == null ? '' : o).split(/[➛-]/).map(s => { const m = s.match(/\d+/); return m ? parseInt(m[0], 10) : 0; });
   const flowOrderCmp = (a, b) => { const ka = flowOrderKey(a), kb = flowOrderKey(b), n = Math.max(ka.length, kb.length); for (let i = 0; i < n; i++) { const d = (ka[i] || 0) - (kb[i] || 0); if (d) return d; } return 0; };
+  // Flatten a flow's steps + control-flow blocks into a render list ordered and
+  // numbered by TREE POSITION (parent_ui_id), not ServiceNow's raw `order`.
+  // Raw order is sparse (1,2,4,5,8,10…) and can collide (two sibling IFs both at
+  // order 10), so as a step label it shows phantom gaps and duplicate numbers.
+  // Tree position is contiguous and unique, and mirrors how Flow Designer itself
+  // numbers nested steps (1, 2, 2.1, 2.1.3.1…). Siblings sort by raw order;
+  // orphans (parent not captured) and any node left unvisited surface at the end
+  // so nothing is silently dropped.
+  function flowBuildTree(items) {
+    const norm = items.map((fi, i) => ({ fi, i, uid: String(fi.item.ui_id || ''), pid: String(fi.item.parent_ui_id || ''), ord: fi.item.order }));
+    const byUid = new Map();
+    norm.forEach(n => { if (n.uid && !byUid.has(n.uid)) byUid.set(n.uid, n); });
+    const kids = new Map();   // parent uid -> child nodes
+    const roots = [];
+    norm.forEach(n => {
+      if (n.pid && byUid.has(n.pid) && byUid.get(n.pid) !== n) {
+        if (!kids.has(n.pid)) kids.set(n.pid, []);
+        kids.get(n.pid).push(n);
+      } else {
+        roots.push(n);   // top-level, or orphan whose parent wasn't captured
+      }
+    });
+    const cmp = (a, b) => flowOrderCmp(a.ord, b.ord) || (a.i - b.i);
+    const out = [], seen = new Set();
+    const walk = (node, prefix, depth) => {
+      if (seen.has(node)) return;   // cycle guard
+      seen.add(node);
+      out.push(Object.assign({}, node.fi, { number: prefix, depth }));
+      (kids.get(node.uid) || []).slice().sort(cmp).forEach((k, j) => walk(k, prefix + '.' + (j + 1), depth + 1));
+    };
+    roots.slice().sort(cmp).forEach((r, j) => walk(r, String(j + 1), 0));
+    norm.filter(n => !seen.has(n)).sort(cmp).forEach(n => out.push(Object.assign({}, n.fi, { number: '', depth: 0 })));
+    return out;
+  }
   // Humanize a Flow Designer trigger_type token for display.
   const TRIGGER_LABEL = {
     record_create: 'Record created', record_update: 'Record updated',
@@ -2414,7 +2448,7 @@ flagging the omission.${excludedNote}
   // the record they point at: a real sys_id with a known reference table, or a
   // glide-list of sysid:table pairs. Data-pill values ("{{...}}") and scalars
   // render as plain text.
-  function FlowConfigValue({ entry }) {
+  function FlowConfigValue({ entry, full }) {
     const val = (entry && entry.value != null) ? String(entry.value) : '';
     const disp = (entry && entry.display != null) ? String(entry.display) : '';
     const ref = entry && entry.ref;
@@ -2445,54 +2479,113 @@ flagging the omission.${excludedNote}
       );
     }
     const sv = String(disp || val);
-    return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere' }}>{sv ? (sv.length > 240 ? sv.slice(0, 240) + '…' : sv) : '—'}</span>;
+    const shown = (!full && sv.length > 240) ? sv.slice(0, 240) + '…' : sv;
+    return <span className="mono" style={{ color: 'var(--fg-2)', overflowWrap: 'anywhere', whiteSpace: full ? 'pre-wrap' : 'normal' }}>{sv ? shown : '—'}</span>;
   }
 
   // A control-flow block (FOR-EACH / IF / etc.) shown inline among the steps so
   // the loop/condition structure is visible and the step numbering reads whole.
-  function FlowLogicCard({ block }) {
+  function FlowLogicCard({ block, number, depth, onOpen }) {
     const ld = block.logic_definition;
     const kind = (ld && typeof ld === 'object' ? (ld.display || ld.value) : ld) || 'Logic';
-    const indent = block.parent_ui_id ? 18 : 0;
+    const indent = (depth || 0) * 16;
     return (
-      <div style={{ marginLeft: indent, marginBottom: 8, background: 'var(--accent-bg)', border: '1px dashed var(--accent-border)', borderRadius: 6, padding: '6px 10px' }}>
+      <div onClick={onOpen} title="Show this block's condition" style={{ marginLeft: indent, marginBottom: 8, background: 'var(--accent-bg)', border: '1px dashed var(--accent-border)', borderRadius: 6, padding: '6px 10px', cursor: onOpen ? 'pointer' : 'default' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 28 }}>{block.order}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 34, textAlign: 'right' }}>{number || block.order}</span>
           <strong style={{ fontWeight: 600, fontSize: 11, color: 'var(--accent-fg)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{kind}</strong>
-          {block.parent_ui_id && <span style={{ fontSize: 10, color: 'var(--fg-4)' }}>· nested</span>}
         </div>
         {block.display_text && block.display_text !== kind && (
-          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 36 }}>{block.display_text}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 42 }}>{block.display_text}</div>
         )}
       </div>
     );
   }
 
-  function FlowStepCard({ step, idx }) {
+  function FlowStepCard({ step, number, depth, idx, onOpen }) {
     const cfg = step.config || {};
     const keys = Object.keys(cfg);
-    const indent = step.parent_ui_id ? 18 : 0;
+    const indent = (depth || 0) * 16;
     return (
       <div style={{ marginLeft: indent, marginBottom: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 28 }}>{step.order || idx + 1}</span>
+        <div onClick={onOpen} title="Open step details" style={{ display: 'flex', alignItems: 'baseline', gap: 8, cursor: onOpen ? 'pointer' : 'default' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', minWidth: 34, textAlign: 'right' }}>{number || step.order || idx + 1}</span>
           <strong style={{ fontWeight: 500, fontSize: 12.5 }}>{step.action_type || step.display_text || 'Step'}</strong>
-          {step.parent_ui_id && <span style={{ fontSize: 10, color: 'var(--fg-4)' }}>· nested</span>}
+          {onOpen && <window.Icon name="external" size={11} style={{ color: 'var(--fg-4)', marginLeft: 'auto', flexShrink: 0 }} />}
         </div>
         {step.display_text && step.display_text !== step.action_type && (
-          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 36 }}>{step.display_text}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, marginLeft: 42 }}>{step.display_text}</div>
         )}
         {keys.length > 0 && (
-          <div style={{ marginTop: 6, marginLeft: 36, display: 'grid', gridTemplateColumns: 'minmax(110px,190px) 1fr', rowGap: 4, columnGap: 12, fontSize: 11.5 }}>
-            {keys.slice(0, 12).map(k => (
+          <div onClick={e => e.stopPropagation()} style={{ marginTop: 6, marginLeft: 42, display: 'grid', gridTemplateColumns: 'minmax(110px,190px) 1fr', rowGap: 4, columnGap: 12, fontSize: 11.5 }}>
+            {keys.slice(0, 8).map(k => (
               <React.Fragment key={k}>
                 <span className="mono" style={{ color: 'var(--fg-3)', overflowWrap: 'anywhere', minWidth: 0, alignSelf: 'start' }}>{k}</span>
                 <FlowConfigValue entry={cfg[k]} />
               </React.Fragment>
             ))}
-            {keys.length > 12 && <span style={{ gridColumn: '1 / -1', color: 'var(--fg-4)', fontStyle: 'italic' }}>+ {keys.length - 12} more inputs</span>}
+            {keys.length > 8 && (
+              <span onClick={onOpen} style={{ gridColumn: '1 / -1', color: 'var(--accent-fg)', cursor: onOpen ? 'pointer' : 'default' }}>+ {keys.length - 8} more inputs — open step</span>
+            )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Full detail for a single step / control-flow block, opened by clicking it in
+  // the list. Shows the complete (untruncated) configured inputs plus the literal
+  // decoded ServiceNow record behind the step — the real source data to reverse-
+  // engineer exactly what the step does.
+  function FlowStepModal({ entry, onClose }) {
+    const [copied, setCopied] = useState(false);
+    if (!entry) return null;
+    const { item, raw, number, kind } = entry;
+    const sv = (v) => (v && typeof v === 'object' && 'value' in v) ? (v.display || v.value) : v;
+    const cfg = (item && item.config && typeof item.config === 'object') ? item.config : {};
+    const cfgKeys = Object.keys(cfg);
+    const title = sv(item.action_type) || kind || 'Step';
+    const rawObj = raw || item;
+    const rawText = JSON.stringify(rawObj, null, 2);
+    const copy = () => flowCopyText(rawText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+    const meta = [['order', sv(item.order)], ['ui_id', sv(item.ui_id)], ['parent_ui_id', sv(item.parent_ui_id)]].filter(m => m[1]);
+    return (
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, width: 'min(860px, 95vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            {number && <span className="mono" style={{ fontSize: 12, color: 'var(--fg-4)' }}>{number}</span>}
+            <strong style={{ fontWeight: 500 }}>{title}</strong>
+            {sv(item.display_text) && sv(item.display_text) !== title && <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{sv(item.display_text)}</span>}
+            <button className="filter-pill" onClick={onClose} style={{ marginLeft: 'auto' }}>close</button>
+          </div>
+          {meta.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
+              {meta.map(([k, v]) => <span key={k} style={chip}><span style={{ color: 'var(--fg-4)' }}>{k}</span> <span className="mono">{String(v)}</span></span>)}
+            </div>
+          )}
+          <div style={{ overflow: 'auto', padding: '12px 16px' }}>
+            {cfgKeys.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Configured inputs</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,220px) 1fr', rowGap: 6, columnGap: 14, fontSize: 12 }}>
+                  {cfgKeys.map(k => (
+                    <React.Fragment key={k}>
+                      <span className="mono" style={{ color: 'var(--fg-3)', overflowWrap: 'anywhere', minWidth: 0, alignSelf: 'start' }}>{k}</span>
+                      <FlowConfigValue entry={cfg[k]} full={true} />
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Decoded ServiceNow record</span>
+              <button className="filter-pill" onClick={copy} style={{ marginLeft: 'auto' }}>
+                <window.Icon name={copied ? 'check' : 'file'} size={12} /> {copied ? 'Copied!' : 'Copy raw'}
+              </button>
+            </div>
+            <pre className="mono" style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11.5, lineHeight: 1.5, color: 'var(--fg-2)', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{rawText}</pre>
+          </div>
+        </div>
       </div>
     );
   }
@@ -2656,12 +2749,13 @@ flagging the omission.${excludedNote}
   window.FlowInventoryRecordPage = function FlowInventoryRecordPage({ sys_id }) {
     const [rec, setRec] = useState(null);
     const [ctxOpen, setCtxOpen] = useState(false);
+    const [stepModal, setStepModal] = useState(null);   // {item, raw, number, kind} for the open step
     const [rawData, setRawData] = useState(null);   // raw decoded ServiceNow flow records
     const openCtx = () => setCtxOpen(true);
     useEffect(() => {
       // Reset per-flow state — the component instance is reused across flow
       // records, so stale raw data would otherwise show flow A under flow B.
-      let cancel = false; setRec(null); setRawData(null); setCtxOpen(false);
+      let cancel = false; setRec(null); setRawData(null); setCtxOpen(false); setStepModal(null);
       L.fetchRecord('flow_inventory', sys_id).then(r => {
         if (cancel) return;
         if (!r) { setRec(false); return; }
@@ -2705,13 +2799,23 @@ flagging the omission.${excludedNote}
     const curated = isTrue(flat(rec.curated));
     const steps = Array.isArray(rec.steps) ? rec.steps : [];
     // Interleave the control-flow blocks (FOR-EACH / IF, recovered by the
-    // reconstruction endpoint) with the action steps, ordered by ServiceNow's
-    // own step order, so the nested structure and numbering read completely.
-    const reconLogic = (rawData && rawData !== 'loading' && rawData !== 'error' && Array.isArray(rawData.logic)) ? rawData.logic : [];
-    const flowItems = [
+    // reconstruction endpoint) with the action steps and number them by tree
+    // position (parent_ui_id), so the nesting reads whole and the step numbers
+    // are contiguous and unique — ServiceNow's raw `order` is sparse and collides.
+    const haveRaw = rawData && rawData !== 'loading' && rawData !== 'error';
+    const reconLogic = (haveRaw && Array.isArray(rawData.logic)) ? rawData.logic : [];
+    const flowItems = flowBuildTree([
       ...steps.map(s => ({ item: s, kind: 'action' })),
       ...reconLogic.map(l => ({ item: l, kind: 'logic' })),
-    ].sort((a, b) => flowOrderCmp(a.item.order, b.item.order));
+    ]);
+    // Full decoded ServiceNow records keyed by ui_id, so the step modal can show
+    // the literal source record (curated `steps` carry only the trimmed config).
+    const rawByUid = {};
+    if (haveRaw) [...(rawData.actions || []), ...(rawData.logic || [])].forEach(r => { const u = r && r.ui_id; if (u) rawByUid[String(u)] = r; });
+    const openStep = (fi) => setStepModal({
+      item: fi.item, number: fi.number, kind: fi.kind === 'logic' ? 'Control flow' : 'Action',
+      raw: rawByUid[String(fi.item.ui_id || '')] || null,
+    });
     const lcSteps = Array.isArray(rec.label_cache_steps) ? rec.label_cache_steps : [];
     const stats = (rec.stats && typeof rec.stats === 'object') ? rec.stats : {};
     const trig = (rec.trigger && typeof rec.trigger === 'object') ? rec.trigger : null;
@@ -2793,8 +2897,8 @@ flagging the omission.${excludedNote}
               )}
               {flowItems.length > 0
                 ? flowItems.map((fi, i) => fi.kind === 'logic'
-                    ? <FlowLogicCard key={fi.item.ui_id || ('l' + i)} block={fi.item} />
-                    : <FlowStepCard key={fi.item.ui_id || ('a' + i)} step={fi.item} idx={i} />)
+                    ? <FlowLogicCard key={fi.item.ui_id || ('l' + i)} block={fi.item} number={fi.number} depth={fi.depth} onOpen={() => openStep(fi)} />
+                    : <FlowStepCard key={fi.item.ui_id || ('a' + i)} step={fi.item} number={fi.number} depth={fi.depth} idx={i} onOpen={() => openStep(fi)} />)
                 : <Empty text="No decoded action steps for this flow (empty stub, or its steps live only in the compiled snapshot)." />}
             </div>
           )}
@@ -2874,6 +2978,7 @@ flagging the omission.${excludedNote}
           </div>
         </div>
         {ctxOpen && <FlowContextModal rec={rec} rawData={rawData} flowName={name} onClose={() => setCtxOpen(false)} />}
+        {stepModal && <FlowStepModal entry={stepModal} onClose={() => setStepModal(null)} />}
       </div>
     );
   };

@@ -1975,6 +1975,121 @@ components:
           description: ServiceNow boolean stored as 0 or 1.
       required: [sys_id]
       additionalProperties: true
+    SpPortalRow:
+      type: object
+      description: 'Row from the `sp_portal` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        url_suffix:
+          type: string
+        title:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SpPageRow:
+      type: object
+      description: 'Row from the `sp_page` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        id:
+          type: string
+        title:
+          type: string
+        internal:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+        public:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    SpContainerRow:
+      type: object
+      description: 'Row from the `sp_container` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        title:
+          type: string
+        name:
+          type: string
+        order:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SpRowRow:
+      type: object
+      description: 'Row from the `sp_row` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        sp_column:
+          type: string
+        order:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SpColumnRow:
+      type: object
+      description: 'Row from the `sp_column` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        sp_row:
+          type: string
+        size:
+          type: string
+        order:
+          type: string
+      required: [sys_id]
+      additionalProperties: true
+    SpInstanceRow:
+      type: object
+      description: 'Row from the `sp_instance` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        sp_widget:
+          type: string
+        sp_column:
+          type: string
+        title:
+          type: string
+        order:
+          type: string
+        active:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
+    SpWidgetRow:
+      type: object
+      description: 'Row from the `sp_widget` table (reference).'
+      properties:
+        sys_id:
+          type: string
+          description: ServiceNow primary key.
+        id:
+          type: string
+        name:
+          type: string
+        public:
+          type: integer
+          enum: [0, 1]
+          description: ServiceNow boolean stored as 0 or 1.
+      required: [sys_id]
+      additionalProperties: true
     SysTemplateRow:
       type: object
       description: 'Row from the `sys_template` table (reference).'
@@ -2446,6 +2561,13 @@ x-filterable-columns:
   em_impact_rule: [sys_id, name, contribution_type]
   em_connector_definition: [sys_id, name, script_type]
   em_connector_instance: [sys_id, name, active]
+  sp_portal: [sys_id, url_suffix, title]
+  sp_page: [sys_id, id, title, internal, public]
+  sp_container: [sys_id, title, name, order]
+  sp_row: [sys_id, sp_column, order]
+  sp_column: [sys_id, sp_row, size, order]
+  sp_instance: [sys_id, sp_widget, sp_column, title, order, active]
+  sp_widget: [sys_id, id, name, public]
   sys_template: [sys_id, name, table, short_description, user, active, global]
   cmdb_ci_outage: [sys_id, number, cmdb_ci, type, begin, end, short_description, u_outage_status, task_number]
   std_change_record_producer: [sys_id, name, short_description, table_name, category, sys_class_name, active]

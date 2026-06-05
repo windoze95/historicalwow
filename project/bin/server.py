@@ -319,6 +319,10 @@ REFERENCE_TABLES = {
     'sysevent_register', 'sysevent_script_action', 'sysevent_email_template',
     'em_match_rule', 'em_alert_correlation_rule', 'em_alert_management_rule',
     'em_impact_rule', 'em_connector_definition', 'em_connector_instance',
+    # Service Portal definition — portals, pages, layout chain, widget
+    # instances and widget source. The literal definition behind portal pages.
+    'sp_portal', 'sp_page', 'sp_container', 'sp_row', 'sp_column',
+    'sp_instance', 'sp_widget',
 }
 ALL_TABLES = TASK_TABLES | REFERENCE_TABLES
 

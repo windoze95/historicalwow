@@ -214,6 +214,8 @@ components:
           type: string
         parent:
           type: string
+        problem:
+          type: string
       required: [sys_id]
       additionalProperties: true
     ScRequestRow:
@@ -320,6 +322,8 @@ components:
           type: string
         cat_item:
           type: string
+        configuration_item:
+          type: string
       required: [sys_id]
       additionalProperties: true
     ScTaskRow:
@@ -379,7 +383,7 @@ components:
       additionalProperties: true
     IncidentTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `incident_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `incident_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `incident` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -423,6 +427,8 @@ components:
         sys_class_name:
           type: string
         parent:
+          type: string
+        incident:
           type: string
       required: [sys_id]
       additionalProperties: true
@@ -477,7 +483,7 @@ components:
       additionalProperties: true
     SysapprovalGroupRow:
       type: object
-      description: 'Slim/indexed row shape from the `sysapproval_group` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sysapproval_group` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -521,6 +527,10 @@ components:
         sys_class_name:
           type: string
         parent:
+          type: string
+        approval:
+          type: string
+        approval_user:
           type: string
       required: [sys_id]
       additionalProperties: true
@@ -1045,12 +1055,14 @@ components:
       additionalProperties: true
     SysapprovalApproverRow:
       type: object
-      description: 'Slim/indexed row shape from the `sysapproval_approver` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sysapproval_approver` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `sysapproval` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
           description: ServiceNow primary key.
         sysapproval:
+          type: string
+        group:
           type: string
         approver:
           type: string
@@ -2611,13 +2623,13 @@ x-filterable-columns:
   incident: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, subcategory]
   change_request: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, std_change_producer_version, chg_model, type]
   problem: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, subcategory]
-  problem_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  problem_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, problem]
   sc_request: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for]
-  sc_req_item: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request, cat_item]
+  sc_req_item: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request, cat_item, configuration_item]
   sc_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request_item, request]
-  incident_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  incident_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, incident]
   change_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sysapproval_group: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  sysapproval_group: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, approval, approval_user]
   asset_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sn_contract_renewal_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sys_user: [sys_id, user_name, name, email, title, department, location, active]
@@ -2641,7 +2653,7 @@ x-filterable-columns:
   sys_email: [sys_id, instance, target_table, type, mailbox, state, subject, recipients, user, sys_created_on]
   task_ci: [sys_id, task, ci]
   task_sla: [sys_id, task, sla_definition, stage, business_percentage]
-  sysapproval_approver: [sys_id, sysapproval, approver, state, sys_created_on]
+  sysapproval_approver: [sys_id, sysapproval, group, approver, state, sys_created_on]
   sc_cat_item: [sys_id, name, short_description, sys_class_name, sc_catalogs]
   item_option_new: [sys_id, name, question_text, type, cat_item, mandatory, order, reference]
   sc_item_option: [sys_id, value, item_option_new, cat_item, order]
@@ -2789,10 +2801,12 @@ x-cache-5min:
   - user_criteria
 
 x-hr-parent-columns:
-  incident_task: parent
+  incident_task: incident
   sys_attachment: table_sys_id
   sys_audit: documentkey
   sys_email: instance
   sys_journal_field: element_id
+  sysapproval_approver: sysapproval
+  sysapproval_group: parent
   task_ci: task
   task_sla: task

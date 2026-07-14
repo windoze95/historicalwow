@@ -39,8 +39,10 @@ import http.client
 import json
 import logging
 import os
+import sqlite3
 import ssl
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -449,16 +451,21 @@ def _email_body_skip_active():
                     for line in f:
                         if not line.strip():
                             continue
-                        if field(json.loads(line), 'body'):
+                        row = json.loads(line)
+                        if any(field(row, key) for key in ('body', 'body_text', 'headers')):
                             log.warning('sys_email.ndjson already contains bodies — '
                                         'ignoring SN_SKIP_EMAIL_BODIES this run so a '
                                         'metadata-only delta cannot clobber them on merge. '
                                         'Delete the file + reset its watermark to go '
                                         'metadata-only again.')
                             eff = False
-                        break
-            except (OSError, json.JSONDecodeError):
-                pass
+                            break
+            except (OSError, json.JSONDecodeError) as error:
+                log.warning(
+                    'cannot verify whether sys_email.ndjson contains bodies (%s) — '
+                    'fetching full email rows to preserve data', error,
+                )
+                eff = False
         _EFFECTIVE_SKIP_EMAIL_BODIES = eff
     return _EFFECTIVE_SKIP_EMAIL_BODIES
 
@@ -582,6 +589,12 @@ def api_get_json(path, params=None):
                 last_err = e
                 continue
             err_body = e.read().decode('utf-8', errors='replace')
+            # urllib's HTTPError body is a one-shot stream. Preserve it for
+            # callers that must distinguish a genuinely missing table from a
+            # different HTTP 400 (for example a pagination failure). Treating
+            # every 400 as "table unavailable" accepts partial exports and can
+            # advance a watermark past rows that were never fetched.
+            e.historicalwow_body = err_body
             log.error('HTTP %s on %s — %s', e.code, path, err_body[:500])
             raise
         except _TRANSIENT as e:
@@ -630,14 +643,44 @@ def api_get_binary(path):
 
 # ---- State (per-table watermarks) ------------------------------------------
 
+def _durable_replace(source, destination):
+    """Publish a completed file before any cursor may refer past its data."""
+    source = Path(source)
+    destination = Path(destination)
+    with source.open('rb') as f:
+        os.fsync(f.fileno())
+    os.replace(source, destination)
+    # Rename atomicity alone does not guarantee that the directory entry
+    # survives a host/filesystem crash. The exporter writes canonical data
+    # first and state second; durable directory barriers preserve that order.
+    directory_fd = os.open(destination.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def read_state():
     if not STATE_PATH.exists():
+        canonical = (
+            path for path in OUT_DIR.glob('*.ndjson')
+            if not path.name.startswith('.') and '.shard' not in path.name
+            and path.stat().st_size > 0
+        )
+        if any(canonical):
+            raise RuntimeError(
+                '_state.json is missing while archived NDJSON exists; '
+                'refusing to infer cursors from completed snapshots'
+            )
         return {'version': 1, 'watermarks': {}}
     try:
         s = json.loads(STATE_PATH.read_text())
     except (json.JSONDecodeError, OSError) as e:
-        log.warning('_state.json unreadable (%s) — starting fresh', e)
-        return {'version': 1, 'watermarks': {}}
+        raise RuntimeError(
+            f'_state.json is unreadable; refusing to infer export state: {e}'
+        ) from e
+    if not isinstance(s, dict) or not isinstance(s.get('watermarks', {}), dict):
+        raise RuntimeError('_state.json has an invalid structure')
     s.setdefault('watermarks', {})
     return s
 
@@ -646,7 +689,7 @@ def write_state(state):
     state['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     tmp = STATE_PATH.with_suffix('.json.tmp')
     tmp.write_text(json.dumps(state, indent=2))
-    tmp.replace(STATE_PATH)
+    _durable_replace(tmp, STATE_PATH)
 
 
 # ---- Field extractors (handle sysparm_display_value=all envelope) ----------
@@ -703,6 +746,43 @@ def _last_sys_id_in_file(path):
     return None
 
 
+def _prepare_resume_file(path, table):
+    """Repair only an interrupted final line; reject mid-file corruption."""
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    size = path.stat().st_size
+    last_good = 0
+    with path.open('r+b') as f:
+        line_number = 0
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            line_number += 1
+            at_eof = f.tell() == size
+            has_newline = line.endswith(b'\n')
+            try:
+                row = json.loads(line.decode('utf-8'))
+                if not isinstance(row, dict) or not _extract_sid(row):
+                    raise ValueError('row has no sys_id')
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+                if at_eof and not has_newline:
+                    log.warning(
+                        '%s: truncating interrupted partial row %d before resume',
+                        table, line_number,
+                    )
+                    f.truncate(last_good)
+                    return
+                raise RuntimeError(
+                    f'{table}: invalid resumable NDJSON at line {line_number}'
+                ) from error
+            last_good = f.tell()
+            if at_eof and not has_newline:
+                f.seek(0, os.SEEK_END)
+                f.write(b'\n')
+                return
+
+
 def _max_updated_in_file(path, table=None):
     """One-shot scan to find the maximum delta-field value (used on resume)."""
     # Note: this reads the table name from a closure when called via export_*
@@ -732,60 +812,227 @@ def _write_row(f, row):
     f.write('\n')
 
 
-# ---- Page generator (offset-paginated; used for delta pulls) ---------------
+# ---- Page generator (keyset-paginated; used for delta pulls) ---------------
 
-def fetch_pages_offset(table, query):
-    """Generator yielding pages of rows for the given query."""
+def _missing_table_error(error, table):
+    """Whether a table API error means the requested table does not exist."""
+    if error.code not in (400, 404):
+        return False
+    try:
+        payload = json.loads(getattr(error, 'historicalwow_body', ''))
+        message = payload.get('error', {}).get('message', '')
+    except (AttributeError, json.JSONDecodeError, TypeError):
+        return False
+    return str(message).strip() == f'Invalid table {table}'
+
+
+def _query_parts(query):
+    return [
+        clause for clause in (query or '').split('^')
+        if clause and not clause.upper().startswith('ORDERBY')
+    ]
+
+
+def _keyset_query(base_query, delta_field, watermark, cursor, fence=None):
+    """Build a stable ``(delta_field, sys_id)`` ServiceNow cursor query."""
+    base = _query_parts(base_query)
+    order = [f'ORDERBY{delta_field}', 'ORDERBYsys_id']
+    upper = [f'{delta_field}<={fence}'] if fence else []
+    if cursor is None:
+        return '^'.join(base + [f'{delta_field}>={watermark}'] + upper + order)
+
+    last_delta, last_sys_id = cursor
+    newer = '^'.join(base + [f'{delta_field}>{last_delta}'] + upper)
+    same_time = '^'.join(base + [
+        f'{delta_field}={last_delta}', f'sys_id>{last_sys_id}',
+    ] + upper)
+    return f'{newer}^NQ{same_time}^' + '^'.join(order)
+
+
+def fetch_pages_keyset(table, base_query, watermark, fence=None):
+    """Yield every visible delta row using a compound stable cursor.
+
+    ServiceNow can return fewer rows than ``sysparm_limit`` when ACLs filter a
+    page or the response hits a byte cap. A short page is therefore not an end
+    signal. Keyset pagination continues until an empty page and cannot skip the
+    unseen tail the way an offset jump can. Ordering first by the delta field
+    also keeps rows that change while a mutable table is being scanned ahead of
+    the cursor instead of marooning them behind a random sys_id boundary.
+    """
     page_size = page_size_for(table)
-    offset = 0
+    delta_field = delta_field_for(table)
+    cursor = None
     while True:
         params = {
-            'sysparm_query': query,
+            'sysparm_query': _keyset_query(
+                base_query, delta_field, watermark, cursor, fence,
+            ),
             'sysparm_limit': page_size,
-            'sysparm_offset': offset,
             'sysparm_display_value': 'all',
             'sysparm_exclude_reference_link': 'true',
+            # The exporter never consumes Link pagination headers. Suppressing
+            # them also prevents long encoded queries from failing when the
+            # platform tries to construct an oversized next-page URL.
+            'sysparm_suppress_pagination_header': 'true',
         }
         _flds = fields_for(table)
         if _flds: params['sysparm_fields'] = _flds
-        try:
-            payload = api_get_json(f'/api/now/table/{table}', params)
-        except urllib.error.HTTPError as e:
-            # 404 = endpoint missing. 400 = ServiceNow's "Invalid table"
-            # response when the table doesn't exist on this instance
-            # (alm_software_license on instances without SAM Pro, for
-            # example). Both mean "no such table — export 0 rows" so a
-            # missing module doesn't kill the rest of the run.
-            if e.code in (400, 404):
-                log.warning('  %s: table not available on this instance (HTTP %d)', table, e.code)
-                return
-            raise
-        rows = payload.get('result', [])
-        # Defensive: ServiceNow occasionally returns `result` as a string
-        # (an error message, an HTML body that snuck through, etc) and
-        # `list.extend(string)` would silently add each character as a
-        # "row," producing dict-of-character rows that crash the merge.
+        # A delta means this table existed in an earlier successful snapshot.
+        # Even an invalid-table response must therefore fail the table: treating
+        # one shard as "optional/missing" would merge the other shards and
+        # advance the shared watermark past the omitted range.
+        payload = api_get_json(f'/api/now/table/{table}', params)
+        if not isinstance(payload, dict) or 'result' not in payload:
+            raise RuntimeError(f'{table}: response is missing the result field')
+        rows = payload['result']
         if not isinstance(rows, list):
-            log.warning('  %s: unexpected result shape %s — stopping page',
-                        table, type(rows).__name__)
-            return
-        rows = [r for r in rows if isinstance(r, dict)]
+            raise RuntimeError(
+                f'{table}: unexpected result shape {type(rows).__name__}'
+            )
         if not rows:
             return
+
+        if any(not isinstance(row, dict) for row in rows):
+            raise RuntimeError(f'{table}: page contains a non-object row')
+        keys = [(_extract_delta(table, row), _extract_sid(row)) for row in rows]
+        if any(not delta or not sid for delta, sid in keys):
+            raise RuntimeError(
+                f'{table}: page contains a row without its delta field or sys_id'
+            )
+        if any(current <= previous
+               for previous, current in zip(keys, keys[1:])):
+            raise RuntimeError(f'{table}: compound cursor did not advance within page')
+        if cursor is None and keys[0][0] < watermark:
+            raise RuntimeError(f'{table}: page starts before its delta watermark')
+        if fence and keys[-1][0] > fence:
+            raise RuntimeError(f'{table}: page extends beyond its delta fence')
+        if cursor is not None and keys[0] <= cursor:
+            raise RuntimeError(f'{table}: compound cursor did not advance between pages')
+        next_cursor = keys[-1]
+        if cursor is not None and next_cursor <= cursor:
+            raise RuntimeError(f'{table}: compound cursor did not advance between pages')
+
         yield rows
-        # Use the per-table page size for the early-stop check. Tables with
-        # smaller overrides (incident=1000, change_request=1000, …) would
-        # otherwise stop after the first page when len(rows) == 1000 since
-        # `1000 < PAGE_SIZE(5000)` is True — silently truncating deltas.
-        if len(rows) < page_size:
-            return
-        offset += page_size
+        cursor = next_cursor
+
+
+def _capture_delta_fence(table, base_query=''):
+    """Capture the newest visible delta value before a scan starts."""
+    delta_field = delta_field_for(table)
+    params = {
+        'sysparm_query': '^'.join(
+            _query_parts(base_query) + [
+                f'{delta_field}ISNOTEMPTY',
+                f'ORDERBYDESC{delta_field}', 'ORDERBYDESCsys_id',
+            ]
+        ),
+        # ServiceNow applies its limit before row ACL filtering. A wider,
+        # two-field probe makes it much less likely that every candidate is
+        # filtered. An empty result still has a fail-safe path in the delta
+        # exporters: scan without an upper fence and do not advance state.
+        'sysparm_limit': min(page_size_for(table), 2000),
+        'sysparm_fields': f'sys_id,{delta_field}',
+        'sysparm_display_value': 'false',
+        'sysparm_exclude_reference_link': 'true',
+        'sysparm_suppress_pagination_header': 'true',
+    }
+    payload = api_get_json(f'/api/now/table/{table}', params)
+    if not isinstance(payload, dict) or 'result' not in payload:
+        raise RuntimeError(f'{table}: fence response is missing the result field')
+    rows = payload['result']
+    if not isinstance(rows, list):
+        raise RuntimeError(f'{table}: fence result is not a list')
+    if not rows:
+        return ''
+    if any(not isinstance(row, dict) for row in rows):
+        raise RuntimeError(f'{table}: fence response has an invalid row shape')
+    fences = [_extract_delta(table, row) for row in rows]
+    if any(not fence for fence in fences):
+        raise RuntimeError(f'{table}: fence row has no {delta_field}')
+    return max(fences)
+
+
+def _write_resume_fence(path, table, fence, mode, base_query):
+    """Atomically persist the replay watermark for a resumable full scan."""
+    payload = {
+        'version': 1,
+        'table': table,
+        'delta_field': delta_field_for(table),
+        'mode': mode,
+        'base_query': base_query,
+        'fields': fields_for(table),
+        'fence': fence,
+    }
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    with tmp.open('w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    _durable_replace(tmp, path)
+
+
+def _read_resume_fence(path, table, mode, base_query):
+    """Load and strictly validate a persisted full-scan upper bound."""
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f'{table}: full-export fence marker is unreadable'
+        ) from error
+    expected_field = delta_field_for(table)
+    if (
+        not isinstance(payload, dict)
+        or payload.get('version') != 1
+        or payload.get('table') != table
+        or payload.get('delta_field') != expected_field
+        or payload.get('mode') != mode
+        or payload.get('base_query') != base_query
+        or payload.get('fields') != fields_for(table)
+        or not isinstance(payload.get('fence'), str)
+    ):
+        raise RuntimeError(
+            f'{table}: full-export fence marker has an invalid structure'
+        )
+    return payload['fence']
+
+
+def _unlink(path):
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _prepare_full_fence(table, data_paths, marker_path, mode, base_query=''):
+    """Return one scan fence, reusing it only with matching partial data."""
+    data_exists = any(path.exists() for path in data_paths)
+    marker_exists = marker_path.exists()
+
+    if FORCE_FULL:
+        for path in (*data_paths, marker_path):
+            _unlink(path)
+        data_exists = marker_exists = False
+    elif data_exists and not marker_exists:
+        log.warning(
+            '%s: discarding incomplete full-export resume metadata', table,
+        )
+        for path in data_paths:
+            _unlink(path)
+        data_exists = False
+
+    if marker_exists:
+        return _read_resume_fence(marker_path, table, mode, base_query)
+
+    fence = _capture_delta_fence(table, base_query)
+    _write_resume_fence(marker_path, table, fence, mode, base_query)
+    return fence
 
 
 # ---- Full pull (cursor by sys_id, resumable) -------------------------------
 
-def export_table_full(table):
-    out_path = OUT_DIR / f'{table}.ndjson'
+def _export_table_full_to_path(table, out_path):
+    _prepare_resume_file(out_path, table)
     last_sys_id = _last_sys_id_in_file(out_path)
     written = _count_lines(out_path) if last_sys_id else 0
     max_updated = _max_updated_in_file(out_path, table) if last_sys_id else ''
@@ -797,9 +1044,6 @@ def export_table_full(table):
     else:
         log.info('Full export %s …', table)
         mode = 'w'
-        # If forcing a fresh full pull, truncate existing file
-        if FORCE_FULL and out_path.exists():
-            out_path.unlink()
 
     parts = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
     filter_prefix = '^'.join(parts) + '^' if parts else ''
@@ -816,44 +1060,40 @@ def export_table_full(table):
                 'sysparm_limit': page_size_for(table),
                 'sysparm_display_value': 'all',
                 'sysparm_exclude_reference_link': 'true',
+                'sysparm_suppress_pagination_header': 'true',
             }
             _flds = fields_for(table)
             if _flds: params['sysparm_fields'] = _flds
-            try:
-                payload = api_get_json(f'/api/now/table/{table}', params)
-            except urllib.error.HTTPError as e:
-                if e.code in (400, 404):
-                    log.warning('  %s: table not available on this instance (HTTP %d) — skipping', table, e.code)
-                    return 0, ''
-                raise
+            payload = api_get_json(f'/api/now/table/{table}', params)
 
-            rows = payload.get('result', [])
-            # Same defensive filter as the delta path (see fetch_pages_offset
-            # above): ServiceNow can return `result` as a string (error body,
-            # HTML that snuck through) or a list with a stray non-dict item,
-            # and a downstream _extract_delta(field(row, …)) on those crashes
-            # the whole export — we'd lose the rest of the table even though
-            # the rows we already have on disk are fine.
+            if not isinstance(payload, dict) or 'result' not in payload:
+                raise RuntimeError(f'{table}: response is missing the result field')
+            rows = payload['result']
             if not isinstance(rows, list):
-                log.warning('  %s: unexpected result shape %s — stopping page',
-                            table, type(rows).__name__)
-                break
-            rows = [r for r in rows if isinstance(r, dict)]
+                raise RuntimeError(
+                    f'{table}: unexpected result shape {type(rows).__name__}'
+                )
             if not rows:
                 break
+            if any(not isinstance(row, dict) for row in rows):
+                raise RuntimeError(f'{table}: page contains a non-object row')
+            sys_ids = [_extract_sid(row) for row in rows]
+            if any(not sid for sid in sys_ids):
+                raise RuntimeError(f'{table}: page contains a row without sys_id')
+            if any(current <= previous
+                   for previous, current in zip(sys_ids, sys_ids[1:])):
+                raise RuntimeError(f'{table}: sys_id cursor did not advance within page')
+            if last_sys_id and sys_ids[0] <= last_sys_id:
+                raise RuntimeError(f'{table}: sys_id cursor did not advance between pages')
 
             for row in rows:
+                upd = _extract_delta(table, row)
                 _write_row(f, row)
                 written += 1
-                upd = _extract_delta(table, row)
                 if upd and upd > max_updated:
                     max_updated = upd
 
-            sid = _extract_sid(rows[-1])
-            if not sid:
-                log.error('  %s: row has no sys_id — stopping', table)
-                break
-            last_sys_id = sid
+            last_sys_id = sys_ids[-1]
             f.flush()
 
             elapsed = time.time() - started
@@ -866,80 +1106,221 @@ def export_table_full(table):
             # server returns a partial). Only an EMPTY page (rows == [])
             # means we've truly reached the end. The cursor handles dedup.
 
+        f.flush()
+        os.fsync(f.fileno())
+
     log.info('  ✓ %s — %d rows in %ds (watermark=%s)',
              table, written, int(time.time() - started), max_updated or '-')
     return written, max_updated
 
 
+def export_table_full(table, previously_known=None):
+    """Stage/resume a sequential full pull, then atomically publish it."""
+    out_path = OUT_DIR / f'{table}.ndjson'
+    if previously_known is None:
+        previously_known = out_path.exists()
+    if not _table_available(table):
+        if previously_known:
+            raise RuntimeError(
+                f'{table}: previously archived table is now unavailable; '
+                'preserving the existing snapshot'
+            )
+        log.warning('  %s: table not available on this instance — skipping', table)
+        return None, ''
+
+    # The named partial plus its fence marker are the only full-resume state.
+    # Never infer a cursor from canonical NDJSON: delta merges are not sorted.
+    staging_path = OUT_DIR / f'.{table}.full-partial.ndjson'
+    marker_path = OUT_DIR / f'.{table}.full-partial.json'
+    parts = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
+    fence = _prepare_full_fence(
+        table, [staging_path], marker_path, 'sequential', '^'.join(parts),
+    )
+    result = _export_table_full_to_path(table, staging_path)
+    if previously_known and result[0] == 0:
+        raise RuntimeError(
+            f'{table}: full export returned zero rows for a previously '
+            'archived table; preserving the existing snapshot'
+        )
+    _durable_replace(staging_path, out_path)
+    _unlink(marker_path)
+    return result[0], fence
+
+
 # ---- Incremental pull (delta since watermark, in-place merge) --------------
+
+def _open_delta_store(table):
+    """Create a bounded-memory on-disk index for one table's fetched delta."""
+    fd, name = tempfile.mkstemp(
+        prefix=f'.{table}.delta.', suffix='.sqlite', dir=OUT_DIR,
+    )
+    os.close(fd)
+    path = Path(name)
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.execute('PRAGMA journal_mode=DELETE')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('''
+        CREATE TABLE delta (
+            sys_id TEXT PRIMARY KEY,
+            delta_value TEXT NOT NULL,
+            raw TEXT NOT NULL,
+            seen INTEGER NOT NULL DEFAULT 0
+        )
+    ''')
+    return conn, path
+
+
+def _close_delta_store(conn, path):
+    try:
+        conn.close()
+    finally:
+        for candidate in (path, Path(str(path) + '-journal'),
+                          Path(str(path) + '-wal'), Path(str(path) + '-shm')):
+            try:
+                candidate.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _store_delta_page(conn, table, page):
+    rows = []
+    for row in page:
+        sid = _extract_sid(row)
+        delta_value = _extract_delta(table, row)
+        if not sid or not delta_value:
+            raise RuntimeError(
+                f'{table}: delta row is missing its cursor field or sys_id'
+            )
+        raw = json.dumps(row, ensure_ascii=False, separators=(',', ':'))
+        rows.append((sid, delta_value, raw))
+    conn.executemany(
+        'INSERT OR REPLACE INTO delta(sys_id, delta_value, raw) VALUES (?,?,?)',
+        rows,
+    )
+    return len(rows)
+
+
+def _merge_delta_store(table, out_path, conn, watermark, started):
+    """Atomically merge an on-disk delta index into an existing NDJSON file."""
+    conn.commit()
+    fetched = conn.execute('SELECT COUNT(*) FROM delta').fetchone()[0]
+    if not fetched:
+        rows_total = _count_lines(out_path)
+        log.info('  ✓ %s — no changes since %s (%d rows on disk)',
+                 table, watermark, rows_total)
+        return rows_total, watermark
+
+    new_max = conn.execute('SELECT MAX(delta_value) FROM delta').fetchone()[0]
+    tmp = out_path.with_suffix('.ndjson.tmp')
+    updated = unchanged = 0
+    batch = []
+    BATCH_SIZE = 400
+
+    def flush(fout):
+        nonlocal updated, unchanged, batch
+        if not batch:
+            return
+        sys_ids = [sid for sid, _ in batch]
+        placeholders = ','.join('?' for _ in sys_ids)
+        replacements = {
+            sid: raw for sid, raw in conn.execute(
+                f'SELECT sys_id, raw FROM delta WHERE sys_id IN ({placeholders})',
+                sys_ids,
+            )
+        }
+        matched = []
+        for sid, line in batch:
+            raw = replacements.get(sid)
+            if raw is None:
+                fout.write(line + '\n')
+                unchanged += 1
+            else:
+                fout.write(raw + '\n')
+                matched.append(sid)
+                updated += 1
+        if matched:
+            matched_placeholders = ','.join('?' for _ in matched)
+            conn.execute(
+                f'UPDATE delta SET seen=1 WHERE sys_id IN ({matched_placeholders})',
+                matched,
+            )
+        batch = []
+
+    try:
+        with out_path.open('r', encoding='utf-8') as fin, \
+                tmp.open('w', encoding='utf-8') as fout:
+            for line_number, line in enumerate(fin, 1):
+                line = line.rstrip('\n')
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise RuntimeError(
+                        f'{table}: invalid existing NDJSON at line {line_number}'
+                    ) from error
+                sid = _extract_sid(row)
+                if not sid:
+                    raise RuntimeError(
+                        f'{table}: existing NDJSON row {line_number} has no sys_id'
+                    )
+                batch.append((sid, line))
+                if len(batch) >= BATCH_SIZE:
+                    flush(fout)
+            flush(fout)
+
+            added = 0
+            for (raw,) in conn.execute(
+                    'SELECT raw FROM delta WHERE seen=0 '
+                    'ORDER BY delta_value, sys_id'):
+                fout.write(raw + '\n')
+                added += 1
+        _durable_replace(tmp, out_path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+    total = updated + added + unchanged
+    log.info('  ✓ %s — %d updated, %d new, %d unchanged in %ds (watermark=%s)',
+             table, updated, added, unchanged,
+             int(time.time() - started), new_max)
+    return total, new_max
+
 
 def export_table_delta(table, watermark):
     out_path = OUT_DIR / f'{table}.ndjson'
     log.info('Delta export %s (since %s)', table, watermark)
     started = time.time()
 
-    # Order by the delta field (sys_updated_on for normal tables, sys_created_on
-    # for append-only tables), then sys_id so duplicate timestamps cursor cleanly.
-    df = delta_field_for(table)
+    # The delta field limits the result set; fetch_pages_keyset supplies the
+    # stable sys_id ordering/cursor that makes short pages safe.
     parts = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
     filter_prefix = '^'.join(parts) + '^' if parts else ''
-    query = f'{filter_prefix}{df}>={watermark}^ORDERBY{df}^ORDERBYsys_id'
+    query = filter_prefix.rstrip('^')
+    captured_fence = _capture_delta_fence(table, query)
+    fence = captured_fence or None
+    if fence is not None and fence < watermark:
+        fence = watermark
 
-    fetched = []
-    for page in fetch_pages_offset(table, query):
-        fetched.extend(page)
-        log.info('  %s: fetched %d delta rows', table, len(fetched))
-
-    if not fetched:
-        rows_total = _count_lines(out_path)
-        log.info('  ✓ %s — no changes since %s (%d rows on disk)', table, watermark, rows_total)
-        return rows_total, watermark
-
-    # Index new rows by sys_id; track new max watermark
-    new_by_sid = {}
-    new_max = watermark
-    for row in fetched:
-        sid = _extract_sid(row)
-        if not sid:
-            continue
-        new_by_sid[sid] = row
-        upd = _extract_delta(table, row)
-        if upd and upd > new_max:
-            new_max = upd
-
-    # Stream the existing file → tmp; replace rows whose sys_id is in new_by_sid;
-    # append truly-new rows at the end.
-    tmp = out_path.with_suffix('.ndjson.tmp')
-    seen = set()
-    updated = unchanged = 0
-    with out_path.open('r', encoding='utf-8') as fin, tmp.open('w', encoding='utf-8') as fout:
-        for line in fin:
-            line = line.rstrip('\n')
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            sid = _extract_sid(row)
-            if sid and sid in new_by_sid:
-                _write_row(fout, new_by_sid[sid])
-                seen.add(sid)
-                updated += 1
-            else:
-                fout.write(line + '\n')
-                unchanged += 1
-        added = 0
-        for sid, row in new_by_sid.items():
-            if sid not in seen:
-                _write_row(fout, row)
-                added += 1
-
-    tmp.replace(out_path)
-    total = updated + added + unchanged
-    log.info('  ✓ %s — %d updated, %d new, %d unchanged in %ds (watermark=%s)',
-             table, updated, added, unchanged, int(time.time() - started), new_max)
-    return total, new_max
+    conn, store_path = _open_delta_store(table)
+    fetched = 0
+    try:
+        for page in fetch_pages_keyset(table, query, watermark, fence):
+            fetched += _store_delta_page(conn, table, page)
+            log.info('  %s: fetched %d delta rows', table, fetched)
+        total, _ = _merge_delta_store(
+            table, out_path, conn, watermark, started,
+        )
+        # An empty ACL-filtered fence probe is ambiguous. The unbounded fetch
+        # above still ingests every visible row, but retaining the old state
+        # ensures a later run replays the range instead of skipping a row that
+        # committed while this scan was in flight.
+        return total, fence if fence is not None else watermark
+    finally:
+        _close_delta_store(conn, store_path)
 
 
 def export_table_delta_parallel(table, watermark):
@@ -952,100 +1333,92 @@ def export_table_delta_parallel(table, watermark):
              table, watermark, PARALLEL_WORKERS)
     started = time.time()
 
-    df = delta_field_for(table)
     parts_filter = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
     filter_prefix = '^'.join(parts_filter) + '^' if parts_filter else ''
+    base_query = filter_prefix.rstrip('^')
+    captured_fence = _capture_delta_fence(table, base_query)
+    fence = captured_fence or None
+    if fence is not None and fence < watermark:
+        fence = watermark
+
+    conn, store_path = _open_delta_store(table)
+    store_lock = threading.Lock()
 
     def fetch_shard(prefix):
-        # Each shard runs its own paginated cursor over a 1/16th slice of
-        # sys_id space. Order by sys_id so duplicate timestamps cursor
-        # cleanly within the shard.
+        # Each shard runs its own keyset cursor over a 1/16th slice of sys_id
+        # space. Short ACL/byte-capped pages are not end-of-results.
         query = (f'{filter_prefix}sys_idSTARTSWITH{prefix}^'
-                 f'{df}>={watermark}^ORDERBYsys_id')
-        rows = []
-        for page in fetch_pages_offset(table, query):
-            rows.extend(page)
-        return prefix, rows
+                 ).rstrip('^')
+        written = 0
+        for page in fetch_pages_keyset(table, query, watermark, fence):
+            with store_lock:
+                written += _store_delta_page(conn, table, page)
+        return prefix, written
 
-    fetched = []
     shards = list('0123456789abcdef')
-    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
-        futures = {ex.submit(fetch_shard, p): p for p in shards}
-        for fut in as_completed(futures):
-            prefix, rows = fut.result()
-            fetched.extend(rows)
-            log.info('  %s: shard %s done — %d rows (running total: %d)',
-                     table, prefix, len(rows), len(fetched))
-
-    if not fetched:
-        rows_total = _count_lines(out_path)
-        log.info('  ✓ %s — no changes since %s (%d rows on disk)',
-                 table, watermark, rows_total)
-        return rows_total, watermark
-
-    new_by_sid = {}
-    new_max = watermark
-    for row in fetched:
-        sid = _extract_sid(row)
-        if not sid:
-            continue
-        new_by_sid[sid] = row
-        upd = _extract_delta(table, row)
-        if upd and upd > new_max:
-            new_max = upd
-
-    tmp = out_path.with_suffix('.ndjson.tmp')
-    seen = set()
-    updated = unchanged = 0
-    with out_path.open('r', encoding='utf-8') as fin, tmp.open('w', encoding='utf-8') as fout:
-        for line in fin:
-            line = line.rstrip('\n')
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            sid = _extract_sid(row)
-            if sid and sid in new_by_sid:
-                _write_row(fout, new_by_sid[sid])
-                seen.add(sid)
-                updated += 1
-            else:
-                fout.write(line + '\n')
-                unchanged += 1
-        added = 0
-        for sid, row in new_by_sid.items():
-            if sid not in seen:
-                _write_row(fout, row)
-                added += 1
-
-    tmp.replace(out_path)
-    total = updated + added + unchanged
-    log.info('  ✓ %s — %d updated, %d new, %d unchanged in %ds (watermark=%s)',
-             table, updated, added, unchanged, int(time.time() - started), new_max)
-    return total, new_max
+    fetched = 0
+    try:
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = {ex.submit(fetch_shard, p): p for p in shards}
+            for fut in as_completed(futures):
+                prefix, written = fut.result()
+                fetched += written
+                log.info('  %s: shard %s done — %d rows (running total: %d)',
+                         table, prefix, written, fetched)
+        total, _ = _merge_delta_store(
+            table, out_path, conn, watermark, started,
+        )
+        return total, fence if fence is not None else watermark
+    finally:
+        _close_delta_store(conn, store_path)
 
 
 # ---- Dispatcher ------------------------------------------------------------
+
+def _table_previously_archived(table, state):
+    out_path = OUT_DIR / f'{table}.ndjson'
+    if out_path.exists() and out_path.stat().st_size > 0:
+        return True
+    if state.get('watermarks', {}).get(table):
+        return True
+    try:
+        manifest = json.loads((OUT_DIR / 'manifest.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    entries = manifest.get('tables', []) if isinstance(manifest, dict) else []
+    return any(
+        isinstance(entry, dict) and entry.get('table') == table and (
+            entry.get('watermark') or entry.get('rows') or entry.get('source_rows')
+        )
+        for entry in entries
+    )
+
 
 def export_table(table, state):
     out_path    = OUT_DIR / f'{table}.ndjson'
     watermarks  = state.setdefault('watermarks', {})
     watermark   = None if FORCE_FULL else watermarks.get(table)
+    previously_known = _table_previously_archived(table, state)
+    full_pull = not (watermark and out_path.exists())
 
-    if watermark and out_path.exists():
+    if not full_pull:
         if table in PARALLEL_TABLES:
             count, new_watermark = export_table_delta_parallel(table, watermark)
         else:
             count, new_watermark = export_table_delta(table, watermark)
     elif table in PARALLEL_TABLES:
-        count, new_watermark = export_table_parallel(table)
+        count, new_watermark = export_table_parallel(
+            table, previously_known=previously_known,
+        )
     else:
-        count, new_watermark = export_table_full(table)
+        count, new_watermark = export_table_full(
+            table, previously_known=previously_known,
+        )
 
-    if new_watermark:
-        watermarks[table] = new_watermark
+    if count is None:
+        return 0
+    if new_watermark or full_pull:
+        watermarks[table] = new_watermark or ''
         write_state(state)
 
     return count
@@ -1053,11 +1426,36 @@ def export_table(table, state):
 
 # ---- Parallel pull (hex-prefix sharding) ----------------------------------
 
+def _table_available(table):
+    """Preflight an optional table once before starting a parallel full pull."""
+    parts = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
+    parts.append('ORDERBYsys_id')
+    params = {
+        'sysparm_query': '^'.join(parts),
+        'sysparm_limit': 1,
+        'sysparm_fields': 'sys_id',
+        'sysparm_display_value': 'false',
+        'sysparm_exclude_reference_link': 'true',
+        'sysparm_suppress_pagination_header': 'true',
+    }
+    try:
+        payload = api_get_json(f'/api/now/table/{table}', params)
+    except urllib.error.HTTPError as error:
+        if _missing_table_error(error, table):
+            return False
+        raise
+    if not isinstance(payload, dict) or 'result' not in payload:
+        raise RuntimeError(f'{table}: preflight response is missing the result field')
+    if not isinstance(payload['result'], list):
+        raise RuntimeError(f'{table}: preflight result is not a list')
+    return True
+
 def _fetch_shard(table, prefix):
     """Pull every row of `table` whose sys_id starts with hex `prefix` into
     a per-shard NDJSON file. Resumable via the shard file's last sys_id.
     Returns (rows_written, max_sys_updated_on)."""
     shard_path = OUT_DIR / f'{table}.shard{prefix}.ndjson'
+    _prepare_resume_file(shard_path, table)
     last_sys_id = _last_sys_id_in_file(shard_path)
     written = _count_lines(shard_path) if last_sys_id else 0
     max_updated = _max_updated_in_file(shard_path, table) if last_sys_id else ''
@@ -1086,45 +1484,43 @@ def _fetch_shard(table, prefix):
                 'sysparm_limit': page_size_for(table),
                 'sysparm_display_value': 'all',
                 'sysparm_exclude_reference_link': 'true',
+                'sysparm_suppress_pagination_header': 'true',
             }
             _flds = fields_for(table)
             if _flds: params['sysparm_fields'] = _flds
 
-            try:
-                payload = api_get_json(f'/api/now/table/{table}', params)
-            except urllib.error.HTTPError as e:
-                if e.code == 404:
-                    log.warning('  [shard %s] table not present (404)', prefix)
-                    return 0, ''
-                raise
+            payload = api_get_json(f'/api/now/table/{table}', params)
 
-            rows = payload.get('result', [])
-            # Same defensive filter as the delta path (see fetch_pages_offset
-            # above): ServiceNow can return `result` as a string (error body,
-            # HTML that snuck through) or a list with a stray non-dict item,
-            # and a downstream _extract_delta(field(row, …)) on those crashes
-            # the whole export — we'd lose the rest of the table even though
-            # the rows we already have on disk are fine.
+            if not isinstance(payload, dict) or 'result' not in payload:
+                raise RuntimeError(f'{table}: response is missing the result field')
+            rows = payload['result']
             if not isinstance(rows, list):
-                log.warning('  %s: unexpected result shape %s — stopping page',
-                            table, type(rows).__name__)
-                break
-            rows = [r for r in rows if isinstance(r, dict)]
+                raise RuntimeError(
+                    f'{table}: unexpected result shape {type(rows).__name__}'
+                )
             if not rows:
                 break
+            if any(not isinstance(row, dict) for row in rows):
+                raise RuntimeError(f'{table}: page contains a non-object row')
+            sys_ids = [_extract_sid(row) for row in rows]
+            if any(not sid for sid in sys_ids):
+                raise RuntimeError(f'{table}: page contains a row without sys_id')
+            if any(current <= previous
+                   for previous, current in zip(sys_ids, sys_ids[1:])):
+                raise RuntimeError(f'{table}: sys_id cursor did not advance within page')
+            if last_sys_id and sys_ids[0] <= last_sys_id:
+                raise RuntimeError(
+                    f'{table}: sys_id cursor did not advance between pages'
+                )
 
             for row in rows:
+                upd = _extract_delta(table, row)
                 _write_row(f, row)
                 written += 1
-                upd = _extract_delta(table, row)
                 if upd and upd > max_updated:
                     max_updated = upd
 
-            sid = _extract_sid(rows[-1])
-            if not sid:
-                log.error('  [shard %s] row missing sys_id', prefix)
-                break
-            last_sys_id = sid
+            last_sys_id = sys_ids[-1]
             f.flush()
 
             # Throttle progress logging — parallel workers spamming the log
@@ -1138,22 +1534,30 @@ def _fetch_shard(table, prefix):
     return written, max_updated
 
 
-def export_table_parallel(table):
+def export_table_parallel(table, previously_known=None):
     """Hex-prefix sharded parallel pull. Spawns up to PARALLEL_WORKERS threads,
     each processing a shard (sys_idSTARTSWITH<hex>). Concatenates the per-shard
     NDJSON files into <table>.ndjson on success."""
     out_path = OUT_DIR / f'{table}.ndjson'
     shards = list('0123456789abcdef')
+    if previously_known is None:
+        previously_known = out_path.exists()
 
-    # Existing flat NDJSON from a prior sequential run can't be merged with
-    # shards reliably (cursor halfway through a shard's range = double-pull).
-    # Move it aside so a clean parallel pull replaces it.
-    if out_path.exists():
-        salvage = out_path.with_suffix('.ndjson.flat-salvaged')
-        log.warning('Parallel pull of %s: moving existing %s -> %s '
-                    '(shards will replace it)',
-                    table, out_path.name, salvage.name)
-        out_path.replace(salvage)
+    if not _table_available(table):
+        if previously_known:
+            raise RuntimeError(
+                f'{table}: previously archived table is now unavailable; '
+                'preserving the existing snapshot'
+            )
+        log.warning('  %s: table not available on this instance — skipping', table)
+        return None, ''
+
+    shard_paths = [OUT_DIR / f'{table}.shard{prefix}.ndjson' for prefix in shards]
+    marker_path = OUT_DIR / f'.{table}.parallel-full.json'
+    parts = [p for p in (class_filter(table), TABLE_FILTERS.get(table, '')) if p]
+    fence = _prepare_full_fence(
+        table, shard_paths, marker_path, 'parallel', '^'.join(parts),
+    )
 
     log.info('Parallel export %s — %d shards × up to %d concurrent workers',
              table, len(shards), PARALLEL_WORKERS)
@@ -1161,34 +1565,60 @@ def export_table_parallel(table):
 
     results = {}
     with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
-        futures = {ex.submit(_fetch_shard, table, p): p for p in shards}
+        futures = {
+            ex.submit(_fetch_shard, table, p): p for p in shards
+        }
         for fut in as_completed(futures):
             p = futures[fut]
             count, max_upd = fut.result()  # propagate exceptions
             results[p] = (count, max_upd)
 
-    # All shards complete — merge them into the final NDJSON.
+    # All shards complete — merge to a staging file, then atomically replace
+    # the prior snapshot. A fetch or merge failure must leave that snapshot
+    # untouched so a retry cannot compound a partial export.
     log.info('  merging %d shards into %s …', len(shards), out_path.name)
     total_rows = 0
     max_updated_all = ''
-    with out_path.open('w', encoding='utf-8') as out:
-        for p in shards:
-            sp = OUT_DIR / f'{table}.shard{p}.ndjson'
-            if not sp.exists():
-                continue
-            with sp.open('r', encoding='utf-8') as src:
-                for line in src:
-                    out.write(line)
-            count, max_upd = results.get(p, (0, ''))
-            total_rows += count
-            if max_upd and max_upd > max_updated_all:
-                max_updated_all = max_upd
-            sp.unlink()
+    fd, staging_name = tempfile.mkstemp(
+        prefix=f'.{table}.full.', suffix='.ndjson', dir=OUT_DIR,
+    )
+    os.close(fd)
+    staging_path = Path(staging_name)
+    try:
+        with staging_path.open('w', encoding='utf-8') as out:
+            for p in shards:
+                sp = OUT_DIR / f'{table}.shard{p}.ndjson'
+                if not sp.exists():
+                    raise RuntimeError(f'{table}: completed shard {p} has no output file')
+                with sp.open('r', encoding='utf-8') as src:
+                    for line in src:
+                        out.write(line)
+                count, max_upd = results[p]
+                total_rows += count
+                if max_upd and max_upd > max_updated_all:
+                    max_updated_all = max_upd
+            out.flush()
+            os.fsync(out.fileno())
+        if previously_known and total_rows == 0:
+            raise RuntimeError(
+                f'{table}: full export returned zero rows for a previously '
+                'archived table; preserving the existing snapshot'
+            )
+        _durable_replace(staging_path, out_path)
+    finally:
+        try:
+            staging_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    for p in shards:
+        (OUT_DIR / f'{table}.shard{p}.ndjson').unlink()
+    _unlink(marker_path)
 
     log.info('  ✓ %s — %d rows in %ds (watermark=%s)',
              table, total_rows, int(time.time() - started),
-             max_updated_all or '-')
-    return total_rows, max_updated_all
+             fence or '-')
+    return total_rows, fence
 
 
 # ---- Attachment file bodies (LAST; naturally incremental) ------------------
@@ -1411,20 +1841,27 @@ def write_manifest(counts, state):
     and snapshot integrity panel for everything else."""
     prev_path = OUT_DIR / 'manifest.json'
     prev_tables_by_name = {}
+    prev = {}
     try:
         prev = json.loads(prev_path.read_text(encoding='utf-8'))
         for t in prev.get('tables', []):
             if isinstance(t, dict) and t.get('table'):
+                # Manifests written before per-table freshness existed inherit
+                # the last whole-snapshot timestamp as their conservative
+                # baseline. Selective runs then update only the tables touched.
+                t.setdefault('captured_at', prev.get('captured_at', ''))
                 prev_tables_by_name[t['table']] = t
     except (FileNotFoundError, json.JSONDecodeError):
-        pass
+        prev = {}
 
+    run_captured_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     fresh = {
         t: {
             'table': t,
             'rows': counts.get(t, 0),
             'source_rows': counts.get(t, 0),
             'watermark': state.get('watermarks', {}).get(t, ''),
+            'captured_at': run_captured_at,
         }
         for t in TABLES
     }
@@ -1441,23 +1878,39 @@ def write_manifest(counts, state):
         for t in merged_order
     ]
 
+    # The exporter owns DEFAULT_TABLES. A prior manifest can also contain
+    # derived datasets (for example flow_inventory), so using every prior
+    # manifest entry here would incorrectly classify a complete default export
+    # as selective forever.
+    covers_prior_snapshot = not prev_tables_by_name or set(DEFAULT_TABLES).issubset(TABLES)
     integrity = {'sha256_manifest': '', 'acl_skips': 0, 'missing_attachments': 0}
     # Carry forward integrity counts on partial runs so the panel doesn't
     # zero out when SN_TABLES is set.
-    prev_int = (json.loads(prev_path.read_text(encoding='utf-8')).get('integrity', {})
-                if prev_path.exists() else {})
-    if prev_int and len(TABLES) < len(prev_tables_by_name):
+    prev_int = prev.get('integrity', {})
+    if prev_int and not covers_prior_snapshot:
         integrity = {**integrity, **prev_int}
 
+    # A selective run is not a new whole-snapshot capture. Preserve the prior
+    # banner timestamp while the per-table timestamps show exactly what moved.
+    captured_at = (
+        run_captured_at if covers_prior_snapshot
+        else prev.get('captured_at', run_captured_at)
+    )
+    snapshot_date = (
+        time.strftime('%Y-%m-%d') if covers_prior_snapshot
+        else prev.get('snapshot_date', time.strftime('%Y-%m-%d'))
+    )
     manifest = {
         'label': os.environ.get('SN_MANIFEST_LABEL', 'export'),
-        'snapshot_date': time.strftime('%Y-%m-%d'),
+        'snapshot_date': snapshot_date,
         'instance': INSTANCE,
-        'captured_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'captured_at': captured_at,
         'tables': tables,
         'integrity': integrity,
     }
-    prev_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    tmp = prev_path.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    _durable_replace(tmp, prev_path)
     log.info('Wrote manifest.json (%d tables; %d this run)',
              len(manifest['tables']), len(TABLES))
 
@@ -1465,7 +1918,11 @@ def write_manifest(counts, state):
 # ---- Main ------------------------------------------------------------------
 
 def main():
-    state = read_state()
+    try:
+        state = read_state()
+    except RuntimeError as error:
+        log.error('Cannot start export safely: %s', error)
+        return 1
     has_state = bool(state.get('watermarks'))
     mode = 'FULL (forced)' if FORCE_FULL else ('INCREMENTAL' if has_state else 'FULL (first run)')
 
@@ -1476,29 +1933,40 @@ def main():
 
     counts = {}
     interrupted = False
+    failures = []
     try:
         for table in TABLES:
             try:
                 counts[table] = export_table(table, state)
             except Exception as e:
                 log.error('Table %s failed (continuing): %s', table, e)
-                counts[table] = _count_lines(OUT_DIR / f'{table}.ndjson')
+                failures.append(table)
     except KeyboardInterrupt:
         log.warning('Interrupted during table export.')
         interrupted = True
 
-    write_manifest(counts, state)
-
     if interrupted:
-        log.warning('Skipping attachment bodies due to interrupt.')
-        return
+        log.warning('Skipping manifest and attachment bodies due to interrupt.')
+        return 130
+
+    if failures:
+        log.error(
+            'Export incomplete: %d table(s) failed (%s). '
+            'Leaving the prior manifest unchanged and exiting non-zero.',
+            len(failures), ', '.join(failures),
+        )
+        return 1
+
+    write_manifest(counts, state)
 
     try:
         export_attachment_bodies()
     except KeyboardInterrupt:
         log.warning('Cancelled attachment download — '
                     'all other exported data is intact in %s', OUT_DIR)
+        return 130
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

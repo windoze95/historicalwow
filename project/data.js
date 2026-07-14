@@ -121,8 +121,8 @@ window.HistoricalWowData = (function () {
   }
 
   // ---- IndexedDB cache --------------------------------------------------
-  // Lookup maps are deterministic functions of the snapshot — the same
-  // input (manifest.captured_at) always produces the same output. So we
+  // Lookup maps are deterministic functions of their source table capture —
+  // the same per-table captured_at always produces the same output. So we
   // store them in IndexedDB keyed on the snapshot id, and only refetch
   // when the snapshot changes (i.e. when a new export was ingested
   // server-side). For 33 MB cmdb_ci_lookup over a slow VPN, this cuts
@@ -165,7 +165,7 @@ window.HistoricalWowData = (function () {
     });
   }
 
-  // Fetch-with-IDB-cache. snapshotId comes from manifest.captured_at;
+  // Fetch-with-IDB-cache. snapshotId comes from the source table's captured_at;
   // if the stored entry's snapshotId matches, return it immediately and
   // skip the network entirely. Otherwise fetch fresh and overwrite.
   async function fetchWithIdbCache(key, snapshotId, fetcher) {
@@ -382,11 +382,14 @@ window.HistoricalWowData = (function () {
   // hands back the parsed object via structured clone in a few hundred
   // ms instead of streaming + parsing 38 MB of gzipped JSON.
   function loadBackgroundLookups() {
-    const snapshotId = (data.manifest && data.manifest.captured_at) || 'unknown';
-    fetchWithIdbCache('sys_user_lookup', snapshotId, () => apiGet('/api/sys_user_lookup'))
+    const capturedAtFor = (table) => {
+      const entry = (data.manifest.tables || []).find(row => row.table === table);
+      return (entry && entry.captured_at) || data.manifest.captured_at || 'unknown';
+    };
+    fetchWithIdbCache('sys_user_lookup', capturedAtFor('sys_user'), () => apiGet('/api/sys_user_lookup'))
       .then(map => { data.sys_user_lookup = new Map(Object.entries(map)); notify(); })
       .catch(e => console.warn('[historicalwow] sys_user_lookup failed:', e.message));
-    fetchWithIdbCache('cmdb_ci_lookup', snapshotId, () => apiGet('/api/cmdb_ci_lookup'))
+    fetchWithIdbCache('cmdb_ci_lookup', capturedAtFor('cmdb_ci'), () => apiGet('/api/cmdb_ci_lookup'))
       .then(map => { data.cmdb_ci_lookup = new Map(Object.entries(map)); notify(); })
       .catch(e => console.warn('[historicalwow] cmdb_ci_lookup failed:', e.message));
   }

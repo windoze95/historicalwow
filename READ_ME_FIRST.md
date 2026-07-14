@@ -27,8 +27,12 @@ the more headroom you have before D-Day.**
 ssh <vm>
 cd ~/historicalwow/project/export
 set -a; source .env; set +a
+set -o pipefail
 SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 ```
+
+If the exporter exits non-zero, stop before rebuilding. `pipefail` preserves
+that failure even though the output is also being written through `tee`.
 
 **Then update the DB so the viewer sees the new metadata:**
 
@@ -96,6 +100,7 @@ audit/journal tables) and only fetches what changed since the last run.
 ssh <vm>
 cd ~/historicalwow/project/export
 set -a; source .env; set +a
+set -o pipefail
 SN_TIMEOUT=300 python3 historicalwow_export.py 2>&1 | tee -a export.log
 ```
 
@@ -123,10 +128,6 @@ python3 project/bin/build_sqlite.py
 - Refresh the viewer in your browser (no container restart needed —
   the data dir is a read-only volume mount, the viewer's loader rereads
   the NDJSON files on page load).
-- Optional cleanup: `rm ~/historicalwow/project/data/sys_audit.ndjson.flat-salvaged`
-  if a salvage file was ever created during a recovery run. (We've
-  verified there isn't one currently.)
-
 ---
 
 ## Where things live

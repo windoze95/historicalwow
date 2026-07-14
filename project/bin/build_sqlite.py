@@ -137,10 +137,21 @@ SC_REQUEST_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS
 SC_REQ_ITEM_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS + [
     ('request',     lambda r: _v(r.get('request'))),
     ('cat_item',    lambda r: _v(r.get('cat_item'))),
+    ('configuration_item', lambda r: _v(r.get('configuration_item'))),
 ]
 SC_TASK_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS + [
     ('request_item', lambda r: _v(r.get('request_item'))),
     ('request',      lambda r: _v(r.get('request'))),
+]
+INCIDENT_TASK_COLS = TASK_INDEXED_COLS + [
+    ('incident', lambda r: _v(r.get('incident'))),
+]
+PROBLEM_TASK_COLS = TASK_INDEXED_COLS + [
+    ('problem', lambda r: _v(r.get('problem'))),
+]
+SYSAPPROVAL_GROUP_COLS = TASK_INDEXED_COLS + [
+    ('approval',      lambda r: _v(r.get('approval'))),
+    ('approval_user', lambda r: _v(r.get('approval_user'))),
 ]
 # change_request carries a reference to its std_change_proposal. Indexing it
 # lets the catalog UI ask "which changes were created from this Standard
@@ -157,13 +168,13 @@ SCHEMAS = {
     'incident':            INCIDENT_COLS,
     'change_request':      CHANGE_REQUEST_COLS,
     'problem':             PROBLEM_COLS,
-    'problem_task':        TASK_INDEXED_COLS,
+    'problem_task':        PROBLEM_TASK_COLS,
     'sc_request':          SC_REQUEST_COLS,
     'sc_req_item':         SC_REQ_ITEM_COLS,
     'sc_task':             SC_TASK_COLS,
-    'incident_task':       TASK_INDEXED_COLS,
+    'incident_task':       INCIDENT_TASK_COLS,
     'change_task':         TASK_INDEXED_COLS,
-    'sysapproval_group':   TASK_INDEXED_COLS,
+    'sysapproval_group':   SYSAPPROVAL_GROUP_COLS,
     'asset_task':          TASK_INDEXED_COLS,
     # asset_task itself is empty on this instance — every concrete
     # asset-task record is a `sn_contract_renewal_task` (CMRTASK number
@@ -310,16 +321,17 @@ SCHEMAS = {
     ],
     'task_ci':             [
         ('task', lambda r: _v(r.get('task'))),
-        ('ci',   lambda r: _v(r.get('ci'))),
+        ('ci',   lambda r: _v(r.get('ci_item'))),
     ],
     'task_sla':            [
         ('task',                lambda r: _v(r.get('task'))),
-        ('sla_definition',      lambda r: _dv(r.get('sla_definition'))),
+        ('sla_definition',      lambda r: _dv(r.get('sla'))),
         ('stage',               lambda r: _v(r.get('stage'))),
         ('business_percentage', lambda r: _v(r.get('business_percentage'))),
     ],
     'sysapproval_approver':[
         ('sysapproval', lambda r: _v(r.get('sysapproval'))),
+        ('group',       lambda r: _v(r.get('group'))),
         ('approver',    lambda r: _v(r.get('approver'))),
         ('state',       lambda r: _v(r.get('state'))),
         ('sys_created_on', lambda r: _v(r.get('sys_created_on'))),
@@ -1014,6 +1026,14 @@ DELTA_FIELD = {
     'flow_inventory':    '_enriched_at',
 }
 
+# Bump a table's projection version when an extractor changes without changing
+# the SQLite column name. Column-only drift detection cannot see that case, so
+# the next incremental build must rebuild the table once to repopulate old rows.
+PROJECTION_VERSION = {
+    'task_ci':  1,
+    'task_sla': 1,
+}
+
 def _delta_field(table):
     return DELTA_FIELD.get(table, 'sys_updated_on')
 
@@ -1027,9 +1047,18 @@ def _ensure_build_state_table(conn):
             last_cursor     TEXT,
             delta_field     TEXT,
             rows_total      INTEGER,
-            last_built_at   TEXT
+            last_built_at   TEXT,
+            projection_version INTEGER NOT NULL DEFAULT 0
         )
     ''')
+    state_cols = {
+        row['name'] for row in conn.execute('PRAGMA table_info("_build_state")')
+    }
+    if 'projection_version' not in state_cols:
+        conn.execute(
+            'ALTER TABLE _build_state ADD COLUMN '
+            'projection_version INTEGER NOT NULL DEFAULT 0'
+        )
     conn.commit()
 
 
@@ -1040,12 +1069,22 @@ def _read_build_state(conn, table):
     return row['last_cursor'] if row else None
 
 
+def _read_projection_version(conn, table):
+    row = conn.execute(
+        'SELECT projection_version FROM _build_state WHERE table_name = ?',
+        (table,),
+    ).fetchone()
+    return int(row['projection_version'] or 0) if row else 0
+
+
 def _write_build_state(conn, table, last_cursor, delta_field, rows_total):
     conn.execute('''
         INSERT OR REPLACE INTO _build_state
-            (table_name, last_cursor, delta_field, rows_total, last_built_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-    ''', (table, last_cursor or '', delta_field, rows_total))
+            (table_name, last_cursor, delta_field, rows_total, last_built_at,
+             projection_version)
+        VALUES (?, ?, ?, ?, datetime('now'), ?)
+    ''', (table, last_cursor or '', delta_field, rows_total,
+          PROJECTION_VERSION.get(table, 0)))
     conn.commit()
 
 
@@ -1112,6 +1151,11 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False,
             missing = expected_cols - existing_cols
             if missing:
                 print(f'(schema drift: +{",".join(sorted(missing))} → full rebuild)', end=' ', flush=True)
+                last_cursor = None
+                schema_drift = True
+            elif (_read_projection_version(conn, table)
+                  != PROJECTION_VERSION.get(table, 0)):
+                print('(projection changed → full rebuild)', end=' ', flush=True)
                 last_cursor = None
                 schema_drift = True
         except sqlite3.OperationalError:

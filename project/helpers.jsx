@@ -68,7 +68,7 @@ window.TABLE_TO_URL = Object.fromEntries(
 
 function parseHash() {
   const h = window.location.hash.replace(/^#/, '') || '/';
-  const [path, qs] = h.split('?');
+  const [path, qs = ''] = h.split('?');
   const parts = path.split('/').filter(Boolean);
   // /                            -> { view: 'home' }
   // /<friendly>                  -> { view: 'list', table }
@@ -102,14 +102,20 @@ function parseHash() {
   if (parts[0] === 'tasks') {
     if (parts.length === 1) return { view: 'home' };
     const t = parts[1];
-    if (parts.length === 2) return { view: 'list', table: t };
+    if (parts.length === 2) return { view: 'list', table: t, query: qs };
+    if (parts.length === 3 && parts[2] === 'analytics' && (window.TASK_TABLES || []).includes(t)) {
+      return { view: 'task_analytics', table: t, query: qs };
+    }
     return { view: 'record', table: t, sys_id: parts[2] };
   }
 
   const table = window.URL_TO_TABLE[parts[0]];
   if (!table) return { view: 'home' };
   if (table === 'audit_log') return { view: 'audit_log' };
-  if (parts.length === 1) return { view: 'list', table };
+  if (parts.length === 1) return { view: 'list', table, query: qs };
+  if (parts.length === 2 && parts[1] === 'analytics' && (window.TASK_TABLES || []).includes(table)) {
+    return { view: 'task_analytics', table, query: qs };
+  }
   return { view: 'record', table, sys_id: parts[1] };
 }
 
@@ -136,6 +142,24 @@ window.listUrl = function (table) {
   const slug = window.TABLE_TO_URL[table];
   return slug ? `/${slug}` : `/tasks/${table}`;
 };
+window.urlWithQuery = function urlWithQuery(path, values) {
+  const params = values instanceof URLSearchParams ? values : new URLSearchParams();
+  if (!(values instanceof URLSearchParams)) {
+    for (const [key, value] of Object.entries(values || {})) {
+      if (value != null && value !== '') params.set(key, value);
+    }
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+};
+window.filteredListUrl = function filteredListUrl(table, filters, q) {
+  const values = { ...(filters || {}) };
+  if (q) values.q = q;
+  return window.urlWithQuery(window.listUrl(table), values);
+};
+window.taskAnalyticsUrl = function taskAnalyticsUrl(table) {
+  return `${window.listUrl(table)}/analytics`;
+};
 
 // Tables whose record detail follows the change-request layout (Type, Risk,
 // Start/End dates, Requested by). Everything else uses the incident layout
@@ -148,9 +172,14 @@ window.CHANGE_STYLE_TABLES = new Set([
 window.decodeChoice = function (table, element, value) {
   const data = window.HistoricalWowData;
   if (value == null || value === '') return { label: '', value: '' };
-  // Try table-specific first, then fall back to common
-  const c = data.sys_choice.find(
+  // Try the concrete table first, then the inherited task definition. Task
+  // list rows also carry __display_<field>; this is the fallback for slim or
+  // older payloads where that display value is unavailable.
+  const exact = data.sys_choice.find(
     (c) => c.table === table && c.element === element && String(c.value) === String(value)
+  );
+  const c = exact || data.sys_choice.find(
+    (c) => c.table === 'task' && c.element === element && String(c.value) === String(value)
   );
   return { label: c ? c.label : String(value), value: String(value) };
 };

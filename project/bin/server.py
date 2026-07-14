@@ -16,6 +16,7 @@ Replaces nginx in the container. Single Python process, stdlib only
   GET /api/related/cmdb/<sys_id> → upstream + downstream CI relationships
   GET /api/variables/<ritm_sys_id> → catalog variables submitted on an RITM
   GET /api/search?q=...&types=incident,problem  → cross-table search
+  GET /api/task/metrics/<table>  → indexed task analysis + unused choices
   GET /data/attachments/<...>    → attachment file body (filesystem)
   GET /data/manifest.json        → manifest (compatibility shim for legacy data.js)
 
@@ -360,7 +361,7 @@ def _table_exists(conn, table):
 
 # --- helpers --------------------------------------------------------------
 
-def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0):
+def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0, vary=None):
     body = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
     # gzip compress when the client accepts it AND the body is big enough to
     # be worth it. JSON of NDJSON envelope shape compresses 5-8×.
@@ -379,6 +380,12 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0):
         handler.send_header('Cache-Control', f'public, max-age={cache_seconds}')
     else:
         handler.send_header('Cache-Control', 'no-cache, must-revalidate')
+    vary_values = ['Accept-Encoding']
+    for value in (vary or '').split(','):
+        value = value.strip()
+        if value and value.lower() not in {v.lower() for v in vary_values}:
+            vary_values.append(value)
+    handler.send_header('Vary', ', '.join(vary_values))
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -602,6 +609,11 @@ def list_table(handler, table, params):
     # "active only" silently return zero rows across every list page.
     RESERVED = {'limit', 'offset', 'q', 'order_by', 'dir', 'slim'}
     BOOL_COERCE = {'true': '1', 'false': '0'}
+    # A literal empty query value is dropped by parse_qs and is awkward to
+    # preserve in browser URL state. `__empty__` is the list API's explicit
+    # value for NULL-or-empty, used by analytics drill-downs such as
+    # "uncategorized" and "unassigned".
+    EMPTY_FILTER = '__empty__'
     # Range filters: ?<col>_before=X / ?<col>_after=X compare an indexed column
     # with </>= instead of equality. Drives the CI list's staleness filter
     # (last_discovered_before=<cutoff>). Only applied when <col> is an actual
@@ -627,6 +639,10 @@ def list_table(handler, table, params):
                         args.append('')
                 break
         if is_range or k not in cols:
+            continue
+        if val == EMPTY_FILTER:
+            where.append(f'("{k}" IS NULL OR "{k}" = ?)')
+            args.append('')
             continue
         # Comma-separated value → IN(...). Lets a single filter option match
         # several coded values that share a display label (the CMDB metrics
@@ -672,11 +688,19 @@ def list_table(handler, table, params):
     else:
         out_rows = [_row_to_dict(r) for r in rows]
 
-    cache = 300 if (table in CACHE_5MIN and not q and limit > 200) else 0
+    # Never put a cookie-dependent HR view in a shared public cache. This also
+    # makes locking take effect on the next request instead of leaving an
+    # unlocked child-table response fresh for five minutes.
+    hr_sensitive = hr_gate_enabled() and (
+        table == 'incident' or table in HR_PARENT_COLUMN
+    )
+    cache = 300 if (
+        table in CACHE_5MIN and not q and limit > 200 and not hr_sensitive
+    ) else 0
     _json_response(handler, {
         'rows': out_rows,
         'total': total, 'limit': limit, 'offset': offset,
-    }, cache_seconds=cache)
+    }, cache_seconds=cache, vary='Cookie' if hr_sensitive else None)
 
 
 def get_record(handler, table, sys_id):
@@ -1124,6 +1148,283 @@ def _build_cmdb_ci_lookup_payload():
             'operational_status': r['operational_status'],
         }
     return out
+
+
+# --- Task metrics ---------------------------------------------------------
+# Generic, capability-driven aggregates for every task table. The payload is
+# built only from extracted/indexed columns; raw JSON is consulted once per
+# GROUP BY result for a display label, never once per task row. That keeps the
+# same performance contract as the CMDB metrics endpoint while allowing the UI
+# to feature-detect dimensions that are meaningful for each task subtype.
+
+TASK_METRIC_FIELDS = (
+    'active', 'state', 'priority', 'impact', 'urgency', 'category', 'subcategory',
+    'contact_type', 'assignment_group', 'cat_item', 'type', 'chg_model',
+)
+EMPTY_FILTER_VALUE = '__empty__'
+_task_metrics_cache = {}
+_task_metrics_cache_lock = threading.Lock()
+
+
+def _task_visibility(table, hr_unlocked):
+    """Return (WHERE fragments, args) matching list_table's HR visibility."""
+    if hr_unlocked:
+        return [], []
+    if table == 'incident':
+        return ['"assignment_group" IS NOT ?'], [HR_GROUP_SYS_ID]
+    if table in HR_PARENT_COLUMN:
+        col = HR_PARENT_COLUMN[table]
+        return [f'"{col}" NOT IN {hr_subquery()}'], [HR_GROUP_SYS_ID]
+    return [], []
+
+
+def _task_metric_dist(conn, table, field, cols, where, args):
+    """Count one indexed task dimension, preserving filter values + labels."""
+    if field not in cols:
+        return []
+    where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+    label_expr = (
+        f"COALESCE(NULLIF(json_extract(raw,'$.{field}.display_value'), ''), "
+        f"json_extract(raw,'$.{field}.value'), \"{field}\")"
+    )
+    rows = conn.execute(
+        f'SELECT "{field}" AS v, {label_expr} AS l, COUNT(*) AS n '
+        f'FROM "{table}" {where_sql} GROUP BY "{field}" ORDER BY n DESC',
+        args,
+    )
+
+    # Display labels are the useful unit in the UI. If two coded values share
+    # one label, return one row carrying a comma-joined value so list_table's
+    # existing IN(...) filter makes the displayed count round-trip exactly.
+    merged = {}
+    for r in rows:
+        raw_value = '' if r['v'] is None else str(r['v'])
+        if not raw_value:
+            value, label = EMPTY_FILTER_VALUE, 'Not set'
+        elif field == 'active':
+            value = raw_value
+            label = 'Active' if raw_value == '1' else 'Inactive'
+        else:
+            value = raw_value
+            label = str(r['l'] or raw_value)
+        merge_key = (label, value == EMPTY_FILTER_VALUE)
+        entry = merged.get(merge_key)
+        if entry:
+            entry['count'] += r['n']
+            if value not in entry['_values']:
+                entry['_values'].append(value)
+        else:
+            merged[merge_key] = {
+                'value': value, 'label': label, 'count': r['n'],
+                '_values': [value],
+            }
+
+    out = []
+    for entry in sorted(merged.values(), key=lambda x: (-x['count'], x['label'].lower())):
+        values = entry.pop('_values')
+        if len(values) > 1 and EMPTY_FILTER_VALUE not in values:
+            entry['value'] = ','.join(values)
+        out.append(entry)
+    return out
+
+
+def _raw_scalar(raw, key):
+    """Read one value from a stored ServiceNow envelope JSON object."""
+    try:
+        value = json.loads(raw or '{}').get(key)
+    except (TypeError, json.JSONDecodeError):
+        return ''
+    if isinstance(value, dict):
+        value = value.get('value')
+    return '' if value is None else str(value)
+
+
+def _task_choice_definitions(conn, table, field):
+    """Active table-specific choices, including subcategory dependencies."""
+    if not _table_exists(conn, 'sys_choice'):
+        return []
+    try:
+        rows = conn.execute(
+            'SELECT value, label, raw FROM sys_choice '
+            'WHERE name = ? AND element = ?',
+            (table, field),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+
+    deduped = {}
+    for r in rows:
+        if _raw_scalar(r['raw'], 'inactive').lower() == 'true':
+            continue
+        language = _raw_scalar(r['raw'], 'language').lower()
+        if language and not language.startswith('en'):
+            continue
+        value = '' if r['value'] is None else str(r['value'])
+        if not value:
+            continue
+        parent = _raw_scalar(r['raw'], 'dependent_value')
+        key = (parent, value)
+        sequence = _raw_scalar(r['raw'], 'sequence')
+        try:
+            sequence = int(sequence)
+        except (TypeError, ValueError):
+            sequence = 2**31 - 1
+        candidate = {
+            'value': value,
+            'label': str(r['label'] or value),
+            'parent_value': parent,
+            'sequence': sequence,
+        }
+        previous = deduped.get(key)
+        if previous is None or candidate['sequence'] < previous['sequence']:
+            deduped[key] = candidate
+    return sorted(
+        deduped.values(),
+        key=lambda x: (x['parent_value'], x['sequence'], x['label'].lower()),
+    )
+
+
+def _task_subcategory_pairs(conn, table, cols, where, args, category_defs, sub_defs):
+    """Observed category/subcategory pairs plus active zero-use definitions."""
+    if 'category' not in cols or 'subcategory' not in cols:
+        return [], []
+    where_parts = list(where) + [
+        '"subcategory" IS NOT NULL', '"subcategory" != \'\'',
+    ]
+    where_sql = 'WHERE ' + ' AND '.join(where_parts)
+    rows = conn.execute(
+        "SELECT category AS c, subcategory AS s, "
+        "COALESCE(NULLIF(json_extract(raw,'$.category.display_value'), ''), category) AS cl, "
+        "COALESCE(NULLIF(json_extract(raw,'$.subcategory.display_value'), ''), subcategory) AS sl, "
+        f'COUNT(*) AS n FROM "{table}" {where_sql} '
+        'GROUP BY category, subcategory ORDER BY n DESC',
+        args,
+    ).fetchall()
+    category_labels = {d['value']: d['label'] for d in category_defs}
+    sub_labels = {(d['parent_value'], d['value']): d['label'] for d in sub_defs}
+    observed = []
+    counts = {}
+    for r in rows:
+        category = '' if r['c'] is None else str(r['c'])
+        subcategory = '' if r['s'] is None else str(r['s'])
+        counts[(category, subcategory)] = r['n']
+        observed.append({
+            'category': category or EMPTY_FILTER_VALUE,
+            'category_label': category_labels.get(category) or r['cl'] or category or 'Not set',
+            'value': subcategory,
+            'label': sub_labels.get((category, subcategory))
+                     or sub_labels.get(('', subcategory)) or r['sl'] or subcategory,
+            'count': r['n'],
+            'defined': ((category, subcategory) in sub_labels or ('', subcategory) in sub_labels),
+        })
+
+    unused = []
+    for choice in sub_defs:
+        parent = choice['parent_value']
+        if parent:
+            count = counts.get((parent, choice['value']), 0)
+        else:
+            count = sum(n for (cat, sub), n in counts.items() if sub == choice['value'])
+        if count:
+            continue
+        unused.append({
+            'category': parent or EMPTY_FILTER_VALUE,
+            'category_label': category_labels.get(parent) or parent or 'Any category',
+            'value': choice['value'],
+            'label': choice['label'],
+            'count': 0,
+            'defined': True,
+        })
+    return observed, unused
+
+
+def _build_task_metrics_payload(conn, table, hr_unlocked=True):
+    if table not in TASK_TABLES:
+        raise ValueError(f'unknown task table: {table}')
+    if not _table_exists(conn, table):
+        return {
+            'table': table, 'total': 0, 'indexed_columns': [],
+            'dimensions': {}, 'coverage': {}, 'subcategory_pairs': [],
+            'unused': {'category': [], 'subcategory': []},
+        }
+
+    cols = {r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+    where, args = _task_visibility(table, hr_unlocked)
+    where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+    total = conn.execute(
+        f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args
+    ).fetchone()['n']
+    dimensions = {
+        field: _task_metric_dist(conn, table, field, cols, where, args)
+        for field in TASK_METRIC_FIELDS if field in cols
+    }
+
+    coverage = {}
+    for field in ('category', 'subcategory', 'assignment_group', 'assigned_to', 'cmdb_ci'):
+        if field not in cols:
+            continue
+        if field in dimensions:
+            empty = next(
+                (item['count'] for item in dimensions[field]
+                 if item['value'] == EMPTY_FILTER_VALUE),
+                0,
+            )
+        else:
+            clauses = list(where) + [f'"{field}" IS NOT NULL', f'"{field}" != \'\'']
+            set_count = conn.execute(
+                f'SELECT COUNT(*) AS n FROM "{table}" WHERE ' + ' AND '.join(clauses),
+                args,
+            ).fetchone()['n']
+            empty = max(0, total - set_count)
+        coverage[field] = {'set': max(0, total - empty), 'empty': empty}
+
+    category_defs = _task_choice_definitions(conn, table, 'category')
+    subcategory_defs = _task_choice_definitions(conn, table, 'subcategory')
+    used_categories = {
+        value
+        for item in dimensions.get('category', [])
+        for value in str(item['value']).split(',')
+        if value and value != EMPTY_FILTER_VALUE
+    }
+    unused_categories = [
+        {'value': d['value'], 'label': d['label'], 'count': 0, 'defined': True}
+        for d in category_defs if d['value'] not in used_categories
+    ]
+    pairs, unused_subcategories = _task_subcategory_pairs(
+        conn, table, cols, where, args, category_defs, subcategory_defs,
+    )
+    manifest = _build_manifest_payload()
+    return {
+        'table': table,
+        'total': total,
+        'snapshot_date': manifest.get('snapshot_date') or (manifest.get('captured_at') or '')[:10],
+        'indexed_columns': sorted(cols - {'raw'}),
+        'dimensions': dimensions,
+        'coverage': coverage,
+        'subcategory_pairs': pairs,
+        'unused': {
+            'category': unused_categories,
+            'subcategory': unused_subcategories,
+        },
+    }
+
+
+def get_task_metrics(handler, table):
+    if table not in TASK_TABLES:
+        return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown task table: {table}')
+    unlocked = is_hr_unlocked(handler)
+    key = (_db_mtime(), table, unlocked)
+    with _task_metrics_cache_lock:
+        payload = _task_metrics_cache.get(key)
+    if payload is None:
+        payload = _build_task_metrics_payload(get_conn(), table, unlocked)
+        with _task_metrics_cache_lock:
+            # Keep all tables and both HR visibility modes for the current DB,
+            # but discard payloads from an older build generation.
+            for stale in [k for k in _task_metrics_cache if k[0] != key[0]]:
+                _task_metrics_cache.pop(stale, None)
+            _task_metrics_cache[key] = payload
+    _json_response(handler, payload, vary='Cookie')
 
 
 # --- CMDB metrics --------------------------------------------------------
@@ -1649,6 +1950,9 @@ class Handler(BaseHTTPRequestHandler):
             return get_cmdb_ci_lookup(self)
         if path == '/api/cmdb/metrics':
             return get_cmdb_metrics(self)
+        m = re.match(r'^/api/task/metrics/([a-z_][a-z_0-9]*)$', path)
+        if m:
+            return get_task_metrics(self, m.group(1))
         if path == '/api/sys_user_lookup':
             return get_sys_user_lookup(self)
         if path == '/api/hr-status':

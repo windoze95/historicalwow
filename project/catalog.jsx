@@ -458,9 +458,14 @@
         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 22 }}>
           {/* Most-used items */}
           <div>
-            <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
-              Most-used items
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+              <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: 0 }}>
+                Most-used items
+              </h2>
+              <a href={`#${window.taskAnalyticsUrl('sc_req_item')}`} style={{ fontSize: 11, color: 'var(--accent-2)' }}>
+                Full ranking &amp; filters →
+              </a>
+            </div>
             <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
               {topItems == null ? <Loading /> : topItems.length === 0 ? (
                 <div style={{ padding: 24, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>
@@ -495,7 +500,12 @@
                             </div>
                           </td>
                           <td style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{dv(t.item, 'sc_catalogs') || '—'}</td>
-                          <td className="num mono">{t.ritmCount.toLocaleString()}</td>
+                          <td className="num mono">
+                            <button className="metric-drill-link" title="Open all requested items for this catalog item"
+                              onClick={(e) => { e.stopPropagation(); window.navigate(window.filteredListUrl('sc_req_item', { cat_item: t.item.sys_id })); }}>
+                              {t.ritmCount.toLocaleString()} <window.Icon name="arrow_right" size={10} />
+                            </button>
+                          </td>
                           <td>
                             <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', border: '1px solid var(--border)' }}>
                               <div style={{ width: w(mix.f) + '%', background: 'var(--accent)' }} title={`complete ${mix.f}`} />

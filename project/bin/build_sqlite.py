@@ -58,11 +58,15 @@ TASK_INDEXED_COLS = [
     ('number',           lambda r: _v(r.get('number'))),
     ('short_description',lambda r: _v(r.get('short_description'))),
     ('state',            lambda r: _v(r.get('state'))),
+    ('active',           lambda r: 1 if str(_v(r.get('active')) or 'false').lower() == 'true' else 0),
     ('priority',         lambda r: _v(r.get('priority'))),
+    ('impact',           lambda r: _v(r.get('impact'))),
+    ('urgency',          lambda r: _v(r.get('urgency'))),
     ('assigned_to',      lambda r: _v(r.get('assigned_to'))),
     ('assignment_group', lambda r: _v(r.get('assignment_group'))),
     ('cmdb_ci',          lambda r: _v(r.get('cmdb_ci'))),
     ('caller_id',        lambda r: _v(r.get('caller_id'))),
+    ('contact_type',     lambda r: _v(r.get('contact_type'))),
     ('opened_at',        lambda r: _v(r.get('opened_at')) or _v(r.get('sys_created_on'))),
     ('sys_created_on',   lambda r: _v(r.get('sys_created_on'))),
     ('sys_updated_on',   lambda r: _v(r.get('sys_updated_on'))),
@@ -70,6 +74,18 @@ TASK_INDEXED_COLS = [
     ('sys_class_name',   lambda r: _v(r.get('sys_class_name'))),
     ('parent',           lambda r: _v(r.get('parent'))),
 ]
+
+# Category/subcategory are subtype classification fields, not universal `task`
+# fields. Keep them scoped to the table families that own them so analytics can
+# aggregate and filter without adding empty indexes to every task child.
+CATEGORY_COLS = [
+    ('category',       lambda r: _v(r.get('category'))),
+]
+CATEGORY_SUBCATEGORY_COLS = CATEGORY_COLS + [
+    ('subcategory',    lambda r: _v(r.get('subcategory'))),
+]
+INCIDENT_COLS = TASK_INDEXED_COLS + CATEGORY_SUBCATEGORY_COLS
+PROBLEM_COLS = TASK_INDEXED_COLS + CATEGORY_SUBCATEGORY_COLS
 
 USER_INDEXED_COLS = [
     ('user_name',        lambda r: _v(r.get('user_name'))),
@@ -129,7 +145,7 @@ SC_TASK_COLS = TASK_INDEXED_COLS + SC_EXTRA_USER_COLS + [
 # change_request carries a reference to its std_change_proposal. Indexing it
 # lets the catalog UI ask "which changes were created from this Standard
 # Change template?" via /api/change_request?std_change_producer_version=<sid>.
-CHANGE_REQUEST_COLS = TASK_INDEXED_COLS + [
+CHANGE_REQUEST_COLS = TASK_INDEXED_COLS + CATEGORY_COLS + [
     ('std_change_producer_version', lambda r: _v(r.get('std_change_producer_version'))),
     ('chg_model',                   lambda r: _v(r.get('chg_model'))),
     ('type',                        lambda r: _v(r.get('type'))),
@@ -138,9 +154,9 @@ CHANGE_REQUEST_COLS = TASK_INDEXED_COLS + [
 SCHEMAS = {
     # Task descendants — the viewer's biggest lookup target. All share the same
     # base task fields, so use the same indexed-column set.
-    'incident':            TASK_INDEXED_COLS,
+    'incident':            INCIDENT_COLS,
     'change_request':      CHANGE_REQUEST_COLS,
-    'problem':             TASK_INDEXED_COLS,
+    'problem':             PROBLEM_COLS,
     'problem_task':        TASK_INDEXED_COLS,
     'sc_request':          SC_REQUEST_COLS,
     'sc_req_item':         SC_REQ_ITEM_COLS,
@@ -976,6 +992,14 @@ SCHEMAS = {
     ],
 }
 
+# Cover the one multi-column aggregate used by task analytics. Single-column
+# indexes remain the default; these pairs exist because dependent subcategory
+# usage is defined by (category, subcategory), not subcategory alone.
+COMPOSITE_INDEXES = {
+    'incident': [('category', 'subcategory')],
+    'problem':  [('category', 'subcategory')],
+}
+
 
 # Append-only tables don't populate sys_updated_on, so use sys_created_on
 # as the delta field (matches the exporter's DELTA_FIELD).
@@ -1104,6 +1128,15 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False,
         # drop — keeping the existing rows lets us patch only what's new.
         print(f'(Δ since {last_cursor[:10]})', end=' ', flush=True)
     else:
+        # A full build replaces the schema before the bulk row transaction is
+        # committed. Invalidate the old cursor first so an interrupted load is
+        # retried from scratch instead of treating an empty replacement table
+        # as an up-to-date incremental build.
+        cur.execute(
+            'DELETE FROM _build_state WHERE table_name = ?', (table,)
+        )
+        conn.commit()
+
         # Full build: drop + recreate.
         cols = ['"sys_id" TEXT PRIMARY KEY']
         cols += [f'"{name}" TEXT' for name, _ in indexed_cols]
@@ -1168,6 +1201,13 @@ def build_table(conn, table, indexed_cols, ndjson_path, force_full=False,
             cur.execute(f'CREATE INDEX IF NOT EXISTS "idx_{table}_{col_name}" ON "{table}"("{col_name}")')
         except sqlite3.Error as e:
             print(f'  (index {col_name} skipped: {e})', end='')
+    for col_names in COMPOSITE_INDEXES.get(table, []):
+        index_name = f'idx_{table}_{"_".join(col_names)}'
+        columns = ', '.join(f'"{name}"' for name in col_names)
+        try:
+            cur.execute(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table}"({columns})')
+        except sqlite3.Error as e:
+            print(f'  (index {"+".join(col_names)} skipped: {e})', end='')
     conn.commit()
 
     # Track the cursor for next time.

@@ -62,7 +62,150 @@ def _fixture():
             ON incident(category, subcategory);
         CREATE TABLE incident_task (
             sys_id TEXT PRIMARY KEY,
+            incident TEXT,
+            number TEXT,
+            short_description TEXT,
+            state TEXT,
+            raw TEXT
+        );
+        CREATE TABLE problem_task (
+            sys_id TEXT PRIMARY KEY,
+            problem TEXT,
+            number TEXT,
+            short_description TEXT,
+            state TEXT,
+            raw TEXT
+        );
+        CREATE TABLE change_task (
+            sys_id TEXT PRIMARY KEY,
             parent TEXT,
+            number TEXT,
+            short_description TEXT,
+            state TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sc_req_item (
+            sys_id TEXT PRIMARY KEY,
+            request TEXT,
+            configuration_item TEXT,
+            number TEXT,
+            short_description TEXT,
+            state TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sc_task (
+            sys_id TEXT PRIMARY KEY,
+            request_item TEXT,
+            request TEXT,
+            number TEXT,
+            short_description TEXT,
+            state TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sys_journal_field (
+            sys_id TEXT PRIMARY KEY,
+            element_id TEXT,
+            element TEXT,
+            value TEXT,
+            sys_created_by TEXT,
+            sys_created_on TEXT,
+            raw TEXT
+        );
+        CREATE INDEX idx_sys_journal_field_element_id
+            ON sys_journal_field(element_id);
+        CREATE TABLE sys_audit (
+            sys_id TEXT PRIMARY KEY,
+            documentkey TEXT,
+            fieldname TEXT,
+            fieldlabel TEXT,
+            oldvalue TEXT,
+            newvalue TEXT,
+            user TEXT,
+            sys_created_on TEXT,
+            raw TEXT
+        );
+        CREATE INDEX idx_sys_audit_documentkey ON sys_audit(documentkey);
+        CREATE TABLE sys_attachment (
+            sys_id TEXT PRIMARY KEY,
+            table_sys_id TEXT,
+            file_name TEXT,
+            content_type TEXT,
+            size_bytes TEXT,
+            sys_created_by TEXT,
+            sys_created_on TEXT,
+            raw TEXT
+        );
+        CREATE INDEX idx_sys_attachment_table_sys_id
+            ON sys_attachment(table_sys_id);
+        CREATE TABLE sys_email (
+            sys_id TEXT PRIMARY KEY,
+            instance TEXT,
+            target_table TEXT,
+            type TEXT,
+            state TEXT,
+            subject TEXT,
+            recipients TEXT,
+            sys_created_on TEXT,
+            raw TEXT
+        );
+        CREATE INDEX idx_sys_email_instance ON sys_email(instance);
+        CREATE TABLE task_ci (
+            sys_id TEXT PRIMARY KEY,
+            task TEXT,
+            ci TEXT,
+            raw TEXT
+        );
+        CREATE TABLE task_sla (
+            sys_id TEXT PRIMARY KEY,
+            task TEXT,
+            sla_definition TEXT,
+            stage TEXT,
+            business_percentage TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sysapproval_approver (
+            sys_id TEXT PRIMARY KEY,
+            sysapproval TEXT,
+            "group" TEXT,
+            approver TEXT,
+            state TEXT,
+            sys_created_on TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sysapproval_group (
+            sys_id TEXT PRIMARY KEY,
+            parent TEXT,
+            assignment_group TEXT,
+            state TEXT,
+            approval TEXT,
+            approval_user TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sc_item_option_mtom (
+            sys_id TEXT PRIMARY KEY,
+            request_item TEXT,
+            sc_item_option TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sc_item_option (
+            sys_id TEXT PRIMARY KEY,
+            value TEXT,
+            item_option_new TEXT,
+            cat_item TEXT,
+            raw TEXT
+        );
+        CREATE TABLE item_option_new (
+            sys_id TEXT PRIMARY KEY,
+            name TEXT,
+            question_text TEXT,
+            type TEXT,
+            "order" TEXT,
+            reference TEXT,
+            raw TEXT
+        );
+        CREATE TABLE sc_cat_item (
+            sys_id TEXT PRIMARY KEY,
+            name TEXT,
             raw TEXT
         );
         CREATE TABLE sys_choice (
@@ -116,10 +259,128 @@ def _fixture():
         'INSERT INTO incident VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', rows
     )
     conn.executemany(
-        'INSERT INTO incident_task VALUES (?,?,?)', [
-            ('task-a', 'a', '{}'),
-            ('task-c', 'c', '{}'),
+        'INSERT INTO incident_task VALUES (?,?,?,?,?,?)', [
+            ('task-a', 'a', 'ITASK-A', 'Investigate', '1', _envelope(
+                incident=('a', 'INC-A'), state=('1', 'Open'))),
+            ('task-c', 'c', 'ITASK-C', 'Restricted', '1', _envelope(
+                incident=('c', 'INC-C'), state=('1', 'Open'))),
         ]
+    )
+    conn.executemany(
+        'INSERT INTO problem_task VALUES (?,?,?,?,?,?)', [
+            ('problem-task-a', 'problem-a', 'PTASK-A', 'Analyze', '2', _envelope(
+                problem=('problem-a', 'PRB-A'), state=('2', 'Work in Progress'))),
+        ]
+    )
+    conn.execute(
+        'INSERT INTO change_task VALUES (?,?,?,?,?,?)',
+        ('change-task-a', 'a', 'CTASK-A', 'Implement', '1', _envelope(
+            parent=('a', 'CHG-A'), state=('1', 'Open'))),
+    )
+    conn.execute(
+        'INSERT INTO sc_req_item VALUES (?,?,?,?,?,?,?)',
+        ('ritm-related-a', 'request-a', 'ci-a', 'RITM-A', 'Fulfill', '1',
+         _envelope(request=('request-a', 'REQ-A'),
+                   configuration_item=('ci-a', 'CI A'), state=('1', 'Open'))),
+    )
+    conn.execute(
+        'INSERT INTO sc_task VALUES (?,?,?,?,?,?,?)',
+        ('sc-task-a', 'ritm-related-a', 'request-a', 'SCTASK-A', 'Deliver', '1',
+         _envelope(request_item=('ritm-related-a', 'RITM-A'),
+                   request=('request-a', 'REQ-A'), state=('1', 'Open'))),
+    )
+    conn.executemany('INSERT INTO sys_journal_field VALUES (?,?,?,?,?,?,?)', [
+        ('journal-a', 'a', 'comments', 'Update', 'analyst',
+         '2025-01-01 11:00:00', '{}'),
+        ('journal-c', 'c', 'work_notes', 'Restricted', 'analyst',
+         '2025-01-03 11:00:00', '{}'),
+        ('journal-task-c', 'task-c', 'work_notes', 'Restricted child', 'analyst',
+         '2025-01-03 11:01:00', '{}'),
+        ('journal-group-c', 'group-approval-c', 'comments', 'Restricted approval', 'analyst',
+         '2025-01-03 11:02:00', '{}'),
+    ])
+    conn.executemany('INSERT INTO sys_audit VALUES (?,?,?,?,?,?,?,?,?)', [
+        ('audit-a2', 'a', 'state', 'State', '1', '2', 'analyst',
+         '2025-01-01 12:00:00', '{}'),
+        ('audit-a1', 'a', 'priority', 'Priority', '3', '2', 'analyst',
+         '2025-01-01 11:00:00', '{}'),
+        ('audit-c', 'c', 'state', 'State', '1', '2', 'analyst',
+         '2025-01-03 12:00:00', '{}'),
+        ('audit-task-c', 'task-c', 'state', 'State', '1', '2', 'analyst',
+         '2025-01-03 12:01:00', '{}'),
+        ('audit-group-c', 'group-approval-c', 'approval', 'Approval',
+         'requested', 'approved', 'analyst', '2025-01-03 12:02:00', '{}'),
+    ])
+    conn.executemany('INSERT INTO sys_attachment VALUES (?,?,?,?,?,?,?,?)', [
+        ('attach-a', 'a', 'evidence.txt', 'text/plain', '12', 'analyst',
+         '2025-01-01 13:00:00', '{}'),
+        ('attach-c', 'c', 'restricted.txt', 'text/plain', '12', 'analyst',
+         '2025-01-03 13:00:00', '{}'),
+        ('attach-task-c', 'task-c', 'restricted-child.txt', 'text/plain', '12', 'analyst',
+         '2025-01-03 13:01:00', '{}'),
+        ('attach-group-c', 'group-approval-c', 'restricted-approval.txt',
+         'text/plain', '12', 'analyst', '2025-01-03 13:02:00', '{}'),
+    ])
+    conn.executemany('INSERT INTO sys_email VALUES (?,?,?,?,?,?,?,?,?)', [
+        ('email-a1', 'a', 'incident', 'sent', 'sent', 'First', 'user@example.test',
+         '2025-01-01 14:00:00', '{}'),
+        ('email-a2', 'a', 'incident', 'received', 'received', 'Second', 'desk@example.test',
+         '2025-01-01 15:00:00', '{}'),
+        ('email-c', 'c', 'incident', 'sent', 'sent', 'Restricted', 'user@example.test',
+         '2025-01-03 14:00:00', '{}'),
+        ('email-task-c', 'task-c', 'incident_task', 'sent', 'sent',
+         'Restricted child', 'user@example.test', '2025-01-03 14:01:00', '{}'),
+        ('email-group-c', 'group-approval-c', 'sysapproval_group', 'sent', 'sent',
+         'Restricted approval', 'user@example.test', '2025-01-03 14:02:00', '{}'),
+    ])
+    conn.executemany('INSERT INTO task_ci VALUES (?,?,?,?)', [
+        ('task-ci-a', 'a', 'ci-a', _envelope(
+            task=('a', 'INC-A'), ci_item=('ci-a', 'CI A'))),
+        ('task-ci-c', 'c', 'ci-b', _envelope(
+            task=('c', 'INC-C'), ci_item=('ci-b', 'CI B'))),
+    ])
+    conn.executemany('INSERT INTO task_sla VALUES (?,?,?,?,?,?)', [
+        ('sla-a', 'a', 'Resolution', 'in_progress', '50', _envelope(
+            task=('a', 'INC-A'), sla=('sla-def-a', 'Resolution'))),
+        ('sla-c', 'c', 'Resolution', 'in_progress', '50', _envelope(
+            task=('c', 'INC-C'), sla=('sla-def-a', 'Resolution'))),
+    ])
+    conn.executemany('INSERT INTO sysapproval_approver VALUES (?,?,?,?,?,?,?)', [
+        ('approval-a1', 'a', 'group-approval-a', 'user-a', 'approved',
+         '2025-01-01 16:00:00', '{}'),
+        ('approval-a2', 'a', 'group-b', 'user-b', 'requested',
+         '2025-01-01 16:01:00', '{}'),
+        ('approval-c', 'c', 'hr-test-group', 'user-b', 'requested',
+         '2025-01-03 16:00:00', '{}'),
+        ('approval-unlinked', None, '', 'user-a', 'requested',
+         '2025-01-04 16:00:00', '{}'),
+    ])
+    conn.executemany('INSERT INTO sysapproval_group VALUES (?,?,?,?,?,?,?)', [
+        ('group-approval-a', 'a', 'group-a', '3', 'requested', 'user-a',
+         _envelope(state=('3', 'Closed Complete'), approval=('requested', 'Requested'),
+                   approval_user=('user-a', 'Analyst'))),
+        ('group-approval-c', 'c', 'hr-test-group', '3', 'requested', 'user-b',
+         _envelope(state=('3', 'Closed Complete'), approval=('requested', 'Requested'),
+                   approval_user=('user-b', 'Other'))),
+        ('group-approval-unlinked', None, 'group-a', '7', 'approved', 'user-a',
+         _envelope(state=('7', 'Closed'), approval=('approved', 'Approved'),
+                   approval_user=('user-a', 'Analyst'))),
+    ])
+    conn.execute(
+        'INSERT INTO sc_cat_item VALUES (?,?,?)',
+        ('cat-a', 'Request access', '{}'),
+    )
+    conn.execute(
+        'INSERT INTO item_option_new VALUES (?,?,?,?,?,?,?)',
+        ('def-a', 'requested_for', 'Requested for', '8', '100', 'sys_user', '{}'),
+    )
+    conn.execute(
+        'INSERT INTO sc_item_option VALUES (?,?,?,?,?)',
+        ('option-a', 'user-a', 'def-a', 'cat-a', '{}'),
+    )
+    conn.execute(
+        'INSERT INTO sc_item_option_mtom VALUES (?,?,?,?)',
+        ('mtom-a', 'ritm-a', 'option-a', '{}'),
     )
     choices = [
         ('cat-h', 'incident', 'category', 'hardware', 'Hardware',
@@ -236,6 +497,219 @@ def test_combined_search_and_category_filter_matches_list_total():
     }
 
 
+def test_record_detail_related_data_paths_and_shapes():
+    """Exercise every API/data path consumed by the generic record page."""
+    conn = _fixture()
+    old_conn = getattr(server._local, 'conn', None)
+    old_password = server.HR_UNLOCK_PASSWORD
+    old_group = server.HR_GROUP_SYS_ID
+    server._local.conn = conn
+    server.HR_UNLOCK_PASSWORD = ''
+    try:
+        handler = _Handler()
+        server.get_record(handler, 'incident', 'a')
+        assert handler.status == 200
+        assert _payload(handler)['sys_id'] == 'a'
+
+        handler = _Handler()
+        server.get_journal_for(handler, 'a')
+        journal = _payload(handler)['rows']
+        assert [row['element'] for row in journal] == ['comments']
+
+        handler = _Handler()
+        server.get_audit_for(handler, 'a')
+        audit = _payload(handler)['rows']
+        assert [row['sys_created_on'] for row in audit] == [
+            '2025-01-01 11:00:00', '2025-01-01 12:00:00',
+        ]
+        required_audit = {
+            'sys_id', 'fieldname', 'fieldlabel', 'oldvalue', 'newvalue',
+            'user', 'sys_created_on',
+        }
+        assert all(required_audit.issubset(row) for row in audit)
+
+        handler = _Handler()
+        server.get_attachments_for(handler, 'a')
+        attachment = _payload(handler)['rows'][0]
+        assert {
+            'sys_id', 'file_name', 'content_type', 'size_bytes',
+            'sys_created_by', 'sys_created_on',
+        }.issubset(attachment)
+
+        handler = _Handler()
+        server.list_table(handler, 'sys_email', {
+            'instance': ['a'], 'order_by': ['sys_created_on'],
+            'dir': ['desc'], 'limit': ['200'], 'slim': ['1'],
+        })
+        email = _payload(handler)
+        assert email['total'] == 2
+        assert [row['subject'] for row in email['rows']] == ['Second', 'First']
+        assert all({'type', 'state', 'subject', 'recipients', 'sys_created_on'}
+                   .issubset(row) for row in email['rows'])
+
+        related_queries = [
+            ('incident_task', {'incident': ['a']}),
+            ('problem_task', {'problem': ['problem-a']}),
+            ('change_task', {'parent': ['a']}),
+            ('sc_req_item', {'request': ['request-a']}),
+            ('sc_task', {'request_item': ['ritm-related-a']}),
+            ('task_ci', {'task': ['a']}),
+            ('task_sla', {'task': ['a']}),
+            ('sysapproval_group', {'parent': ['a']}),
+        ]
+        for table, params in related_queries:
+            handler = _Handler()
+            query = {**params, 'limit': ['50']}
+            if table == 'sysapproval_group':
+                query['slim'] = ['1']
+            server.list_table(handler, table, query)
+            body = _payload(handler)
+            assert body['total'] == 1, (table, body)
+            if table == 'incident_task':
+                assert body['rows'][0]['state']['value'] == '1'
+            if table == 'sysapproval_group':
+                assert body['rows'][0]['approval'] == 'requested'
+                assert body['rows'][0]['approval_user'] == 'user-a'
+
+        handler = _Handler()
+        server.list_table(handler, 'task_ci', {
+            'task': ['a'], 'limit': ['50'],
+        })
+        task_ci_row = _payload(handler)['rows'][0]
+        assert task_ci_row['ci'] == 'ci-a'
+        assert task_ci_row['ci_item']['display_value'] == 'CI A'
+
+        # A group approval page filters approvers by both parent and group.
+        # `group` must be a real indexed column or list_table silently ignores
+        # it and returns approvers spawned for other groups on the same task.
+        handler = _Handler()
+        server.list_table(handler, 'sysapproval_approver', {
+            'sysapproval': ['a'], 'group': ['group-approval-a'], 'limit': ['50'],
+        })
+        approvers = _payload(handler)
+        assert approvers['total'] == 1
+        assert approvers['rows'][0]['group'] == 'group-approval-a'
+        assert 'group' in {name for name, _ in build.SCHEMAS['sysapproval_approver']}
+
+        handler = _Handler()
+        server.get_record(handler, 'sysapproval_group', 'group-approval-a')
+        approval_group = _payload(handler)
+        assert approval_group['state']['value'] == '3'
+        assert approval_group['approval']['value'] == 'requested'
+        assert approval_group['approval_user']['value'] == 'user-a'
+
+        handler = _Handler()
+        server.get_variables_for(handler, 'ritm-a')
+        variables = _payload(handler)
+        assert variables['cat_item'] == 'Request access'
+        assert variables['rows'] == [{
+            'opt_sys_id': 'option-a', 'value': 'user-a',
+            'def_sys_id': 'def-a', 'var_name': 'requested_for',
+            'label': 'Requested for', 'type': '8', 'order_idx': '100',
+            'reference': 'sys_user', 'cat_item_name': 'Request access',
+        }]
+
+        # Same-CI lookups used by Related are ordinary indexed list filters.
+        handler = _Handler()
+        server.list_table(handler, 'incident', {
+            'cmdb_ci': ['ci-a'], 'limit': ['9'], 'slim': ['1'],
+        })
+        assert _payload(handler)['total'] == 1
+        handler = _Handler()
+        server.list_table(handler, 'sc_req_item', {
+            'configuration_item': ['ci-a'], 'limit': ['9'], 'slim': ['1'],
+        })
+        assert _payload(handler)['total'] == 1
+
+        # Every incident-parent relation must honor the HR gate even when a
+        # caller bypasses RecordPage and queries the child table directly.
+        server.HR_UNLOCK_PASSWORD = 'configured-for-test'
+        server.HR_GROUP_SYS_ID = 'hr-test-group'
+        parent_cases = {
+            'sys_journal_field': ('element_id', 'journal-c'),
+            'sys_audit': ('documentkey', 'audit-c'),
+            'sys_attachment': ('table_sys_id', 'attach-c'),
+            'sys_email': ('instance', 'email-c'),
+            'task_ci': ('task', 'task-ci-c'),
+            'task_sla': ('task', 'sla-c'),
+            'incident_task': ('incident', 'task-c'),
+            'sysapproval_approver': ('sysapproval', 'approval-c'),
+            'sysapproval_group': ('parent', 'group-approval-c'),
+        }
+        for table, (parent_col, restricted_id) in parent_cases.items():
+            handler = _Handler()
+            server.list_table(handler, table, {'limit': ['50']})
+            body = _payload(handler)
+            assert all(row.get(parent_col) != 'c' for row in body['rows'])
+            assert 'Cookie' in handler.response_headers['Vary']
+            handler = _Handler()
+            server.get_record(handler, table, restricted_id)
+            assert handler.status == 403, table
+
+        descendant_sidecars = {
+            'sys_journal_field': {'journal-task-c', 'journal-group-c'},
+            'sys_audit': {'audit-task-c', 'audit-group-c'},
+            'sys_attachment': {'attach-task-c', 'attach-group-c'},
+            'sys_email': {'email-task-c', 'email-group-c'},
+        }
+        for table, restricted_ids in descendant_sidecars.items():
+            handler = _Handler()
+            server.list_table(handler, table, {'limit': ['100']})
+            visible_ids = {row['sys_id'] for row in _payload(handler)['rows']}
+            assert visible_ids.isdisjoint(restricted_ids), table
+            for restricted_id in restricted_ids:
+                handler = _Handler()
+                server.get_record(handler, table, restricted_id)
+                assert handler.status == 403, (table, restricted_id)
+
+        assert server.is_hr_related_record('task-c')
+        assert server.is_hr_related_record('group-approval-c')
+        assert server.is_hr_related_record('approval-c')
+        assert server._attachment_is_hr('attach-task-c')
+        assert server._attachment_is_hr('attach-group-c')
+        for table in ('sysapproval_approver', 'sysapproval_group'):
+            handler = _Handler()
+            server.list_table(handler, table, {'limit': ['50']})
+            assert any(row['sys_id'].endswith('unlinked')
+                       for row in _payload(handler)['rows'])
+
+        for target in ('c', 'task-c', 'group-approval-c'):
+            for getter in (
+                server.get_journal_for, server.get_audit_for,
+                server.get_attachments_for,
+            ):
+                handler = _Handler()
+                getter(handler, target)
+                assert handler.status == 403, (getter.__name__, target)
+
+        token = 'record-related-unlock'
+        with server._hr_tokens_lock:
+            server._hr_tokens.add(token)
+        try:
+            handler = _Handler()
+            handler.headers['Cookie'] = f'hr_unlock={token}'
+            server.get_audit_for(handler, 'c')
+            assert handler.status == 200
+            assert len(_payload(handler)['rows']) == 1
+
+            handler = _Handler()
+            handler.headers['Cookie'] = f'hr_unlock={token}'
+            server.list_table(handler, 'sys_email', {
+                'instance': ['c'], 'limit': ['50'],
+            })
+            assert _payload(handler)['total'] == 1
+        finally:
+            with server._hr_tokens_lock:
+                server._hr_tokens.discard(token)
+    finally:
+        server.HR_UNLOCK_PASSWORD = old_password
+        server.HR_GROUP_SYS_ID = old_group
+        if old_conn is None:
+            delattr(server._local, 'conn')
+        else:
+            server._local.conn = old_conn
+
+
 def test_hr_parent_lists_are_never_publicly_cached():
     conn = _fixture()
     old_conn = getattr(server._local, 'conn', None)
@@ -258,6 +732,132 @@ def test_hr_parent_lists_are_never_publicly_cached():
     finally:
         with server._hr_tokens_lock:
             server._hr_tokens.discard(token)
+        server.HR_UNLOCK_PASSWORD = old_password
+        server.HR_GROUP_SYS_ID = old_group
+        if old_conn is None:
+            delattr(server._local, 'conn')
+        else:
+            server._local.conn = old_conn
+
+
+def test_restricted_attachment_files_are_transitive_and_never_cached():
+    conn = _fixture()
+    old_conn = getattr(server._local, 'conn', None)
+    old_password = server.HR_UNLOCK_PASSWORD
+    old_group = server.HR_GROUP_SYS_ID
+    old_data_dir = server.DATA_DIR
+    token = 'attachment-unlock-token'
+    server._local.conn = conn
+    server.HR_UNLOCK_PASSWORD = 'configured-for-test'
+    server.HR_GROUP_SYS_ID = 'hr-test-group'
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            server.DATA_DIR = Path(td).resolve()
+            attachment = (
+                server.DATA_DIR / 'attachments' / 'at' /
+                'attach-task-c' / 'restricted-child.txt'
+            )
+            attachment.parent.mkdir(parents=True)
+            attachment.write_bytes(b'restricted test body')
+            path = '/data/attachments/at/attach-task-c/restricted-child.txt'
+            unknown = (
+                server.DATA_DIR / 'attachments' / 'un' /
+                'unknown-attachment' / 'metadata-pending.txt'
+            )
+            unknown.parent.mkdir(parents=True)
+            unknown.write_bytes(b'body awaiting metadata')
+            unknown_path = (
+                '/data/attachments/un/unknown-attachment/metadata-pending.txt'
+            )
+
+            locked = _Handler()
+            locked.path = path
+            server.Handler._route(locked)
+            assert locked.status == 403
+            assert locked.response_headers['Cache-Control'] == 'private, no-store'
+            assert locked.response_headers['Vary'] == 'Cookie'
+
+            pending = _Handler()
+            pending.path = unknown_path
+            server.Handler._route(pending)
+            assert pending.status == 403
+            assert pending.response_headers['Cache-Control'] == 'private, no-store'
+            assert pending.response_headers['Vary'] == 'Cookie'
+
+            with server._hr_tokens_lock:
+                server._hr_tokens.add(token)
+            try:
+                unlocked = _Handler()
+                unlocked.path = path
+                unlocked.headers['Cookie'] = f'hr_unlock={token}'
+                server.Handler._route(unlocked)
+                assert unlocked.status == 200
+                assert unlocked.wfile.getvalue() == b'restricted test body'
+                assert unlocked.response_headers['Cache-Control'] == 'private, no-store'
+                assert unlocked.response_headers['Vary'] == 'Cookie'
+
+                pending_unlocked = _Handler()
+                pending_unlocked.path = unknown_path
+                pending_unlocked.headers['Cookie'] = f'hr_unlock={token}'
+                server.Handler._route(pending_unlocked)
+                assert pending_unlocked.status == 200
+                assert pending_unlocked.wfile.getvalue() == b'body awaiting metadata'
+            finally:
+                with server._hr_tokens_lock:
+                    server._hr_tokens.discard(token)
+    finally:
+        server.DATA_DIR = old_data_dir
+        server.HR_UNLOCK_PASSWORD = old_password
+        server.HR_GROUP_SYS_ID = old_group
+        if old_conn is None:
+            delattr(server._local, 'conn')
+        else:
+            server._local.conn = old_conn
+
+
+def test_incomplete_hr_ancestry_schema_fails_closed_until_rebuild():
+    conn = _fixture()
+    conn.execute('ALTER TABLE incident_task RENAME COLUMN incident TO parent')
+    conn.commit()
+    old_conn = getattr(server._local, 'conn', None)
+    old_password = server.HR_UNLOCK_PASSWORD
+    old_group = server.HR_GROUP_SYS_ID
+    token = 'schema-pending-unlock'
+    server._local.conn = conn
+    server.HR_UNLOCK_PASSWORD = 'configured-for-test'
+    server.HR_GROUP_SYS_ID = 'hr-test-group'
+    try:
+        assert not server.hr_ancestry_schema_ready(conn)
+        assert server.is_hr_related_record('task-c')
+        assert server._attachment_is_hr('attach-a')
+
+        handler = _Handler()
+        server.get_journal_for(handler, 'task-c')
+        assert handler.status == 403
+        assert handler.response_headers['Cache-Control'] == 'private, no-store'
+
+        handler = _Handler()
+        server.list_table(handler, 'sys_journal_field', {'limit': ['50']})
+        assert handler.status == 503
+        assert _payload(handler)['error'] == 'hr_schema_pending'
+        assert handler.response_headers['Cache-Control'] == 'private, no-store'
+
+        handler = _Handler()
+        server.get_record(handler, 'sys_journal_field', 'journal-a')
+        assert handler.status == 503
+        assert _payload(handler)['error'] == 'hr_schema_pending'
+
+        with server._hr_tokens_lock:
+            server._hr_tokens.add(token)
+        try:
+            handler = _Handler()
+            handler.headers['Cookie'] = f'hr_unlock={token}'
+            server.list_table(handler, 'sys_journal_field', {'limit': ['50']})
+            assert handler.status == 200
+        finally:
+            with server._hr_tokens_lock:
+                server._hr_tokens.discard(token)
+    finally:
         server.HR_UNLOCK_PASSWORD = old_password
         server.HR_GROUP_SYS_ID = old_group
         if old_conn is None:
@@ -325,6 +925,94 @@ def test_build_table_extracts_analytics_columns_and_indexes():
         assert tuple(stored) == ('1', '2', '3', 'email', 'hardware', 'laptop')
         indexes = {r['name'] for r in conn.execute('PRAGMA index_list("incident")')}
         assert 'idx_incident_category_subcategory' in indexes
+
+
+def test_build_table_extracts_real_related_reference_fields():
+    cases = [
+        ('incident_task', {
+            'incident': {'value': 'incident-a', 'display_value': 'INC-A'},
+        }, 'incident', 'incident-a'),
+        ('problem_task', {
+            'problem': {'value': 'problem-a', 'display_value': 'PRB-A'},
+        }, 'problem', 'problem-a'),
+        ('task_ci', {
+            'task': {'value': 'incident-a', 'display_value': 'INC-A'},
+            'ci_item': {'value': 'ci-a', 'display_value': 'CI A'},
+        }, 'ci', 'ci-a'),
+        ('task_sla', {
+            'task': {'value': 'incident-a', 'display_value': 'INC-A'},
+            'sla': {'value': 'sla-a', 'display_value': 'Resolution'},
+        }, 'sla_definition', 'Resolution'),
+        ('sc_req_item', {
+            'request': {'value': 'request-a', 'display_value': 'REQ-A'},
+            'configuration_item': {
+                'value': 'ci-a', 'display_value': 'CI A',
+            },
+        }, 'configuration_item', 'ci-a'),
+        ('change_task', {
+            'parent': {'value': 'change-a', 'display_value': 'CHG-A'},
+        }, 'parent', 'change-a'),
+        ('sc_req_item', {
+            'request': {'value': 'request-a', 'display_value': 'REQ-A'},
+        }, 'request', 'request-a'),
+        ('sc_task', {
+            'request_item': {'value': 'ritm-a', 'display_value': 'RITM-A'},
+        }, 'request_item', 'ritm-a'),
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        build._ensure_build_state_table(conn)
+        for table, fields, projected_col, expected in cases:
+            ndjson = Path(td) / f'{table}.ndjson'
+            row = {
+                'sys_id': {'value': f'{table}-a'},
+                'sys_updated_on': {'value': '2025-01-01 00:00:00'},
+                **fields,
+            }
+            ndjson.write_text(json.dumps(row) + '\n')
+            build.build_table(
+                conn, table, build.SCHEMAS[table], ndjson,
+                force_full=True, report_new_tables=False,
+            )
+            stored = conn.execute(
+                f'SELECT "{projected_col}" FROM "{table}"'
+            ).fetchone()[0]
+            assert stored == expected, (table, stored)
+
+
+def test_projection_version_rebuilds_existing_columns_once():
+    with tempfile.TemporaryDirectory() as td:
+        ndjson = Path(td) / 'task_ci.ndjson'
+        row = {
+            'sys_id': {'value': 'link-a'},
+            'sys_updated_on': {'value': '2025-01-01 00:00:00'},
+            'task': {'value': 'incident-a'},
+            'ci_item': {'value': 'ci-a', 'display_value': 'CI A'},
+        }
+        ndjson.write_text(json.dumps(row) + '\n')
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        build._ensure_build_state_table(conn)
+        build.build_table(
+            conn, 'task_ci', build.SCHEMAS['task_ci'], ndjson,
+            force_full=True, report_new_tables=False,
+        )
+        conn.execute('UPDATE task_ci SET ci = NULL')
+        conn.execute(
+            'UPDATE _build_state SET projection_version = 0 '
+            'WHERE table_name = ?', ('task_ci',),
+        )
+        conn.commit()
+
+        written, drift = build.build_table(
+            conn, 'task_ci', build.SCHEMAS['task_ci'], ndjson,
+            report_new_tables=False,
+        )
+        assert drift is True
+        assert written == 1
+        assert conn.execute('SELECT ci FROM task_ci').fetchone()[0] == 'ci-a'
+        assert build._read_projection_version(conn, 'task_ci') == 1
 
 
 def test_interrupted_schema_drift_rebuild_restarts_from_scratch():

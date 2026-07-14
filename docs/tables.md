@@ -152,6 +152,7 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `problem` | string |  |
 
 ### `sc_request`
 
@@ -216,6 +217,7 @@ Filterable columns:
 | `requested_for` | string |  |
 | `request` | string |  |
 | `cat_item` | string |  |
+| `configuration_item` | string |  |
 
 ### `sc_task`
 
@@ -254,7 +256,7 @@ Filterable columns:
 
 Tags: `task` `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.
+> Parent-gated: rows whose `incident` references an HR-assigned incident are hidden when locked.
 
 > Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
@@ -281,6 +283,7 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `incident` | string |  |
 
 ### `change_task`
 
@@ -314,9 +317,11 @@ Filterable columns:
 
 ### `sysapproval_group`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
 Filterable columns:
 
@@ -341,6 +346,8 @@ Filterable columns:
 | `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `approval` | string |  |
+| `approval_user` | string |  |
 
 ### `asset_task`
 
@@ -754,9 +761,11 @@ Filterable columns:
 
 ### `sysapproval_approver`
 
-Tags: `cache-5min`
+Tags: `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Parent-gated: rows whose `sysapproval` references an HR-assigned incident are hidden when locked.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
 Filterable columns:
 
@@ -764,6 +773,7 @@ Filterable columns:
 | --- | --- | --- |
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `sysapproval` | string |  |
+| `group` | string |  |
 | `approver` | string |  |
 | `state` | string |  |
 | `sys_created_on` | string |  |

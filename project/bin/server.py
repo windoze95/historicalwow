@@ -390,7 +390,7 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0, vary
     handler.wfile.write(body)
 
 
-def _send_static(handler, path, content_type=None, vary=None):
+def _send_static(handler, path, content_type=None, vary=None, cache_control=None):
     if not path.is_file():
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'not found: {path.name}')
     if content_type is None:
@@ -422,7 +422,9 @@ def _send_static(handler, path, content_type=None, vary=None):
     # picking between rendered viewer and raw markdown via Accept).
     if vary:
         handler.send_header('Vary', vary)
-    if path.suffix.lower() == '.html':
+    if cache_control:
+        handler.send_header('Cache-Control', cache_control)
+    elif path.suffix.lower() == '.html':
         handler.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
     handler.end_headers()
     with path.open('rb') as f:
@@ -433,13 +435,31 @@ def _send_static(handler, path, content_type=None, vary=None):
             handler.wfile.write(chunk)
 
 
-def _send_error(handler, status, msg):
+def _send_error(handler, status, msg, vary=None, cache_control=None):
     body = json.dumps({'error': msg}).encode('utf-8')
     handler.send_response(status)
     handler.send_header('Content-Type', 'application/json; charset=utf-8')
     handler.send_header('Content-Length', str(len(body)))
+    if vary:
+        handler.send_header('Vary', vary)
+    if cache_control:
+        handler.send_header('Cache-Control', cache_control)
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _send_hr_locked(handler):
+    return _send_error(
+        handler, HTTPStatus.FORBIDDEN, 'hr_locked',
+        vary='Cookie', cache_control='private, no-store',
+    )
+
+
+def _send_hr_schema_pending(handler):
+    return _send_error(
+        handler, HTTPStatus.SERVICE_UNAVAILABLE, 'hr_schema_pending',
+        vary='Cookie', cache_control='private, no-store',
+    )
 
 
 def _parse_cookies(handler):
@@ -482,12 +502,6 @@ def is_hr_record(sys_id: str) -> bool:
     return row is not None
 
 
-def hr_subquery() -> str:
-    """SQL fragment that selects sys_ids of HR-restricted incidents — for use
-    in `WHERE element_id NOT IN (...)` style filters."""
-    return '(SELECT sys_id FROM incident WHERE assignment_group = ?)'
-
-
 # Tables whose rows are tied to a parent incident's sys_id via the listed
 # column. When the HR gate is locked, rows referencing an HR-assigned
 # incident must be hidden from the generic /api/<table> list route and
@@ -502,8 +516,74 @@ HR_PARENT_COLUMN = {
     'sys_email':         'instance',
     'task_ci':           'task',
     'task_sla':          'task',
-    'incident_task':     'parent',
+    'incident_task':     'incident',
+    'sysapproval_approver': 'sysapproval',
+    'sysapproval_group':    'parent',
 }
+
+# Record types that can themselves own journals, audits, emails, attachments,
+# or another relation row. Build their ancestry recursively so sidecars on an
+# incident task or approval record inherit the parent incident's HR gate.
+HR_ANCESTRY_COLUMN = {
+    table: HR_PARENT_COLUMN[table]
+    for table in (
+        'task_ci', 'task_sla', 'incident_task',
+        'sysapproval_approver', 'sysapproval_group',
+    )
+}
+
+
+def hr_ancestry_schema_ready(conn) -> bool:
+    """Whether every recursive parent edge is present in the active DB."""
+    for table, column in HR_ANCESTRY_COLUMN.items():
+        if not _table_exists(conn, table):
+            return False
+        cols = {
+            row['name'] for row in conn.execute(f'PRAGMA table_info("{table}")')
+        }
+        if column not in cols:
+            return False
+    return True
+
+
+def hr_restricted_subquery(conn) -> str:
+    """Indexed recursive set of restricted incident and descendant sys_ids."""
+    if not hr_ancestry_schema_ready(conn):
+        raise RuntimeError('HR ancestry schema is incomplete')
+    branches = []
+    for table, column in HR_ANCESTRY_COLUMN.items():
+        branches.append(
+            f'UNION SELECT t.sys_id FROM "{table}" t '
+            f'JOIN restricted r ON t."{column}" = r.sys_id'
+        )
+    recursive = ' '.join(branches)
+    return (
+        '(WITH RECURSIVE restricted(sys_id) AS ('
+        'SELECT sys_id FROM incident WHERE assignment_group = ? '
+        f'{recursive}) SELECT sys_id FROM restricted)'
+    )
+
+
+def hr_parent_visible_clause(column: str, conn) -> str:
+    """Keep unlinked rows while excluding restricted parents/descendants."""
+    return (
+        f'("{column}" IS NULL OR "{column}" = ? '
+        f'OR "{column}" NOT IN {hr_restricted_subquery(conn)})'
+    )
+
+
+def is_hr_related_record(sys_id: str) -> bool:
+    """Whether a record is a restricted incident or indexed descendant."""
+    if not hr_gate_enabled():
+        return False
+    conn = get_conn()
+    if not hr_ancestry_schema_ready(conn):
+        return True
+    row = conn.execute(
+        f'SELECT 1 WHERE ? IN {hr_restricted_subquery(conn)} LIMIT 1',
+        (sys_id, HR_GROUP_SYS_ID),
+    ).fetchone()
+    return row is not None
 
 
 def _hr_record_parent_locked(table: str, sys_id: str) -> bool:
@@ -515,9 +595,11 @@ def _hr_record_parent_locked(table: str, sys_id: str) -> bool:
     if not col or not hr_gate_enabled():
         return False
     conn = get_conn()
+    if not hr_ancestry_schema_ready(conn):
+        return True
     row = conn.execute(
-        f'SELECT 1 FROM "{table}" t JOIN incident i ON i.sys_id = t."{col}" '
-        f'WHERE t.sys_id = ? AND i.assignment_group = ? LIMIT 1',
+        f'SELECT 1 FROM "{table}" t WHERE t.sys_id = ? '
+        f'AND t."{col}" IN {hr_restricted_subquery(conn)} LIMIT 1',
         (sys_id, HR_GROUP_SYS_ID),
     ).fetchone()
     return row is not None
@@ -531,11 +613,12 @@ def _attachment_is_hr(attach_sys_id: str) -> bool:
         return False
     conn = get_conn()
     row = conn.execute(
-        'SELECT 1 FROM sys_attachment a JOIN incident i ON i.sys_id = a.table_sys_id '
-        'WHERE a.sys_id = ? AND i.assignment_group = ? LIMIT 1',
-        (attach_sys_id, HR_GROUP_SYS_ID),
+        'SELECT table_sys_id FROM sys_attachment WHERE sys_id = ?',
+        (attach_sys_id,),
     ).fetchone()
-    return row is not None
+    # Attachment bodies can land before the export is rebuilt into SQLite.
+    # Missing metadata is therefore unknown, not public, while the gate is on.
+    return row is None or is_hr_related_record(row['table_sys_id'])
 
 
 def _row_to_dict(row):
@@ -671,9 +754,11 @@ def list_table(handler, table, params):
             where.append('"assignment_group" IS NOT ?')
             args.append(HR_GROUP_SYS_ID)
         elif table in HR_PARENT_COLUMN:
+            if not hr_ancestry_schema_ready(conn):
+                return _send_hr_schema_pending(handler)
             col = HR_PARENT_COLUMN[table]
-            where.append(f'"{col}" NOT IN {hr_subquery()}')
-            args.append(HR_GROUP_SYS_ID)
+            where.append(hr_parent_visible_clause(col, conn))
+            args.extend(['', HR_GROUP_SYS_ID])
 
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     total = conn.execute(f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args).fetchone()['n']
@@ -708,9 +793,12 @@ def get_record(handler, table, sys_id):
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown table: {table}')
     if not is_hr_unlocked(handler):
         if table == 'incident' and is_hr_record(sys_id):
-            return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
-        if table in HR_PARENT_COLUMN and _hr_record_parent_locked(table, sys_id):
-            return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+            return _send_hr_locked(handler)
+        if table in HR_PARENT_COLUMN:
+            if not hr_ancestry_schema_ready(get_conn()):
+                return _send_hr_schema_pending(handler)
+            if _hr_record_parent_locked(table, sys_id):
+                return _send_hr_locked(handler)
     conn = get_conn()
     if not _table_exists(conn, table):
         # Allowed table not yet built into the DB (see _table_exists) — no
@@ -719,7 +807,11 @@ def get_record(handler, table, sys_id):
     row = conn.execute(f'SELECT * FROM "{table}" WHERE sys_id = ?', (sys_id,)).fetchone()
     if not row:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'{table}/{sys_id} not in archive')
-    _json_response(handler, _row_to_dict(row))
+    hr_sensitive = table == 'incident' or table in HR_PARENT_COLUMN
+    _json_response(
+        handler, _row_to_dict(row),
+        vary='Cookie' if hr_sensitive else None,
+    )
 
 
 def get_sla_stats(handler, kind, sys_id):
@@ -760,36 +852,36 @@ def get_sla_stats(handler, kind, sys_id):
 
 
 def get_journal_for(handler, element_id):
-    if not is_hr_unlocked(handler) and is_hr_record(element_id):
-        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+    if not is_hr_unlocked(handler) and is_hr_related_record(element_id):
+        return _send_hr_locked(handler)
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_journal_field WHERE element_id = ? ORDER BY sys_created_on ASC',
         (element_id,)
     ).fetchall()
-    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]})
+    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]}, vary='Cookie')
 
 
 def get_audit_for(handler, documentkey):
-    if not is_hr_unlocked(handler) and is_hr_record(documentkey):
-        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+    if not is_hr_unlocked(handler) and is_hr_related_record(documentkey):
+        return _send_hr_locked(handler)
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_audit WHERE documentkey = ? ORDER BY sys_created_on ASC',
         (documentkey,)
     ).fetchall()
-    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]})
+    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]}, vary='Cookie')
 
 
 def get_attachments_for(handler, table_sys_id):
-    if not is_hr_unlocked(handler) and is_hr_record(table_sys_id):
-        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+    if not is_hr_unlocked(handler) and is_hr_related_record(table_sys_id):
+        return _send_hr_locked(handler)
     conn = get_conn()
     rows = conn.execute(
         'SELECT * FROM sys_attachment WHERE table_sys_id = ? ORDER BY sys_created_on ASC',
         (table_sys_id,)
     ).fetchall()
-    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]})
+    _json_response(handler, {'rows': [_row_to_dict(r) for r in rows]}, vary='Cookie')
 
 
 def get_variables_for(handler, ritm_sys_id):
@@ -800,7 +892,7 @@ def get_variables_for(handler, ritm_sys_id):
     consistent across catalog items even though every form has a
     different set of fields, since item_option_new carries the schema."""
     if not is_hr_unlocked(handler) and is_hr_record(ritm_sys_id):
-        return _send_error(handler, HTTPStatus.FORBIDDEN, 'hr_locked')
+        return _send_hr_locked(handler)
     conn = get_conn()
     rows = conn.execute(
         '''SELECT
@@ -829,7 +921,11 @@ def get_variables_for(handler, ritm_sys_id):
         if not d.get('label') and not d.get('var_name'):
             continue
         out.append(d)
-    _json_response(handler, {'rows': out, 'cat_item': out[0]['cat_item_name'] if out else None})
+    _json_response(
+        handler,
+        {'rows': out, 'cat_item': out[0]['cat_item_name'] if out else None},
+        vary='Cookie',
+    )
 
 
 # Base64+gzip blob fields Flow Designer stores its configured data in (action
@@ -1114,9 +1210,11 @@ def cross_table_search(handler, params):
                 args.append(HR_GROUP_SYS_ID)
             elif t in HR_PARENT_COLUMN:
                 # incident_task etc. — hide rows whose parent incident is HR.
+                if not hr_ancestry_schema_ready(conn):
+                    continue
                 col = HR_PARENT_COLUMN[t]
-                sql += f' AND "{col}" NOT IN {hr_subquery()}'
-                args.append(HR_GROUP_SYS_ID)
+                sql += f' AND {hr_parent_visible_clause(col, conn)}'
+                args.extend(['', HR_GROUP_SYS_ID])
         sql += ' ORDER BY sys_updated_on DESC LIMIT ?'
         args.append(limit_per_table)
         try:
@@ -1166,15 +1264,17 @@ _task_metrics_cache = {}
 _task_metrics_cache_lock = threading.Lock()
 
 
-def _task_visibility(table, hr_unlocked):
+def _task_visibility(conn, table, hr_unlocked):
     """Return (WHERE fragments, args) matching list_table's HR visibility."""
     if hr_unlocked:
         return [], []
     if table == 'incident':
         return ['"assignment_group" IS NOT ?'], [HR_GROUP_SYS_ID]
     if table in HR_PARENT_COLUMN:
+        if not hr_ancestry_schema_ready(conn):
+            return ['0'], []
         col = HR_PARENT_COLUMN[table]
-        return [f'"{col}" NOT IN {hr_subquery()}'], [HR_GROUP_SYS_ID]
+        return [hr_parent_visible_clause(col, conn)], ['', HR_GROUP_SYS_ID]
     return [], []
 
 
@@ -1349,7 +1449,7 @@ def _build_task_metrics_payload(conn, table, hr_unlocked=True):
         }
 
     cols = {r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')}
-    where, args = _task_visibility(table, hr_unlocked)
+    where, args = _task_visibility(conn, table, hr_unlocked)
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     total = conn.execute(
         f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args
@@ -1862,8 +1962,13 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) >= 3 and parts[0] == 'attachments':
                     attach_sys_id = parts[2]
                     if _attachment_is_hr(attach_sys_id):
-                        return _send_error(self, HTTPStatus.FORBIDDEN, 'hr_locked')
-            return _send_static(self, target)
+                        return _send_error(
+                            self, HTTPStatus.FORBIDDEN, 'hr_locked',
+                            vary='Cookie', cache_control='private, no-store',
+                        )
+            return _send_static(
+                self, target, vary='Cookie', cache_control='private, no-store',
+            )
 
         # Interactive docs and OpenAPI spec. Public — these routes sit in
         # front of the HR gate. The spec *describes* HR-gated endpoints but

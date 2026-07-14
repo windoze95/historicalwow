@@ -3,14 +3,14 @@
 // problem, sc_request, sc_req_item, sc_task, sysapproval_group, …).
 
 // Parent → child relationship map for the "Tasks" section. The link field
-// varies by parent: incident uses generic `parent`, but the catalog flow
-// uses `request` (sc_request → sc_req_item) and `request_item`
+// varies by parent: incident/problem use their named references, while the
+// catalog flow uses `request` (sc_request → sc_req_item) and `request_item`
 // (sc_req_item → sc_task). Without this, opening an RITM showed no child
 // catalog tasks because we were filtering on `parent` (which is empty).
 const CHILD_REL = {
-  incident:        { table: 'incident_task', field: 'parent' },
+  incident:        { table: 'incident_task', field: 'incident' },
   change_request:  { table: 'change_task',   field: 'parent' },
-  problem:         { table: 'problem_task',  field: 'parent' },
+  problem:         { table: 'problem_task',  field: 'problem' },
   sc_request:      { table: 'sc_req_item',   field: 'request' },
   sc_req_item:     { table: 'sc_task',       field: 'request_item' },
 };
@@ -31,6 +31,8 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
   const [audits, setAudits]     = React.useState(null);
   const [atts, setAtts]         = React.useState(null);
   const [emails, setEmails]     = React.useState(null);
+  const [sidecarErrors, setSidecarErrors] = React.useState({});
+  const [relationshipErrors, setRelationshipErrors] = React.useState({});
   const [tasks, setTasks]       = React.useState([]);
   const [ciLinks, setCILinks]   = React.useState([]);
   const [slas, setSLAs]         = React.useState([]);
@@ -43,7 +45,16 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
 
   React.useEffect(() => {
     let cancel = false;
+    const markRelationshipError = (key) => {
+      if (!cancel) setRelationshipErrors(current => ({ ...current, [key]: true }));
+    };
+    const emptyOnRelationshipError = (key) => () => {
+      markRelationshipError(key);
+      return { rows: [] };
+    };
     setFullRec(null); setJournals(null); setAudits(null); setAtts(null); setEmails(null);
+    setSidecarErrors({});
+    setRelationshipErrors({});
     setTasks([]); setCILinks([]); setSLAs([]); setApprovals([]);
     setVariables({ rows: [], cat_item: null });
     setAssetCITickets(null);
@@ -62,9 +73,9 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       // "what tickets touched this laptop" view in one place.
       if (r && isAsset && r.ci) {
         Promise.all([
-          data.fetchTaskList('incident',       { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
-          data.fetchTaskList('change_request', { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
-          data.fetchTaskList('problem',        { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(() => ({ rows: [] })),
+          data.fetchTaskList('incident',       { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(emptyOnRelationshipError('asset CI tickets')),
+          data.fetchTaskList('change_request', { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(emptyOnRelationshipError('asset CI tickets')),
+          data.fetchTaskList('problem',        { filters: { cmdb_ci: r.ci }, limit: 25, slim: 1, order_by: 'sys_updated_on', dir: 'desc' }).catch(emptyOnRelationshipError('asset CI tickets')),
         ]).then(([inc, chg, prb]) => {
           if (cancel) return;
           const merged = [
@@ -77,14 +88,17 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       } else if (cancel || !r || !isAsset) {
         // leave assetCITickets null so we just hide the section
       }
-      // sysapproval_group needs its parent + group sys_ids to find the
-      // spawned approvers (they point at parent, not at the group record).
+      // sysapproval_approver.sysapproval points at the parent task while its
+      // `group` field points at this sysapproval_group record's own sys_id.
+      // Both predicates keep the join exact when a task has several approval
+      // groups.
       if (r && isGroupApproval) {
-        const grp = r.assignment_group || r.group;
-        const filters = grp ? { sysapproval: r.parent, group: grp } : { sysapproval: r.parent };
         if (r.parent) {
-          data.fetchTaskList('sysapproval_approver', { filters, limit: 100 })
-            .then(res => { if (!cancel) setApprovals(res.rows || []); }).catch(() => {});
+          data.fetchTaskList('sysapproval_approver', {
+            filters: { sysapproval: r.parent, group: r.sys_id }, limit: 100,
+          })
+            .then(res => { if (!cancel) setApprovals(res.rows || []); })
+            .catch(() => markRelationshipError('approvals'));
         }
       }
     }).catch(e => {
@@ -97,13 +111,21 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         setFullRec(false);
       }
     });
-    data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); }).catch(() => setJournals([]));
-    data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); }).catch(() => setAudits([]));
-    data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); }).catch(() => setAtts([]));
+    data.fetchJournalFor(sys_id).then(r => { if (!cancel) setJournals(r); })
+      .catch(() => { if (!cancel) { setJournals([]); setSidecarErrors(e => ({ ...e, journal: true })); } });
+    data.fetchAuditFor(sys_id).then(r => { if (!cancel) setAudits(r); })
+      .catch(() => { if (!cancel) { setAudits([]); setSidecarErrors(e => ({ ...e, audit: true })); } });
+    data.fetchAttachmentsFor(sys_id).then(r => { if (!cancel) setAtts(r); })
+      .catch(() => { if (!cancel) { setAtts([]); setSidecarErrors(e => ({ ...e, attachments: true })); } });
     // Emails tied to this record (sys_email.instance == sys_id). Metadata-only
     // by design; HR-gated at the API. Keep total to flag truncation.
     data.fetchTaskList('sys_email', { filters: { instance: sys_id }, order_by: 'sys_created_on', dir: 'desc', limit: 200, slim: 1 })
-      .then(r => { if (!cancel) setEmails(r); }).catch(() => { if (!cancel) setEmails({ rows: [], total: 0 }); });
+      .then(r => { if (!cancel) setEmails(r); }).catch(() => {
+        if (!cancel) {
+          setEmails({ rows: [], total: 0 });
+          setSidecarErrors(e => ({ ...e, emails: true }));
+        }
+      });
 
     // Per-record relationships (each is a small filtered query — was eager-
     // loaded as 422k+90k+75k rows, now 0–N rows per record). Asset records
@@ -112,12 +134,15 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       const rel = CHILD_REL[table];
       if (rel) {
         data.fetchTaskList(rel.table, { filters: { [rel.field]: sys_id }, limit: 200, slim: 1 })
-          .then(r => { if (!cancel) setTasks(r.rows || []); }).catch(() => {});
+          .then(r => { if (!cancel) setTasks(r.rows || []); })
+          .catch(() => markRelationshipError('child tasks'));
       }
       data.fetchTaskList('task_ci', { filters: { task: sys_id }, limit: 200 })
-        .then(r => { if (!cancel) setCILinks(r.rows || []); }).catch(() => {});
+        .then(r => { if (!cancel) setCILinks(r.rows || []); })
+        .catch(() => markRelationshipError('affected CIs'));
       data.fetchTaskList('task_sla', { filters: { task: sys_id }, limit: 50 })
-        .then(r => { if (!cancel) setSLAs(r.rows || []); }).catch(() => {});
+        .then(r => { if (!cancel) setSLAs(r.rows || []); })
+        .catch(() => markRelationshipError('SLAs'));
       // sysapproval_approver normally points to the parent task via
       // `sysapproval`. For a sysapproval_group record we'd usually find
       // zero direct matches; the dedicated isGroupApproval block below
@@ -126,11 +151,13 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       // [] before the second resolves).
       if (!isGroupApproval) {
         data.fetchTaskList('sysapproval_approver', { filters: { sysapproval: sys_id }, limit: 50 })
-          .then(r => { if (!cancel) setApprovals(r.rows || []); }).catch(() => {});
+          .then(r => { if (!cancel) setApprovals(r.rows || []); })
+          .catch(() => markRelationshipError('approvals'));
       }
       if (table === 'sc_req_item') {
         data.fetchVariables(sys_id)
-          .then(r => { if (!cancel) setVariables(r); }).catch(() => {});
+          .then(r => { if (!cancel) setVariables(r); })
+          .catch(() => markRelationshipError('catalog variables'));
       }
       // Group approvals routed for this parent task. Only meaningful for
       // tables that actually receive approvals (change_request,
@@ -138,7 +165,8 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
       // returns 0 cheaply, so don't bother gating.
       if (!isGroupApproval) {
         data.fetchTaskList('sysapproval_group', { filters: { parent: sys_id }, limit: 25, slim: 1 })
-          .then(r => { if (!cancel) setGroupApprovals(r.rows || []); }).catch(() => {});
+          .then(r => { if (!cancel) setGroupApprovals(r.rows || []); })
+          .catch(() => markRelationshipError('group approvals'));
       }
     }
 
@@ -166,10 +194,11 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>Record not found in this snapshot.</div>;
   }
 
-  const journalCount = journals == null ? '…' : journals.length;
-  const auditCount   = audits   == null ? '…' : audits.length;
-  const attCount     = atts     == null ? '…' : atts.length;
-  const emailCount   = emails    == null ? '…' : emails.total;
+  const journalCount = sidecarErrors.journal ? '!' : journals == null ? '…' : journals.length;
+  const auditCount   = sidecarErrors.audit ? '!' : audits == null ? '…' : audits.length;
+  const attCount     = sidecarErrors.attachments ? '!' : atts == null ? '…' : atts.length;
+  const emailCount   = sidecarErrors.emails ? '!' : emails == null ? '…' : emails.total;
+  const failedRelationships = Object.keys(relationshipErrors);
 
   return (
     <div className="record">
@@ -177,6 +206,11 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
         {isAsset
           ? <AssetRecordHeader rec={rec} table={table} />
           : <RecordHeader rec={rec} table={table} />}
+        {failedRelationships.length > 0 && (
+          <div role="alert" style={{ color: 'var(--c-amber)', fontSize: 12.5, margin: '0 0 12px', padding: '9px 11px', border: '1px solid color-mix(in srgb, var(--c-amber) 35%, transparent)', borderRadius: 6 }}>
+            Related data could not be loaded: {failedRelationships.join(', ')}. Reopen the record to retry.
+          </div>
+        )}
         {isAsset
           ? <AssetFieldsSection rec={rec} table={table} showRaw={showRaw} />
           : (window.TASK_TABLES && window.TASK_TABLES.includes(table))
@@ -216,11 +250,11 @@ window.RecordPage = function RecordPage({ table, sys_id, showRaw }) {
             Related
           </button>
         </div>
-        {tab === 'journal'     && <JournalTab     entries={journals} />}
-        {tab === 'audit'       && <AuditTab       entries={audits} table={table} />}
-        {tab === 'attachments' && <AttachmentsTab entries={atts} />}
-        {tab === 'emails'      && <EmailsTab      resp={emails} />}
-        {tab === 'related'     && <RelatedTab     rec={rec} table={table} journals={journals} />}
+        {tab === 'journal'     && <JournalTab     entries={journals} error={sidecarErrors.journal} />}
+        {tab === 'audit'       && <AuditTab       entries={audits} table={table} error={sidecarErrors.audit} />}
+        {tab === 'attachments' && <AttachmentsTab entries={atts} error={sidecarErrors.attachments} />}
+        {tab === 'emails'      && <EmailsTab      resp={emails} error={sidecarErrors.emails} />}
+        {tab === 'related'     && <RelatedTab key={rec.sys_id} rec={rec} table={table} journals={journals} />}
       </div>
     </div>
   );
@@ -235,8 +269,17 @@ function _LoadingTab({ label }) {
   );
 }
 
+function _ErrorTab({ label }) {
+  return (
+    <div className="empty">
+      <div className="glyph"><window.Icon name="info" /></div>
+      {label} could not be loaded. Retry by reopening the record.
+    </div>
+  );
+}
+
 function RecordHeader({ rec, table }) {
-  const stDec = window.decodeChoice(table === 'change_request' ? 'change_request' : 'incident', 'state', rec.state);
+  const stDec = window.decodeChoice(table, 'state', rec.state);
   const stCls = window.stateChipClass(table, rec.state);
   const isChange = window.CHANGE_STYLE_TABLES.has(table);
   return (
@@ -253,7 +296,7 @@ function RecordHeader({ rec, table }) {
       <div className="title-row">
         <span className={`chip ${stCls}`}>{stDec.label || rec.state || '—'}</span>
         {!isChange && rec.priority && (() => {
-          const prDec = window.decodeChoice('incident', 'priority', rec.priority);
+          const prDec = window.decodeChoice(table, 'priority', rec.priority);
           const bars = window.priorityBars(rec.priority);
           return (
             <span className={`chip ${window.priorityChipClass(rec.priority)}`}>
@@ -295,12 +338,16 @@ const NUMBER_PREFIX_TABLE = {
   RITM:   'sc_req_item',
   SCTASK: 'sc_task',
   ATASK:  'asset_task',
+  CMRTASK: 'sn_contract_renewal_task',
+  GAPRV:  'sysapproval_group',
+  STDCHG: 'std_change_proposal',
 };
 
 function tableFromNumber(num) {
   if (!num) return null;
   const m = String(num).match(/^([A-Z]+)\d/);
-  return m ? NUMBER_PREFIX_TABLE[m[1]] : null;
+  if (!m) return null;
+  return NUMBER_PREFIX_TABLE[m[1]] || null;
 }
 
 function ParentTaskLink({ parent_sys_id, parent_display, fallback_label }) {
@@ -323,7 +370,8 @@ function stateChipColor(state) {
   const s = (state || '').toLowerCase();
   if (s === 'approved') return 'green';
   if (s === 'rejected') return 'red';
-  if (s === 'cancelled' || s === 'no_longer_required' || s === 'duplicate') return 'gray';
+  if (s === 'cancelled' || s === 'no_longer_required' || s === 'not_required' ||
+      s === 'not requested' || s === 'duplicate') return 'gray';
   return 'amber'; // requested / pending / etc.
 }
 
@@ -346,7 +394,7 @@ function GroupApprovalsSection({ rows }) {
               <window.Icon name="users" size={12} />
               <span>{grpDisplay}</span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className={`chip ${stateChipColor(g.state)}`}>{g.__display_state || g.state || '—'}</span>
+                <span className={`chip ${stateChipColor(g.approval)}`}>{g.__display_approval || g.approval || '—'}</span>
                 <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>{g.number || g.sys_id.slice(0, 8) + '…'}</span>
               </span>
             </div>
@@ -381,13 +429,13 @@ function GroupApprovalContextSection({ rec }) {
             : <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>}
         </Field>
         <Field label="Approval state" showRaw={false}>
-          <span className={`chip ${stateChipColor(rec.state)}`}>
-            {rec.__display_state || rec.state || '—'}
+          <span className={`chip ${stateChipColor(rec.approval)}`}>
+            {rec.__display_approval || rec.approval || '—'}
           </span>
         </Field>
-        <Field label="Requested by" showRaw={false}>
-          {rec.requested_by
-            ? <RefLink kind="user" sys_id={rec.requested_by} fallback={rec.__display_requested_by} />
+        <Field label="Approval user" showRaw={false}>
+          {rec.approval_user
+            ? <RefLink kind="user" sys_id={rec.approval_user} fallback={rec.__display_approval_user} />
             : <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>—</span>}
         </Field>
       </div>
@@ -772,6 +820,10 @@ function GenericFieldsSection({ rec, table, showRaw }) {
 
 function FieldsSection({ rec, table, showRaw }) {
   const isChange = window.CHANGE_STYLE_TABLES.has(table);
+  const ciField = table === 'sc_req_item' && rec.configuration_item
+    ? 'configuration_item' : 'cmdb_ci';
+  const ciSysId = rec[ciField];
+  const ciDisplay = rec[`__display_${ciField}`];
   // Catalog upward-chain: sc_task → sc_req_item → sc_request, plus the
   // catalog item definition the form was generated from. Each link is
   // shown only when the field is populated, so non-catalog tasks (which
@@ -794,7 +846,7 @@ function FieldsSection({ rec, table, showRaw }) {
           {isChange && <Field label="Requested by" showRaw={showRaw} raw={rec.requested_by}><RefLink kind="user" sys_id={rec.requested_by} fallback={rec.__display_requested_by} /></Field>}
           <Field label="Assigned to" showRaw={showRaw} raw={rec.assigned_to}><RefLink kind="user" sys_id={rec.assigned_to} fallback={rec.__display_assigned_to} /></Field>
           <Field label="Assignment group" showRaw={showRaw} raw={rec.assignment_group}><RefLink kind="group" sys_id={rec.assignment_group} fallback={rec.__display_assignment_group} /></Field>
-          <Field label="Configuration item" showRaw={showRaw} raw={rec.cmdb_ci}><RefLink kind="ci" sys_id={rec.cmdb_ci} fallback={rec.__display_cmdb_ci} /></Field>
+          <Field label="Configuration item" showRaw={showRaw} raw={ciSysId}><RefLink kind="ci" sys_id={ciSysId} fallback={ciDisplay} /></Field>
           {rec.location && <Field label="Location" showRaw={showRaw} raw={rec.location}><RefLink kind="location" sys_id={rec.location} fallback={rec.__display_location} /></Field>}
         </div>
       </div>
@@ -831,10 +883,10 @@ function FieldsSection({ rec, table, showRaw }) {
           <h3>Classification</h3>
           <div className="fields">
             {(() => {
-              const pr = window.decodeChoice('incident', 'priority', rec.priority);
-              const im = window.decodeChoice('incident', 'priority', rec.impact);
-              const ur = window.decodeChoice('incident', 'priority', rec.urgency);
-              const st = window.decodeChoice('incident', 'state', rec.state);
+              const pr = window.decodeChoice(table, 'priority', rec.priority);
+              const im = window.decodeChoice(table, 'impact', rec.impact);
+              const ur = window.decodeChoice(table, 'urgency', rec.urgency);
+              const st = window.decodeChoice(table, 'state', rec.state);
               return <>
                 <Field label="Priority" showRaw={showRaw} raw={pr.value}>{pr.label || rec.priority || '—'}</Field>
                 <Field label="Impact" showRaw={showRaw} raw={im.value}>{im.label || rec.impact || '—'}</Field>
@@ -867,7 +919,7 @@ function FieldsSection({ rec, table, showRaw }) {
           <Field label="Resolved at" showRaw={false}>{rec.resolved_at ? window.fmtDate(rec.resolved_at) : <span style={{ color: 'var(--fg-4)' }}>—</span>}</Field>
           <Field label="Closed at" showRaw={false}>{rec.closed_at ? window.fmtDate(rec.closed_at) : <span style={{ color: 'var(--fg-4)' }}>—</span>}</Field>
           {rec.close_code && (() => {
-            const cc = window.decodeChoice('incident', 'close_code', rec.close_code);
+            const cc = window.decodeChoice(table, 'close_code', rec.close_code);
             return <Field label="Close code" showRaw={showRaw} raw={cc.value}>{cc.label}</Field>;
           })()}
           {rec.close_notes && (
@@ -891,11 +943,13 @@ function TasksSection({ tasks, table }) {
       <h3>{heading} <span className="count">{tasks.length}</span></h3>
       <div className="related-list" style={{ padding: 0, marginBottom: 12 }}>
         {tasks.map(t => (
-          <div key={t.sys_id} className="related-item"
+            <div key={t.sys_id} className="related-item"
                onClick={() => childTable && window.navigate(window.recordUrl(childTable, t.sys_id))}>
             <span className="num">{t.number}</span>
             <span className="desc">{t.short_description}</span>
-            <span className="chip green">closed</span>
+            <span className={`chip ${window.stateChipClass(childTable, t.state)}`}>
+              {window.decodeChoice(childTable, 'state', t.state).label || t.state || '—'}
+            </span>
           </div>
         ))}
       </div>
@@ -1004,13 +1058,13 @@ function AffectedCIsSection({ ciLinks }) {
           const ci = window.findCI(l.ci);
           return (
             <div key={l.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)', cursor: 'pointer' }}
-                 onClick={() => window.navigate(`/cis/${ci.sys_id}`)}>
+                 onClick={() => l.ci && window.navigate(`/cis/${l.ci}`)}>
               <window.Icon name="ci" size={12} />
-              <span className="mono" style={{ fontSize: 12.5 }}>{ci?.name}</span>
+              <span className="mono" style={{ fontSize: 12.5 }}>{ci?.name || l.__display_ci_item || l.__display_ci || sys_id_short(l.ci)}</span>
               <span className="muted" style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{ci?.sys_class_name}</span>
-              <span style={{ marginLeft: 'auto' }}>
+              {ci?.operational_status && <span style={{ marginLeft: 'auto' }}>
                 <span className={`chip ${ci?.operational_status === 'Operational' ? 'green' : ci?.operational_status === 'Degraded' ? 'amber' : 'red'}`}>{ci?.operational_status}</span>
-              </span>
+              </span>}
             </div>
           );
         })}
@@ -1026,14 +1080,14 @@ function ApprovalsSection({ approvals }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 14 }}>
         {approvals.map(a => {
           const groupDisplay = a.group
-            ? (a.__display_group || window.findGroup(a.group)?.name || sys_id_short(a.group))
+            ? (a.__display_group || `approval group ${sys_id_short(a.group)}`)
             : null;
           return (
             <div key={a.sys_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-elev)' }}>
               <window.UserCell sys_id={a.approver} displayName={a.__display_approver} />
               {groupDisplay && (
                 <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
-                  via <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(`/groups/${a.group}`); }}>{groupDisplay}</span>
+                  via <span className="ref-link" onClick={(e) => { e.stopPropagation(); window.navigate(window.recordUrl('sysapproval_group', a.group)); }}>{groupDisplay}</span>
                 </span>
               )}
               <span style={{ marginLeft: 'auto' }}>
@@ -1062,8 +1116,9 @@ function ManifestFooter({ rec }) {
 }
 
 // ----- Tabs -----
-function JournalTab({ entries }) {
+function JournalTab({ entries, error }) {
   if (entries == null) return <_LoadingTab label="loading journal…" />;
+  if (error) return <_ErrorTab label="Journal" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="book" /></div>No journal entries.</div>;
   }
@@ -1096,16 +1151,19 @@ function JournalTab({ entries }) {
   );
 }
 
-function AuditTab({ entries, table }) {
+function AuditTab({ entries, table, error }) {
   if (entries == null) return <_LoadingTab label="loading history…" />;
+  if (error) return <_ErrorTab label="History" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="history" /></div>No audit entries.</div>;
   }
   const renderVal = (a, val) => {
     if (val == null || val === '') return <span style={{ color: 'var(--fg-4)' }}>—</span>;
     if (a.fieldname === 'state') return window.decodeChoice(table, 'state', val).label;
-    if (a.fieldname === 'priority') return window.decodeChoice('incident', 'priority', val).label;
-    if (a.fieldname === 'close_code') return window.decodeChoice('incident', 'close_code', val).label;
+    if (a.fieldname === 'priority') return window.decodeChoice(table, 'priority', val).label;
+    if (a.fieldname === 'impact') return window.decodeChoice(table, 'impact', val).label;
+    if (a.fieldname === 'urgency') return window.decodeChoice(table, 'urgency', val).label;
+    if (a.fieldname === 'close_code') return window.decodeChoice(table, 'close_code', val).label;
     if (a.fieldname === 'assigned_to' || a.fieldname === 'caller_id') {
       const u = window.findUser(val);
       return u ? u.name : <span className="mono" style={{ fontSize: 11.5 }}>{val.slice(0, 12)}…</span>;
@@ -1130,8 +1188,9 @@ function AuditTab({ entries, table }) {
   );
 }
 
-function EmailsTab({ resp }) {
+function EmailsTab({ resp, error }) {
   if (resp == null) return <_LoadingTab label="loading emails…" />;
+  if (error) return <_ErrorTab label="Emails" />;
   const rows = resp.rows || [];
   if (!rows.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="info" /></div>No emails on this record.</div>;
@@ -1159,8 +1218,9 @@ function EmailsTab({ resp }) {
   );
 }
 
-function AttachmentsTab({ entries }) {
+function AttachmentsTab({ entries, error }) {
   if (entries == null) return <_LoadingTab label="loading attachments…" />;
+  if (error) return <_ErrorTab label="Attachments" />;
   if (!entries.length) {
     return <div className="empty"><div className="glyph"><window.Icon name="paperclip" /></div>No attachments.</div>;
   }
@@ -1169,7 +1229,7 @@ function AttachmentsTab({ entries }) {
   // with '_', cap at 200 chars. Falls back to 'file' for empty input.
   const safeFilename = (n) => {
     if (!n) return 'file';
-    const s = n.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200);
+    const s = n.replace(/[^A-Za-z0-9._-]/gu, '_').slice(0, 200);
     return s || 'file';
   };
   // Mirror the exporter's two-char hex sharding (first 2 chars of sys_id).
@@ -1199,68 +1259,129 @@ function AttachmentsTab({ entries }) {
 function RelatedTab(props) {
   const { rec, table } = props;
   const data = window.HistoricalWowData;
-  // Other records on the same CI — search across every loaded task table,
-  // not just incidents, since a CI is referenced from any task type.
-  let items = [];
-  if (rec.cmdb_ci) {
-    const buckets = window.TASK_TABLES || ['incident', 'change_request'];
-    for (const t of buckets) {
-      const arr = window.getTaskRecords(t);
-      for (const r of arr) {
-        if (r.cmdb_ci === rec.cmdb_ci && r.sys_id !== rec.sys_id) {
-          items.push({ rec: r, table: t });
-          if (items.length >= 8) break;
-        }
-      }
-      if (items.length >= 8) break;
-    }
-  }
+  const [items, setItems] = React.useState(null);
+  const [resolvedRefs, setResolvedRefs] = React.useState(null);
+  const [relatedError, setRelatedError] = React.useState(false);
+  const ciSysId = table === 'sc_req_item'
+    ? (rec.configuration_item || rec.cmdb_ci) : rec.cmdb_ci;
+
   // Journal mentions: any of ServiceNow's standard prefixes for a task or KB.
-  // `journals` is passed in by RecordPage (already fetched via API). Null
-  // while loading; treat as empty until then.
   const allJournals = props.journals || [];
   const refs = new Set();
+  const mentionPrefixes = [...Object.keys(NUMBER_PREFIX_TABLE), 'TASK', 'KB']
+    .sort((a, b) => b.length - a.length).join('|');
+  const mentionPattern = new RegExp(`(?:${mentionPrefixes})\\d+`, 'g');
   for (const j of allJournals) {
-    const m = (j.value || '').match(/(INC\d+|CHG\d+|PRB\d+|RITM\d+|REQ\d+|SCTASK\d+|TASK\d+|KB\d+)/g);
+    const m = (j.value || '').match(mentionPattern);
     if (m) m.forEach(x => refs.add(x));
   }
-  // Resolve each reference against any loaded task table.
-  const findByNumber = (num) => {
+  const refNumbers = [...refs].slice(0, 25);
+  const refKey = refNumbers.join(',');
+
+  React.useEffect(() => {
+    let cancelled = false;
     const tables = window.TASK_TABLES || ['incident', 'change_request'];
-    for (const t of tables) {
-      const arr = window.getTaskRecords(t);
-      const hit = arr.find(r => r.number === num);
-      if (hit) return { rec: hit, table: t };
+    setItems(null);
+    setRelatedError(false);
+    if (!ciSysId) {
+      setItems([]);
+      return () => { cancelled = true; };
     }
-    return null;
-  };
+    Promise.all(tables.map(t =>
+      data.fetchTaskList(t, {
+        filters: { [t === 'sc_req_item' ? 'configuration_item' : 'cmdb_ci']: ciSysId },
+        limit: 9, slim: 1,
+        order_by: 'sys_updated_on', dir: 'desc',
+      }).then(resp => ({
+        rows: (resp.rows || []).map(r => ({ rec: r, table: t })), error: false,
+      })).catch(() => ({ rows: [], error: true }))
+    )).then(groups => {
+      if (cancelled) return;
+      const seen = new Set();
+      const merged = groups.flatMap(group => group.rows)
+        .filter(x => x.rec.sys_id !== rec.sys_id)
+        .filter(x => {
+          const key = `${x.table}:${x.rec.sys_id}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => (b.rec.sys_updated_on || '').localeCompare(a.rec.sys_updated_on || ''))
+        .slice(0, 8);
+      setRelatedError(groups.some(group => group.error));
+      setItems(merged);
+    });
+    return () => { cancelled = true; };
+  }, [rec.sys_id, ciSysId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setResolvedRefs(null);
+    if (!refNumbers.length) {
+      setResolvedRefs({});
+      return () => { cancelled = true; };
+    }
+    const tableFor = (number) => tableFromNumber(number);
+    Promise.all(refNumbers.map(async number => {
+      try {
+        if (number.startsWith('KB')) {
+          const resp = await data.fetchTaskList('kb_knowledge', {
+            q: number, limit: 8, slim: 1,
+          });
+          const hit = (resp.rows || []).find(row => row.number === number);
+          return [number, hit ? { rec: hit, table: 'kb_knowledge' } : null];
+        }
+        const expected = tableFor(number);
+        const rows = await data.fetchSearch(number, expected ? [expected] : undefined);
+        const hit = rows.find(row => row.number === number);
+        return [number, hit ? { rec: hit, table: hit._table || expected } : null];
+      } catch (_) {
+        return [number, { error: true }];
+      }
+    })).then(entries => {
+      if (!cancelled) setResolvedRefs(Object.fromEntries(entries));
+    });
+    return () => { cancelled = true; };
+  }, [rec.sys_id, refKey]);
+
+  const relatedItems = items || [];
   return (
     <div className="related-list">
-      <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--fg-3)', margin: '4px 0 8px' }}>Same CI · {items.length}</div>
-      {items.length === 0 && <div style={{ color: 'var(--fg-4)', fontSize: 12.5, padding: '6px 0' }}>No other records on this CI in snapshot.</div>}
-      {items.map(({ rec: i, table: t }) => (
+      <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--fg-3)', margin: '4px 0 8px' }}>Same CI · {items == null ? '…' : relatedItems.length}</div>
+      {items == null && <_LoadingTab label="loading related records…" />}
+      {relatedError && <div style={{ color: 'var(--c-amber)', fontSize: 12.5, padding: '6px 0' }}>Some record types could not be checked.</div>}
+      {items != null && !relatedError && relatedItems.length === 0 && <div style={{ color: 'var(--fg-4)', fontSize: 12.5, padding: '6px 0' }}>No other records on this CI in snapshot.</div>}
+      {relatedItems.map(({ rec: i, table: t }) => (
         <div key={i.sys_id} className="related-item" onClick={() => window.navigate(window.recordUrl(t, i.sys_id))}>
           <span className="num">{i.number}</span>
           <span className="desc">{i.short_description}</span>
-          <span className={`chip ${window.stateChipClass('incident', i.state)}`}>{window.decodeChoice('incident', 'state', i.state).label || i.state}</span>
+          <span className={`chip ${window.stateChipClass(t, i.state)}`}>{window.decodeChoice(t, 'state', i.state).label || i.state}</span>
         </div>
       ))}
       {refs.size > 0 && (
         <>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--fg-3)', margin: '16px 0 8px' }}>Mentioned in journal · {refs.size}</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {[...refs].map(r => {
-              const found = findByNumber(r);
+            {refNumbers.map(r => {
+              const found = resolvedRefs && resolvedRefs[r];
+              const lookupError = found && found.error;
               const target = found?.rec;
               const targetTable = found?.table;
               return (
                 <span key={r} className="chip" style={{ cursor: target ? 'pointer' : 'default' }}
                   onClick={() => target && window.navigate(window.recordUrl(targetTable, target.sys_id))}>
                   <window.Icon name="link" size={10} />
-                  {r}{!target && <span style={{ color: 'var(--fg-4)' }}> · not loaded</span>}
+                  {r}{resolvedRefs == null && <span style={{ color: 'var(--fg-4)' }}> · checking…</span>}
+                  {resolvedRefs != null && lookupError && <span style={{ color: 'var(--fg-4)' }}> · lookup failed</span>}
+                  {resolvedRefs != null && !lookupError && !target && <span style={{ color: 'var(--fg-4)' }}> · not in snapshot</span>}
                 </span>
               );
             })}
+            {refs.size > refNumbers.length && (
+              <span style={{ color: 'var(--fg-4)', fontSize: 11.5 }}>
+                +{refs.size - refNumbers.length} more mentions not checked
+              </span>
+            )}
           </div>
         </>
       )}

@@ -394,6 +394,347 @@ a { color: inherit; text-decoration: none; }
   font-size: 12px; color: var(--fg-3); font-family: var(--font-mono);
 }
 
+/* Task list facets + URL-backed query ledger */
+.page-header .sub a { color: var(--accent-2); cursor: pointer; text-decoration: none; }
+.facet-select,
+.task-search-input,
+.date-filter input {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--fg-2);
+  font: 12px var(--font-sans);
+  outline: none;
+}
+.facet-select { max-width: 210px; }
+.task-search-input { width: 210px; }
+.facet-select:focus-visible,
+.task-search-input:focus-visible,
+.date-filter input:focus-visible,
+.analytics-records-button:focus-visible,
+.analytics-rank-row:focus-visible,
+.subcategory-rank-row:focus-visible,
+.analytics-summary:focus-visible,
+.active-filter-chip:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.task-filter-more {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 9px;
+}
+.date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-3);
+  font-size: 11.5px;
+}
+.active-filter-ledger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+}
+.active-filter-chip,
+.clear-filter-button {
+  border: 0;
+  font: 11px var(--font-mono);
+  cursor: pointer;
+}
+.active-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+}
+.clear-filter-button { padding: 4px 6px; background: transparent; color: var(--fg-4); }
+.clear-filter-button:hover { color: var(--fg); }
+.metric-drill-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent-2);
+  font: inherit;
+  cursor: pointer;
+}
+.metric-drill-link:hover,
+.metric-drill-link:focus-visible { border-color: var(--accent-border); background: var(--accent-bg); outline: none; }
+.filter-warning {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--c-amber);
+  background: color-mix(in oklch, var(--c-amber) 9%, transparent);
+  color: var(--fg-2);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.classification-cell { color: var(--fg-2); font-size: 12px; }
+.classification-cell small { display: block; margin-top: 2px; color: var(--fg-4); }
+.list-message { padding: 48px 20px !important; color: var(--fg-4); text-align: center; }
+
+/* Task analysis. The query clause under every ranked value is the signature:
+   the dashboard reads as a ledger of reproducible archive queries, not a
+   decorative BI summary. */
+.task-analytics-page {
+  width: min(1260px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 30px 0 64px;
+}
+.task-analytics-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.analytics-eyebrow {
+  color: var(--accent-2);
+  font: 600 10.5px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+}
+.task-analytics-header h1 {
+  margin: 7px 0 7px;
+  color: var(--fg);
+  font-size: clamp(22px, 2.4vw, 31px);
+  font-weight: 600;
+  letter-spacing: -.035em;
+}
+.task-analytics-header p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--fg-3);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.analytics-actions { display: flex; align-items: flex-end; gap: 9px; flex-shrink: 0; }
+.analytics-actions label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--fg-4);
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.analytics-actions .facet-select { min-width: 185px; text-transform: none; letter-spacing: 0; }
+.analytics-records-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.analytics-summary-ledger {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.analytics-summary {
+  min-width: 0;
+  padding: 13px 15px 12px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-family: inherit;
+}
+.analytics-summary:last-child { border-right: 0; }
+.analytics-summary.is-linked { cursor: pointer; }
+.analytics-summary.is-linked:hover { background: var(--hover); }
+.analytics-summary > span { display: block; color: var(--fg-3); font-size: 11px; }
+.analytics-summary > strong {
+  display: block;
+  margin: 5px 0 2px;
+  color: var(--fg);
+  font: 600 21px var(--font-mono);
+  letter-spacing: -.03em;
+}
+.analytics-summary > small { color: var(--fg-4); font: 10.5px var(--font-mono); }
+.analytics-grid { display: grid; gap: 18px; margin-bottom: 18px; }
+.analytics-grid-primary { grid-template-columns: 1.2fr .8fr; }
+.analytics-grid-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.analytics-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.analytics-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  min-height: 61px;
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid var(--border);
+}
+.analytics-panel-heading h2 {
+  margin: 0 0 4px;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .075em;
+}
+.analytics-panel-heading p { margin: 0; color: var(--fg-4); font-size: 11px; line-height: 1.4; }
+.analytics-panel-heading > span {
+  flex-shrink: 0;
+  color: var(--fg-4);
+  font: 10.5px var(--font-mono);
+}
+.analytics-panel-empty,
+.analytics-empty { padding: 32px 18px; color: var(--fg-4); font-size: 12px; text-align: center; }
+.analytics-rank-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 54px;
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.analytics-rank-row:hover,
+.subcategory-rank-row:hover { background: var(--hover); }
+.analytics-rank-number { color: var(--fg-4); font: 10px var(--font-mono); }
+.analytics-rank-main { min-width: 0; }
+.analytics-rank-label { display: block; overflow: hidden; color: var(--fg-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.analytics-query-clause {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--accent-2);
+  font: 9.5px var(--font-mono);
+  opacity: .75;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.analytics-rank-track,
+.subcategory-track {
+  display: block;
+  height: 2px;
+  margin-top: 6px;
+  background: var(--bg-3);
+}
+.analytics-rank-track > span,
+.subcategory-track > span { display: block; height: 100%; background: var(--accent); }
+.analytics-rank-count { color: var(--fg-2); font: 11px var(--font-mono); text-align: right; }
+.analytics-rank-count small,
+.subcategory-rank-row > strong small { display: block; margin-top: 2px; color: var(--fg-4); font-size: 9px; }
+.analytics-show-all {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--accent-2);
+  font: 10.5px var(--font-mono);
+  cursor: pointer;
+}
+.analytics-subcategory-panel { margin-bottom: 18px; }
+.subcategory-ranking {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.subcategory-rank-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 14px;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  min-height: 62px;
+  padding: 9px 13px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.subcategory-rank-row:nth-child(even) { border-right: 0; }
+.subcategory-path { display: flex; align-items: center; min-width: 0; gap: 6px; color: var(--fg-3); font-size: 11.5px; }
+.subcategory-path b,
+.subcategory-path span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subcategory-path b { color: var(--fg-2); font-weight: 500; }
+.subcategory-rank-row .analytics-query-clause { grid-column: 1; }
+.subcategory-track { grid-column: 1 / 2; }
+.subcategory-rank-row > strong { grid-column: 2; grid-row: 1 / 3; color: var(--fg-2); font: 11px var(--font-mono); text-align: right; }
+.subcategory-rank-row > svg { grid-column: 3; grid-row: 1 / 3; }
+.unused-choice-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.unused-choice-list span { min-width: 0; }
+.unused-choice-list b { display: block; overflow: hidden; color: var(--fg-2); font-size: 11.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.unused-choice-list small { display: block; margin-top: 2px; color: var(--fg-4); font-size: 9.5px; }
+.unused-choice-list em { color: var(--fg-4); font: normal 9px var(--font-mono); text-transform: uppercase; }
+.unused-choice-list strong { color: var(--fg-4); font: 11px var(--font-mono); text-align: right; }
+
+@media (max-width: 980px) {
+  .task-analytics-page { width: min(100% - 28px, 900px); }
+  .task-analytics-header { align-items: flex-start; flex-direction: column; }
+  .analytics-summary-ledger { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .analytics-summary { border-bottom: 1px solid var(--border); }
+  .analytics-grid-primary,
+  .analytics-grid-secondary { grid-template-columns: 1fr; }
+  .subcategory-ranking { grid-template-columns: 1fr; }
+  .subcategory-rank-row { border-right: 0; }
+}
+
+@media (max-width: 680px) {
+  .task-analytics-page { width: calc(100% - 20px); padding-top: 20px; }
+  .analytics-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .analytics-actions .facet-select { max-width: none; width: 100%; }
+  .analytics-records-button { justify-content: center; }
+  .analytics-summary-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analytics-summary { border-right: 1px solid var(--border); }
+  .task-search-input { width: 100%; }
+  .analytics-rank-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .analytics-rank-row > svg { display: none; }
+}
+
 /* Tables */
 .dt {
   width: 100%;
@@ -1235,6 +1576,13 @@ window.HistoricalWowData = (function () {
     return apiGet('/api/cmdb/metrics');
   };
 
+  // Indexed task-table distributions for the analytics page and list facets.
+  // The server applies the same HR visibility rule as /api/<table> and returns
+  // `indexed_columns` so an older DB never exposes a filter it cannot honor.
+  data.fetchTaskMetrics = async function (table) {
+    return apiGet(`/api/task/metrics/${encodeURIComponent(table)}`);
+  };
+
   data.fetchSearch = async function (q, types) {
     const params = new URLSearchParams({ q });
     if (types && types.length) params.set('types', types.join(','));
@@ -1452,7 +1800,7 @@ window.TABLE_TO_URL = Object.fromEntries(
 
 function parseHash() {
   const h = window.location.hash.replace(/^#/, '') || '/';
-  const [path, qs] = h.split('?');
+  const [path, qs = ''] = h.split('?');
   const parts = path.split('/').filter(Boolean);
   // /                            -> { view: 'home' }
   // /<friendly>                  -> { view: 'list', table }
@@ -1486,14 +1834,20 @@ function parseHash() {
   if (parts[0] === 'tasks') {
     if (parts.length === 1) return { view: 'home' };
     const t = parts[1];
-    if (parts.length === 2) return { view: 'list', table: t };
+    if (parts.length === 2) return { view: 'list', table: t, query: qs };
+    if (parts.length === 3 && parts[2] === 'analytics' && (window.TASK_TABLES || []).includes(t)) {
+      return { view: 'task_analytics', table: t, query: qs };
+    }
     return { view: 'record', table: t, sys_id: parts[2] };
   }
 
   const table = window.URL_TO_TABLE[parts[0]];
   if (!table) return { view: 'home' };
   if (table === 'audit_log') return { view: 'audit_log' };
-  if (parts.length === 1) return { view: 'list', table };
+  if (parts.length === 1) return { view: 'list', table, query: qs };
+  if (parts.length === 2 && parts[1] === 'analytics' && (window.TASK_TABLES || []).includes(table)) {
+    return { view: 'task_analytics', table, query: qs };
+  }
   return { view: 'record', table, sys_id: parts[1] };
 }
 
@@ -1520,6 +1874,24 @@ window.listUrl = function (table) {
   const slug = window.TABLE_TO_URL[table];
   return slug ? `/${slug}` : `/tasks/${table}`;
 };
+window.urlWithQuery = function urlWithQuery(path, values) {
+  const params = values instanceof URLSearchParams ? values : new URLSearchParams();
+  if (!(values instanceof URLSearchParams)) {
+    for (const [key, value] of Object.entries(values || {})) {
+      if (value != null && value !== '') params.set(key, value);
+    }
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+};
+window.filteredListUrl = function filteredListUrl(table, filters, q) {
+  const values = { ...(filters || {}) };
+  if (q) values.q = q;
+  return window.urlWithQuery(window.listUrl(table), values);
+};
+window.taskAnalyticsUrl = function taskAnalyticsUrl(table) {
+  return `${window.listUrl(table)}/analytics`;
+};
 
 // Tables whose record detail follows the change-request layout (Type, Risk,
 // Start/End dates, Requested by). Everything else uses the incident layout
@@ -1532,9 +1904,14 @@ window.CHANGE_STYLE_TABLES = new Set([
 window.decodeChoice = function (table, element, value) {
   const data = window.HistoricalWowData;
   if (value == null || value === '') return { label: '', value: '' };
-  // Try table-specific first, then fall back to common
-  const c = data.sys_choice.find(
+  // Try the concrete table first, then the inherited task definition. Task
+  // list rows also carry __display_<field>; this is the fallback for slim or
+  // older payloads where that display value is unavailable.
+  const exact = data.sys_choice.find(
     (c) => c.table === table && c.element === element && String(c.value) === String(value)
+  );
+  const c = exact || data.sys_choice.find(
+    (c) => c.table === 'task' && c.element === element && String(c.value) === String(value)
   );
   return { label: c ? c.label : String(value), value: String(value) };
 };
@@ -2049,73 +2426,227 @@ const ListPage = window.ListPage = function ListPage({ table }) {
 
 // ---- generic paginated task list (fetches via /api/<table>) ---------------
 
+const TASK_FILTER_KEYS = [
+  'active', 'state', 'priority', 'impact', 'urgency', 'category', 'subcategory',
+  'contact_type', 'assignment_group', 'opened_at_after', 'opened_at_before',
+];
+
+function readTaskListQuery() {
+  const query = (window.location.hash.split('?')[1] || '').split('#')[0];
+  const params = new URLSearchParams(query);
+  const filters = Object.fromEntries(TASK_FILTER_KEYS.map(key => [key, params.get(key) || '']));
+  // Preserve any additional indexed table-specific filter supplied by a
+  // dashboard (for example sc_req_item.cat_item or change_request.type).
+  // Capability validation below blocks it if the current DB cannot honor it.
+  for (const [key, value] of params.entries()) {
+    if (!['q', 'order_by', 'dir', 'limit', 'offset', 'slim'].includes(key) && !(key in filters)) {
+      filters[key] = value;
+    }
+  }
+  const requestedOrder = params.get('order_by') || 'sys_updated_on';
+  return {
+    q: params.get('q') || '',
+    filters,
+    orderBy: ['sys_updated_on', 'opened_at', 'number'].includes(requestedOrder)
+      ? requestedOrder : 'sys_updated_on',
+    dir: params.get('dir') === 'asc' ? 'asc' : 'desc',
+  };
+}
+
 function TaskList({ table }) {
   const data = window.HistoricalWowData;
-  const [q, setQ] = React.useState('');
-  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const initial = React.useMemo(() => readTaskListQuery(), [table]);
+  const [q, setQ] = React.useState(initial.q);
+  const [debouncedQ, setDebouncedQ] = React.useState(initial.q);
+  const [filters, setFilters] = React.useState(initial.filters);
+  const [orderBy, setOrderBy] = React.useState(initial.orderBy);
+  const [dir, setDir] = React.useState(initial.dir);
+  const [moreOpen, setMoreOpen] = React.useState(
+    Boolean(initial.filters.contact_type || initial.filters.assignment_group ||
+            initial.filters.opened_at_after || initial.filters.opened_at_before)
+  );
   const [page, setPage] = React.useState(0);
   const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [metrics, setMetrics] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [metricsError, setMetricsError] = React.useState(false);
 
-  // Debounce q so we don't fire a query on every keystroke
+  React.useEffect(() => {
+    let cancelled = false;
+    setMetrics(null); setMetricsError(false);
+    data.fetchTaskMetrics(table)
+      .then(m => { if (!cancelled) setMetrics(m); })
+      .catch(() => { if (!cancelled) { setMetrics({ indexed_columns: [], dimensions: {} }); setMetricsError(true); } });
+    return () => { cancelled = true; };
+  }, [table, data.hrStatus && data.hrStatus.unlocked]);
+
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 250);
     return () => clearTimeout(t);
   }, [q]);
 
-  // Reset to page 0 on q change
-  React.useEffect(() => { setPage(0); }, [debouncedQ, table]);
+  const filterKey = JSON.stringify(filters);
+  React.useEffect(() => { setPage(0); }, [debouncedQ, filterKey, orderBy, dir, table]);
+
+  // Keep refinements shareable without causing a hashchange/remount on every
+  // select. A navigation from elsewhere still remounts this page because App
+  // keys ListPage by the route's original query string.
+  React.useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedQ) params.set('q', debouncedQ);
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+    if (orderBy !== 'sys_updated_on') params.set('order_by', orderBy);
+    if (dir !== 'desc') params.set('dir', dir);
+    const next = window.urlWithQuery(window.listUrl(table), params);
+    if (window.location.hash !== `#${next}`) history.replaceState(null, '', `#${next}`);
+  }, [table, debouncedQ, filterKey, orderBy, dir]);
+
+  const indexed = new Set((metrics && metrics.indexed_columns) || []);
+  const requestedFilters = Object.entries(filters).filter(([, value]) => value);
+  const unsupported = metrics ? requestedFilters.filter(([key]) => {
+    const base = key.endsWith('_after') ? key.slice(0, -6)
+      : key.endsWith('_before') ? key.slice(0, -7) : key;
+    return !indexed.has(base);
+  }).map(([key]) => key) : [];
 
   React.useEffect(() => {
+    if (!metrics) return;
+    if (unsupported.length) {
+      setResp({ rows: [], total: 0, unsupported: true });
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
+    const activeFilters = Object.fromEntries(
+      Object.entries(filters).filter(([key, value]) => value && (
+        indexed.has(key) ||
+        (key.endsWith('_after') && indexed.has(key.slice(0, -6))) ||
+        (key.endsWith('_before') && indexed.has(key.slice(0, -7)))
+      ))
+    );
     data.fetchTaskList(table, {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      // Full envelope (not slim) so reference fields carry __display_<field>
-      // for cases where findUser/findGroup miss in the lookup map.
-      order_by: 'sys_updated_on',
-      dir: 'desc',
+      filters: activeFilters,
+      // Full envelope (not slim) so reference and choice display values are
+      // available even when a compact lookup has not loaded yet.
+      order_by: indexed.has(orderBy) ? orderBy : 'sys_id',
+      dir,
     }).then(r => {
       if (cancelled) return;
-      setResp(r);
-      setLoading(false);
+      setResp(r); setLoading(false);
     }).catch(e => {
       if (cancelled) return;
       console.warn('TaskList fetch failed:', e);
-      setResp({ rows: [], total: 0 });
-      setLoading(false);
+      setResp({ rows: [], total: 0 }); setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [table, debouncedQ, page]);
+  }, [table, debouncedQ, page, filterKey, orderBy, dir, metrics]);
 
+  const dimensions = (metrics && metrics.dimensions) || {};
   const label = window.taskLabel(table, 'plural');
   const manifestEntry = data.manifest.tables.find(t => t.table === table);
   const sourceCount = manifestEntry ? manifestEntry.source_rows.toLocaleString() : '?';
   const total = resp.total || 0;
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const setFilter = (key, value) => setFilters(prev => {
+    const next = { ...prev, [key]: value };
+    if (key === 'category') next.subcategory = '';
+    return next;
+  });
+  const clearAll = () => {
+    setQ('');
+    setFilters(Object.fromEntries(Object.keys(filters).map(key => [key, ''])));
+  };
+  const hasFilters = Boolean(q || requestedFilters.length);
+  const optionsFor = (key) => dimensions[key] || [];
+  const categoryValues = new Set(String(filters.category || '').split(',').filter(Boolean));
+  const subcategoryOptions = filters.category && metrics
+    ? [...new Map((metrics.subcategory_pairs || [])
+        .filter(item => categoryValues.has(item.category))
+        .map(item => [item.value, { value: item.value, label: item.label, count: item.count }])).values()]
+        .sort((a, b) => b.count - a.count)
+    : optionsFor('subcategory');
+  const filterLabel = (key, value) => {
+    if (key === 'opened_at_after') return `Opened from ${value}`;
+    if (key === 'opened_at_before') return `Opened before ${value}`;
+    const pool = key === 'subcategory' ? subcategoryOptions : optionsFor(key);
+    const hit = pool.find(item => item.value === value);
+    const names = {
+      active: 'Status', state: 'State', priority: 'Priority', category: 'Category',
+      impact: 'Impact', urgency: 'Urgency', subcategory: 'Subcategory',
+      contact_type: 'Channel', assignment_group: 'Group',
+    };
+    return `${names[key] || key}: ${hit ? hit.label : value}`;
+  };
+  const showClassification = indexed.has('category') || indexed.has('subcategory');
+  const colSpan = showClassification ? 8 : 7;
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header task-list-header">
         <h1>{label} <span className="count mono">{sourceCount}</span></h1>
         <div className="sub">
           <span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> ·
           {' '}{total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}
+          {' · '}<a href={`#${window.taskAnalyticsUrl(table)}`}>analysis →</a>
         </div>
-        <div className="toolbar">
+        <div className="toolbar task-filter-bar">
+          {optionsFor('active').length > 0 && <FacetSelect label="Any activity" value={filters.active} items={optionsFor('active')} onChange={v => setFilter('active', v)} />}
+          {optionsFor('state').length > 0 && <FacetSelect label="Any state" value={filters.state} items={optionsFor('state')} onChange={v => setFilter('state', v)} />}
+          {optionsFor('priority').length > 0 && <FacetSelect label="Any priority" value={filters.priority} items={optionsFor('priority')} onChange={v => setFilter('priority', v)} />}
+          {optionsFor('category').length > 0 && <FacetSelect label="Any category" value={filters.category} items={optionsFor('category')} onChange={v => setFilter('category', v)} />}
+          {subcategoryOptions.length > 0 && <FacetSelect label="Any subcategory" value={filters.subcategory} items={subcategoryOptions} onChange={v => setFilter('subcategory', v)} />}
+          <button className={'filter-pill' + (moreOpen ? ' active' : '')} onClick={() => setMoreOpen(v => !v)}>
+            <window.Icon name="filter" size={12} /> More filters
+          </button>
           <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search number or short description…"
-            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 280 }} />
+          <input className="task-search-input" value={q} onChange={e => setQ(e.target.value)} placeholder="Number or description…" />
+          <select className="facet-select" value={`${orderBy}:${dir}`} onChange={e => {
+            const [field, direction] = e.target.value.split(':'); setOrderBy(field); setDir(direction);
+          }} aria-label="Sort records">
+            <option value="sys_updated_on:desc">Recently updated</option>
+            <option value="opened_at:desc">Recently opened</option>
+            <option value="number:asc">Number A–Z</option>
+          </select>
           <Pager page={page} setPage={setPage} lastPage={lastPage} />
         </div>
+        {moreOpen && (
+          <div className="task-filter-more">
+            {optionsFor('assignment_group').length > 0 && <FacetSelect label="Any assignment group" value={filters.assignment_group} items={optionsFor('assignment_group')} onChange={v => setFilter('assignment_group', v)} />}
+            {optionsFor('contact_type').length > 0 && <FacetSelect label="Any contact channel" value={filters.contact_type} items={optionsFor('contact_type')} onChange={v => setFilter('contact_type', v)} />}
+            {optionsFor('impact').length > 0 && <FacetSelect label="Any impact" value={filters.impact} items={optionsFor('impact')} onChange={v => setFilter('impact', v)} />}
+            {optionsFor('urgency').length > 0 && <FacetSelect label="Any urgency" value={filters.urgency} items={optionsFor('urgency')} onChange={v => setFilter('urgency', v)} />}
+            {indexed.has('opened_at') && <label className="date-filter">Opened from <input type="date" value={filters.opened_at_after} onChange={e => setFilter('opened_at_after', e.target.value)} /></label>}
+            {indexed.has('opened_at') && <label className="date-filter">Before <input type="date" value={filters.opened_at_before} onChange={e => setFilter('opened_at_before', e.target.value)} /></label>}
+          </div>
+        )}
+        {hasFilters && (
+          <div className="active-filter-ledger" aria-label="Active filters">
+            {requestedFilters.map(([key, value]) => (
+              <button key={key} className="active-filter-chip" onClick={() => setFilter(key, '')} title="Remove filter">
+                {filterLabel(key, value)} <window.Icon name="close" size={10} />
+              </button>
+            ))}
+            {q && <button className="active-filter-chip" onClick={() => setQ('')}>Search: {q} <window.Icon name="close" size={10} /></button>}
+            <button className="clear-filter-button" onClick={clearAll}>Clear all</button>
+          </div>
+        )}
+        {unsupported.length > 0 && (
+          <div className="filter-warning">
+            This saved filter needs indexed {unsupported.join(', ')} data that is not in the current database build. Clear it or rebuild the archive database before using this link.
+          </div>
+        )}
+        {metricsError && <div className="filter-warning">Filters are unavailable because task metrics could not be loaded.</div>}
       </div>
       <table className="dt">
         <thead>
           <tr>
             <th style={{ width: 130 }}>Number</th>
             <th>Short description</th>
+            {showClassification && <th style={{ width: 190 }}>Category / subcategory</th>}
             <th style={{ width: 110 }}>Priority</th>
             <th style={{ width: 130 }}>State</th>
             <th style={{ width: 180 }}>Assigned to</th>
@@ -2125,39 +2656,41 @@ function TaskList({ table }) {
         </thead>
         <tbody>
           {loading && (resp.rows == null) && (
-            <tr><td colSpan={7} style={{ padding: '60px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
-              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />
-              loading…
+            <tr><td colSpan={colSpan} className="list-message">
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
             </td></tr>
           )}
-          {!loading && resp.rows && resp.rows.length === 0 && (
-            <tr><td colSpan={7} style={{ padding: '40px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
-              No matching records.
-            </td></tr>
+          {!loading && resp.rows && resp.rows.length === 0 && !resp.unsupported && (
+            <tr><td colSpan={colSpan} className="list-message">No matching records. Remove a filter or broaden the search.</td></tr>
+          )}
+          {!loading && resp.unsupported && (
+            <tr><td colSpan={colSpan} className="list-message">Records are not shown because applying this link would silently ignore an unavailable filter.</td></tr>
           )}
           {(resp.rows || []).map(r => {
-            const stDec = window.decodeChoice('incident', 'state', r.state);
-            const prDec = window.decodeChoice('incident', 'priority', r.priority);
+            const stDec = window.decodeChoice(table, 'state', r.state);
+            const prDec = window.decodeChoice(table, 'priority', r.priority);
+            const stateLabel = r.__display_state || stDec.label || r.state;
+            const priorityLabel = r.__display_priority || prDec.label || r.priority;
             const bars = window.priorityBars(r.priority);
             return (
               <tr key={r.sys_id} onClick={() => window.navigate(window.recordUrl(table, r.sys_id))}>
                 <td className="num">{r.number || r.sys_id?.slice(0, 8)}</td>
                 <td className="short"><span className="truncate">{r.short_description || '—'}</span></td>
+                {showClassification && <td className="classification-cell">
+                  <span>{r.__display_category || r.category || '—'}</span>
+                  {(r.__display_subcategory || r.subcategory) && <small>{r.__display_subcategory || r.subcategory}</small>}
+                </td>}
                 <td>
                   {r.priority ? (
-                    <span className={`chip ${window.priorityChipClass(r.priority)}`} title={prDec.label}>
+                    <span className={`chip ${window.priorityChipClass(r.priority)}`} title={priorityLabel}>
                       <span className={`priority-bar ${bars.cls}`}>
                         {[0,1,2,3,4].map(i => <span key={i} className={'b' + (i < bars.filled ? ' on' : '')} style={{ height: 4 + i * 2 }} />)}
                       </span>
-                      {prDec.label.split(' — ')[0] || `P${r.priority}`}
+                      {priorityLabel.split(' — ')[0] || `P${r.priority}`}
                     </span>
                   ) : <span className="muted">—</span>}
                 </td>
-                <td>
-                  {r.state
-                    ? <span className={`chip ${window.stateChipClass('incident', r.state)}`}>{stDec.label || r.state}</span>
-                    : <span className="muted">—</span>}
-                </td>
+                <td>{r.state ? <span className={`chip ${window.stateChipClass(table, r.state)}`}>{stateLabel}</span> : <span className="muted">—</span>}</td>
                 <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} displayName={r.__display_assigned_to} /> : <span className="muted">—</span>}</td>
                 <td className="muted">{window.findGroup(r.assignment_group)?.name || r.__display_assignment_group || '—'}</td>
                 <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
@@ -2167,6 +2700,17 @@ function TaskList({ table }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function FacetSelect({ label, value, items, onChange }) {
+  return (
+    <select className="facet-select" value={value} onChange={e => onChange(e.target.value)} aria-label={label}>
+      <option value="">{label}</option>
+      {(items || []).map(item => (
+        <option key={item.value} value={item.value}>{item.label} ({(item.count || 0).toLocaleString()})</option>
+      ))}
+    </select>
   );
 }
 
@@ -2182,6 +2726,240 @@ function Pager({ page, setPage, lastPage }) {
       <button className="filter-pill" disabled={page >= lastPage}
         onClick={() => setPage(lastPage)}>last »</button>
     </div>
+  );
+}
+
+// ---- Task analytics -----------------------------------------------------
+// Every ranked row is also a saved list query. The analytics page deliberately
+// reuses the generic task-list API instead of inventing a second result view:
+// click a bucket, land on all matching records, then combine it with the list's
+// other facets/search/date controls.
+
+window.TaskAnalyticsPage = function TaskAnalyticsPage({ table }) {
+  const data = window.HistoricalWowData;
+  const [metrics, setMetrics] = React.useState(null);
+  const [error, setError] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setMetrics(null); setError(false);
+    data.fetchTaskMetrics(table)
+      .then(m => { if (!cancelled) setMetrics(m); })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [table, data.hrStatus && data.hrStatus.unlocked]);
+
+  const availableTables = (window.TASK_TABLES || []).filter(t => {
+    const entry = data.manifest.tables.find(x => x.table === t);
+    return t === table || (entry && entry.source_rows > 0);
+  });
+  const openList = (filters = {}) => window.navigate(window.filteredListUrl(table, filters));
+  const shell = (body) => (
+    <div className="task-analytics-page">
+      <div className="task-analytics-header">
+        <div>
+          <div className="analytics-eyebrow">Task archive · analysis</div>
+          <h1>{window.taskLabel(table, 'singular')} classification ledger</h1>
+          <p>Usage, coverage, and configured choices at the snapshot. Every non-zero row opens the complete filtered record list.</p>
+        </div>
+        <div className="analytics-actions">
+          <label>
+            Record type
+            <select className="facet-select" value={table} onChange={e => window.navigate(window.taskAnalyticsUrl(e.target.value))}>
+              {availableTables.map(t => <option key={t} value={t}>{window.taskLabel(t, 'plural')}</option>)}
+            </select>
+          </label>
+          <button className="analytics-records-button" onClick={() => openList()}>
+            Browse records <window.Icon name="arrow_right" size={13} />
+          </button>
+        </div>
+      </div>
+      {body}
+    </div>
+  );
+
+  if (error) return shell(<div className="analytics-empty">Task metrics are unavailable for this snapshot.</div>);
+  if (!metrics) return shell(<div className="analytics-empty"><span className="dot-pulse" /> Building the ledger…</div>);
+
+  const dimensions = metrics.dimensions || {};
+  const indexed = new Set(metrics.indexed_columns || []);
+  const find = (field, value) => (dimensions[field] || []).find(item => String(item.value) === String(value));
+  const active = (find('active', '1') || {}).count || 0;
+  const categoryRows = dimensions.category || [];
+  const categoryUsed = categoryRows.filter(x => x.value !== '__empty__').length;
+  const categoryEmpty = ((metrics.coverage || {}).category || {}).empty;
+  const groupEmpty = ((metrics.coverage || {}).assignment_group || {}).empty;
+  const unused = metrics.unused || { category: [], subcategory: [] };
+  const pct = (n) => metrics.total ? `${Math.round((n / metrics.total) * 100)}%` : '0%';
+
+  return shell(
+    <>
+      <div className="analytics-summary-ledger">
+        <AnalyticsSummary label="Records" value={metrics.total} note="visible at snapshot" onClick={() => openList()} />
+        <AnalyticsSummary label="Active" value={indexed.has('active') ? active : null}
+          note={indexed.has('active') ? pct(active) : 'available after the indexed build'}
+          onClick={indexed.has('active') ? () => openList({ active: '1' }) : null} />
+        <AnalyticsSummary label="Categories used" value={indexed.has('category') ? categoryUsed : null}
+          note={indexed.has('category') ? `${unused.category.length} active choices unused` : 'not a field on this type'} />
+        <AnalyticsSummary label="Needs classification" value={categoryEmpty == null ? null : categoryEmpty}
+          note={categoryEmpty == null ? 'not a field on this type' : pct(categoryEmpty)}
+          onClick={categoryEmpty ? () => openList({ category: '__empty__' }) : null} />
+        <AnalyticsSummary label="No assignment group" value={groupEmpty == null ? null : groupEmpty}
+          note={groupEmpty == null ? 'not available' : pct(groupEmpty)}
+          onClick={groupEmpty ? () => openList({ assignment_group: '__empty__' }) : null} />
+      </div>
+
+      {indexed.has('category') && (
+        <div className="analytics-grid analytics-grid-primary">
+          <TaskMetricPanel title="Category usage" subtitle="All observed categories, ranked"
+            items={categoryRows} total={metrics.total} fieldLabel="category"
+            onOpen={item => openList({ category: item.value })} />
+          <UnusedChoicePanel category={unused.category || []} subcategory={unused.subcategory || []} />
+        </div>
+      )}
+
+      {indexed.has('subcategory') && (
+        <TaskSubcategoryPanel items={metrics.subcategory_pairs || []} total={metrics.total}
+          onOpen={item => openList({ category: item.category, subcategory: item.value })} />
+      )}
+
+      <div className="analytics-grid analytics-grid-secondary">
+        <TaskMetricPanel title="State" subtitle="Lifecycle position at snapshot"
+          items={dimensions.state || []} total={metrics.total} fieldLabel="state"
+          onOpen={item => openList({ state: item.value })} />
+        <TaskMetricPanel title="Priority" subtitle="Service priority mix"
+          items={dimensions.priority || []} total={metrics.total} fieldLabel="priority"
+          onOpen={item => openList({ priority: item.value })} />
+        {dimensions.impact && <TaskMetricPanel title="Impact" subtitle="Breadth of business effect"
+          items={dimensions.impact} total={metrics.total} fieldLabel="impact"
+          onOpen={item => openList({ impact: item.value })} />}
+        {dimensions.urgency && <TaskMetricPanel title="Urgency" subtitle="Time sensitivity"
+          items={dimensions.urgency} total={metrics.total} fieldLabel="urgency"
+          onOpen={item => openList({ urgency: item.value })} />}
+        <TaskMetricPanel title="Assignment group" subtitle="Work ownership"
+          items={dimensions.assignment_group || []} total={metrics.total} fieldLabel="assignment_group"
+          onOpen={item => openList({ assignment_group: item.value })} />
+        {dimensions.contact_type && <TaskMetricPanel title="Contact channel" subtitle="How records entered the system"
+          items={dimensions.contact_type} total={metrics.total} fieldLabel="contact_type"
+          onOpen={item => openList({ contact_type: item.value })} />}
+        {dimensions.cat_item && <TaskMetricPanel title="Catalog item" subtitle="Requested-item demand"
+          items={dimensions.cat_item} total={metrics.total} fieldLabel="cat_item"
+          onOpen={item => openList({ cat_item: item.value })} />}
+        {dimensions.type && <TaskMetricPanel title="Type" subtitle="Record type mix"
+          items={dimensions.type} total={metrics.total} fieldLabel="type"
+          onOpen={item => openList({ type: item.value })} />}
+        {dimensions.chg_model && <TaskMetricPanel title="Change model" subtitle="Model usage"
+          items={dimensions.chg_model} total={metrics.total} fieldLabel="chg_model"
+          onOpen={item => openList({ chg_model: item.value })} />}
+      </div>
+    </>
+  );
+};
+
+function AnalyticsSummary({ label, value, note, onClick }) {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+    <Tag className={'analytics-summary' + (onClick ? ' is-linked' : '')} onClick={onClick || undefined}>
+      <span>{label}</span>
+      <strong>{value == null ? '—' : Number(value).toLocaleString()}</strong>
+      <small>{note}</small>
+    </Tag>
+  );
+}
+
+function TaskMetricPanel({ title, subtitle, items, total, fieldLabel, onOpen }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = (items || []).filter(item => item.count > 0);
+  const visible = expanded ? rows : rows.slice(0, 10);
+  const max = Math.max(1, ...rows.map(item => item.count));
+  return (
+    <section className="analytics-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <span>{rows.length.toLocaleString()} values</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">No populated values on this record type.</div> : (
+        <div className="analytics-ranking">
+          {visible.map((item, index) => (
+            <button key={`${item.value}:${index}`} className="analytics-rank-row" onClick={() => onOpen(item)}>
+              <span className="analytics-rank-number">{String(index + 1).padStart(2, '0')}</span>
+              <span className="analytics-rank-main">
+                <span className="analytics-rank-label">{item.label}</span>
+                <span className="analytics-query-clause">{fieldLabel} = {item.value}</span>
+                <span className="analytics-rank-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
+              </span>
+              <span className="analytics-rank-count">{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(item.count / total < .01 ? 1 : 0) : 0}%</small></span>
+              <window.Icon name="arrow_right" size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+      {rows.length > 10 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show top 10' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
+  );
+}
+
+function TaskSubcategoryPanel({ items, total, onOpen }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = (items || []).filter(item => item.count > 0);
+  const visible = expanded ? rows : rows.slice(0, 12);
+  const max = Math.max(1, ...rows.map(item => item.count));
+  return (
+    <section className="analytics-panel analytics-subcategory-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>Category → subcategory paths</h2><p>Dependent classifications stay paired, so repeated subcategory codes do not collapse together.</p></div>
+        <span>{rows.length.toLocaleString()} observed paths</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">No populated subcategories.</div> : (
+        <div className="subcategory-ranking">
+          {visible.map((item, index) => (
+            <button key={`${item.category}:${item.value}:${index}`} className="subcategory-rank-row" onClick={() => onOpen(item)}>
+              <span className="subcategory-path"><b>{item.category_label}</b><window.Icon name="arrow_right" size={11} /><span>{item.label}</span></span>
+              <span className="analytics-query-clause">category = {item.category} · subcategory = {item.value}</span>
+              <span className="subcategory-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
+              <strong>{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(1) : 0}%</small></strong>
+              <window.Icon name="arrow_right" size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+      {rows.length > 12 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show top 12' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
+  );
+}
+
+function UnusedChoicePanel({ category, subcategory }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = [
+    ...(category || []).map(item => ({ ...item, kind: 'Category', parent: '' })),
+    ...(subcategory || []).map(item => ({ ...item, kind: 'Subcategory', parent: item.category_label })),
+  ];
+  const visible = expanded ? rows : rows.slice(0, 12);
+  return (
+    <section className="analytics-panel unused-choice-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>Configured but unused</h2><p>Active choices with zero matching records in the snapshot.</p></div>
+        <span>{rows.length.toLocaleString()} choices</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">Every active configured choice has recorded usage.</div> : (
+        <div className="unused-choice-list">
+          {visible.map((item, index) => (
+            <div key={`${item.kind}:${item.parent}:${item.value}:${index}`}>
+              <span><b>{item.label}</b>{item.parent && <small>{item.parent}</small>}</span>
+              <em>{item.kind}</em>
+              <strong>0</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      {rows.length > 12 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show first 12' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
   );
 }
 
@@ -5533,7 +6311,9 @@ function CmdbTile({ label, value, sub, accent, onClick }) {
 // Horizontal bar list. `items`: [{value,label,count}]. `linkFor(item)` returns
 // a hash path to deep-link the row (or null for non-filterable rows).
 function CmdbBars({ title, sub, items, color, total, linkFor, limit, emptyNote }) {
-  const rows = limit ? (items || []).slice(0, limit) : (items || []);
+  const [expanded, setExpanded] = React.useState(false);
+  const allRows = items || [];
+  const rows = limit && !expanded ? allRows.slice(0, limit) : allRows;
   const max = rows.reduce((a, r) => Math.max(a, r.count), 0) || 1;
   return (
     <div>
@@ -5563,6 +6343,11 @@ function CmdbBars({ title, sub, items, color, total, linkFor, limit, emptyNote }
             </div>
           );
         })}
+        {limit && allRows.length > limit && (
+          <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+            {expanded ? `Show top ${limit}` : `Show all ${allRows.length.toLocaleString()}`}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -6582,9 +7367,14 @@ Object.assign(window, {
         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 22 }}>
           {/* Most-used items */}
           <div>
-            <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: '0 0 10px' }}>
-              Most-used items
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+              <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--fg-3)', margin: 0 }}>
+                Most-used items
+              </h2>
+              <a href={`#${window.taskAnalyticsUrl('sc_req_item')}`} style={{ fontSize: 11, color: 'var(--accent-2)' }}>
+                Full ranking &amp; filters →
+              </a>
+            </div>
             <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
               {topItems == null ? <Loading /> : topItems.length === 0 ? (
                 <div style={{ padding: 24, color: 'var(--fg-4)', fontSize: 12.5, textAlign: 'center' }}>
@@ -6619,7 +7409,12 @@ Object.assign(window, {
                             </div>
                           </td>
                           <td style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{dv(t.item, 'sc_catalogs') || '—'}</td>
-                          <td className="num mono">{t.ritmCount.toLocaleString()}</td>
+                          <td className="num mono">
+                            <button className="metric-drill-link" title="Open all requested items for this catalog item"
+                              onClick={(e) => { e.stopPropagation(); window.navigate(window.filteredListUrl('sc_req_item', { cat_item: t.item.sys_id })); }}>
+                              {t.ritmCount.toLocaleString()} <window.Icon name="arrow_right" size={10} />
+                            </button>
+                          </td>
                           <td>
                             <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', border: '1px solid var(--border)' }}>
                               <div style={{ width: w(mix.f) + '%', background: 'var(--accent)' }} title={`complete ${mix.f}`} />
@@ -12045,6 +12840,7 @@ function App() {
   useEffect(() => {
     if (route.view === 'list') window.AuditLog.push('list', route.table, '');
     if (route.view === 'home') window.AuditLog.push('view', 'home', 'Snapshot landing');
+    if (route.view === 'task_analytics') window.AuditLog.push('view', `${route.table}/analytics`, 'Task analytics');
     if (route.view === 'service_catalog_home') window.AuditLog.push('view', 'service-catalog', 'Service catalog overview');
     if (route.view === 'logic_home') window.AuditLog.push('view', 'logic', 'Server/client-side logic overview');
     if (route.view === 'sn_table_inspector') window.AuditLog.push('view', `sn-table/${route.name}`, `Logic on ${route.name}`);
@@ -12126,6 +12922,7 @@ function App() {
           {route.view === 'cmdb_home' && <window.CMDBOverviewPage />}
           {route.view === 'service_status_home' && <window.ServiceStatusPage />}
           {route.view === 'sn_table_inspector' && <window.SnTableInspectorPage name={route.name} />}
+          {route.view === 'task_analytics' && <window.TaskAnalyticsPage key={route.table} table={route.table} />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
           {route.view === 'list' && route.table === 'sys_script' && <window.BusinessRuleListPage />}
           {route.view === 'list' && route.table === 'sys_script_client' && <window.ClientScriptListPage />}
@@ -12134,7 +12931,7 @@ function App() {
           {route.view === 'list' && route.table === 'sys_ui_policy' && <window.UIPolicyListPage />}
           {route.view === 'list' && route.table === 'sys_data_policy2' && <window.DataPolicyListPage />}
           {route.view === 'list' && route.table === 'flow_inventory' && <window.FlowInventoryListPage />}
-          {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
+          {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage key={`${route.table}:${route.query || ''}`} table={route.table} />}
           {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'record' && route.table === 'sys_script' && <window.BusinessRuleRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sys_script_client' && <window.ClientScriptRecordPage sys_id={route.sys_id} />}
@@ -12258,6 +13055,7 @@ function Sidebar({ route }) {
     { sep: 'Tickets' },
     navItem('/incidents',       'incident', 'Incidents',        'incident'),
     navItem('/problems',        'flag',     'Problems',         'problem'),
+    { id: '/incidents/analytics', icon: 'filter', label: 'Task analysis' },
     { sep: 'Changes' },
     navItem('/changes',         'change',   'Change requests',  'change_request'),
     { sep: 'Service catalog' },
@@ -12326,6 +13124,7 @@ function Sidebar({ route }) {
     if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
     if (id === '/cmdb') return route.view === 'cmdb_home';
     if (id === '/service-status') return route.view === 'service_status_home';
+    if (id === '/incidents/analytics') return route.view === 'task_analytics';
     // Derive the slug→table mapping from URL_TO_TABLE instead of duplicating it
     // here — the two would otherwise drift as routes are added or renamed.
     const table = window.URL_TO_TABLE[id.slice(1)];

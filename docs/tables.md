@@ -4,7 +4,7 @@
 
 # Table catalog
 
-Every table here is queryable via `GET /api/<table>` (list, paginated) and `GET /api/<table>/<sys_id>` (single record). The columns listed are the **indexed** columns — those are the only ones you can filter on with `?col=value`. Every other field on the record stays inside the `raw` JSON envelope and is merged into the response unless you pass `?slim=1`.
+Every table here is queryable via `GET /api/<table>` (list, paginated) and `GET /api/<table>/<sys_id>` (single record). The columns listed are the **indexed** columns — those are the only ones you can filter on with `?col=value`, and the table-list route returns them as scalars with `?slim=1`. Non-slim lists and single-record responses merge the stored `raw` JSON envelope on top; a same-named field can therefore retain its ServiceNow `{value, display_value}` object. The single-record route does not support slim mode.
 
 ## Tag legend
 
@@ -21,7 +21,7 @@ Every table here is queryable via `GET /api/<table>` (list, paginated) and `GET 
 | --- | --- |
 | `string` | Raw value (most columns). |
 | `string (display)` | Display value (the human-friendly label rather than the underlying code). |
-| `bool 0/1` | ServiceNow boolean stored as integer `0` or `1`. Filter with `?col=true` or `?col=false` (auto-coerced) or `?col=1` / `?col=0`. |
+| `bool 0/1` | ServiceNow boolean serialized as string `"0"` or `"1"` in slim/indexed responses. Filter with `?col=true` or `?col=false` (auto-coerced) or `?col=1` / `?col=0`. |
 
 ## Task tables
 
@@ -39,17 +39,23 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `category` | string |  |
+| `subcategory` | string |  |
 
 ### `change_request`
 
@@ -65,17 +71,22 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `category` | string |  |
 | `std_change_producer_version` | string |  |
 | `chg_model` | string |  |
 | `type` | string |  |
@@ -94,17 +105,23 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
+| `category` | string |  |
+| `subcategory` | string |  |
 
 ### `problem_task`
 
@@ -120,15 +137,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -146,15 +167,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 | `requested_for` | string |  |
@@ -173,15 +198,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 | `requested_for` | string |  |
@@ -202,15 +231,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 | `requested_for` | string |  |
@@ -223,7 +256,7 @@ Tags: `task` `cache-5min` `hr-gated`
 
 > Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
 Filterable columns:
 
@@ -233,15 +266,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -259,15 +296,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -285,15 +326,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -311,15 +356,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -337,15 +386,19 @@ Filterable columns:
 | `number` | string |  |
 | `short_description` | string |  |
 | `state` | string |  |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
+| `impact` | string |  |
+| `urgency` | string |  |
 | `assigned_to` | string |  |
 | `assignment_group` | string |  |
 | `cmdb_ci` | string |  |
 | `caller_id` | string |  |
+| `contact_type` | string |  |
 | `opened_at` | string |  |
 | `sys_created_on` | string |  |
 | `sys_updated_on` | string |  |
-| `legal_hold` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `legal_hold` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_class_name` | string |  |
 | `parent` | string |  |
 
@@ -368,7 +421,7 @@ Filterable columns:
 | `title` | string |  |
 | `department` | string |  |
 | `location` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_user_group`
 
@@ -384,7 +437,7 @@ Filterable columns:
 | `name` | string |  |
 | `manager` | string |  |
 | `description` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_user_grmember`
 
@@ -413,10 +466,10 @@ Filterable columns:
 | `delegate` | string |  |
 | `starts` | string |  |
 | `ends` | string |  |
-| `approvals` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `assignments` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `notifications` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `invitations` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `approvals` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `assignments` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `notifications` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `invitations` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_user_has_role`
 
@@ -431,7 +484,7 @@ Filterable columns:
 | `role` | string |  |
 | `state` | string |  |
 | `granted_by` | string |  |
-| `inherited` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `inherited` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_user_role`
 
@@ -457,7 +510,7 @@ Filterable columns:
 | `group` | string |  |
 | `role` | string |  |
 | `granted_by` | string |  |
-| `inherits` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `inherits` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `kb_knowledge`
 
@@ -476,7 +529,7 @@ Filterable columns:
 | `author` | string |  |
 | `article_type` | string |  |
 | `valid_to` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `cmdb_ci`
 
@@ -671,7 +724,7 @@ Tags: `cache-5min` `hr-gated`
 
 > Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
 Filterable columns:
 
@@ -687,7 +740,7 @@ Tags: `cache-5min` `hr-gated`
 
 > Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
 
 Filterable columns:
 
@@ -746,7 +799,7 @@ Filterable columns:
 | `question_text` | string |  |
 | `type` | string |  |
 | `cat_item` | string |  |
-| `mandatory` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `mandatory` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `order` | string |  |
 | `reference` | string |  |
 
@@ -820,7 +873,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `title` | string |  |
 | `description` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sc_category`
 
@@ -837,7 +890,7 @@ Filterable columns:
 | `description` | string |  |
 | `sc_catalog` | string |  |
 | `parent` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `catalog_ui_policy`
 
@@ -852,9 +905,9 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `cat_item` | string |  |
 | `short_description` | string |  |
-| `on_load` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `reverse_if_false` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `on_load` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `reverse_if_false` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `applies_to` | string |  |
 | `order` | string |  |
 
@@ -893,7 +946,7 @@ Filterable columns:
 | `type` | string |  |
 | `cat_variable` | string |  |
 | `ui_type` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `applies_to` | string |  |
 
 ### `user_criteria`
@@ -909,8 +962,8 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
 | `description` | string |  |
-| `advanced` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `advanced` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sc_cat_item_user_criteria_mtom`
 
@@ -955,7 +1008,7 @@ Filterable columns:
 | `title` | string |  |
 | `description` | string |  |
 | `layout` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `io_set_item`
 
@@ -985,7 +1038,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
 | `description` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `std_change_proposal`
 
@@ -1023,7 +1076,7 @@ Filterable columns:
 | `name` | string |  |
 | `collection` | string |  |
 | `when` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `priority` | string |  |
 | `condition` | string |  |
 | `filter_condition` | string |  |
@@ -1043,7 +1096,7 @@ Filterable columns:
 | `table` | string |  |
 | `type` | string |  |
 | `ui_type` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `condition` | string |  |
 
 ### `sys_script_include`
@@ -1059,7 +1112,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
 | `api_name` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `description` | string |  |
 
 ### `sysauto_script`
@@ -1074,13 +1127,13 @@ Filterable columns:
 | --- | --- | --- |
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `run_type` | string |  |
 | `run_period` | string |  |
 | `run_time` | string |  |
 | `run_dayofweek` | string |  |
 | `run_dayofmonth` | string |  |
-| `conditional` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `conditional` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `condition` | string |  |
 | `run_as` | string |  |
 
@@ -1098,10 +1151,10 @@ Filterable columns:
 | `short_description` | string |  |
 | `table` | string |  |
 | `model_table` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `conditions` | string |  |
 | `ui_type` | string |  |
-| `run_scripts` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `run_scripts` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_ui_policy_action`
 
@@ -1134,7 +1187,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `short_description` | string |  |
 | `model_table` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `conditions` | string |  |
 
 ### `sys_data_policy_rule`
@@ -1185,11 +1238,11 @@ Filterable columns:
 | `name` | string |  |
 | `action_name` | string |  |
 | `table` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `condition` | string |  |
-| `client` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `form_button` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `list_button` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `client` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `form_button` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `list_button` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `order` | string |  |
 
 ### `sys_dictionary`
@@ -1207,11 +1260,11 @@ Filterable columns:
 | `element` | string |  |
 | `internal_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
 | `column_label` | string |  |
-| `mandatory` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `mandatory` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `default_value` | string |  |
 | `reference` | string |  |
-| `read_only` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `read_only` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_dictionary_override`
 
@@ -1244,7 +1297,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
 | `internal_name` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
 | `sys_class_name` | string |  |
 | `description` | string |  |
@@ -1272,8 +1325,8 @@ Filterable columns:
 | `error_count` | string |  |
 | `last_run` | string |  |
 | `created_by` | string |  |
-| `curated` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `curated` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `sys_updated_on` | string |  |
 
 ### `sys_hub_action_instance_v2`
@@ -1372,8 +1425,8 @@ Filterable columns:
 | `name` | string |  |
 | `operation` | string |  |
 | `type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `admin_overrides` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `admin_overrides` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 | `decision_type` | string |  |
 | `sys_class_name` | string |  |
 
@@ -1392,8 +1445,8 @@ Filterable columns:
 | `action` | string |  |
 | `event_name` | string |  |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `stop_processing` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `stop_processing` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sysevent_email_action`
 
@@ -1409,9 +1462,9 @@ Filterable columns:
 | `type` | string |  |
 | `event_name` | string |  |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `action_insert` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `action_update` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `action_insert` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `action_update` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sysevent_register`
 
@@ -1438,7 +1491,7 @@ Filterable columns:
 | `name` | string |  |
 | `event_name` | string |  |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sysevent_email_template`
 
@@ -1465,7 +1518,7 @@ Filterable columns:
 | `table` | string |  |
 | `ci_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `em_alert_correlation_rule`
 
@@ -1480,7 +1533,7 @@ Filterable columns:
 | `table` | string |  |
 | `relationship_type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `em_alert_management_rule`
 
@@ -1494,7 +1547,7 @@ Filterable columns:
 | `name` | string |  |
 | `type` | string (display) | extracted from `display_value` (label form, e.g. "Active" rather than the underlying code) |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `em_impact_rule`
 
@@ -1530,7 +1583,7 @@ Filterable columns:
 | --- | --- | --- |
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `name` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sp_portal`
 
@@ -1555,8 +1608,8 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `id` | string |  |
 | `title` | string |  |
-| `internal` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `public` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `internal` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `public` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sp_container`
 
@@ -1609,7 +1662,7 @@ Filterable columns:
 | `sp_column` | string |  |
 | `title` | string |  |
 | `order` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sp_widget`
 
@@ -1622,7 +1675,7 @@ Filterable columns:
 | `sys_id` | string | Primary key; reference target for cross-table lookups. |
 | `id` | string |  |
 | `name` | string |  |
-| `public` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `public` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `sys_template`
 
@@ -1637,8 +1690,8 @@ Filterable columns:
 | `table` | string |  |
 | `short_description` | string |  |
 | `user` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
-| `global` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `global` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `cmdb_ci_outage`
 
@@ -1672,7 +1725,7 @@ Filterable columns:
 | `table_name` | string |  |
 | `category` | string |  |
 | `sys_class_name` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `contract_sla`
 
@@ -1687,7 +1740,7 @@ Filterable columns:
 | `collection` | string |  |
 | `type` | string |  |
 | `target` | string |  |
-| `active` | bool 0/1 | ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
+| `active` | bool 0/1 | ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0` |
 
 ### `alm_asset`
 

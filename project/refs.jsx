@@ -1009,7 +1009,9 @@ function CmdbTile({ label, value, sub, accent, onClick }) {
 // Horizontal bar list. `items`: [{value,label,count}]. `linkFor(item)` returns
 // a hash path to deep-link the row (or null for non-filterable rows).
 function CmdbBars({ title, sub, items, color, total, linkFor, limit, emptyNote }) {
-  const rows = limit ? (items || []).slice(0, limit) : (items || []);
+  const [expanded, setExpanded] = React.useState(false);
+  const allRows = items || [];
+  const rows = limit && !expanded ? allRows.slice(0, limit) : allRows;
   const max = rows.reduce((a, r) => Math.max(a, r.count), 0) || 1;
   return (
     <div>
@@ -1039,6 +1041,11 @@ function CmdbBars({ title, sub, items, color, total, linkFor, limit, emptyNote }
             </div>
           );
         })}
+        {limit && allRows.length > limit && (
+          <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+            {expanded ? `Show top ${limit}` : `Show all ${allRows.length.toLocaleString()}`}
+          </button>
+        )}
       </div>
     </div>
   );

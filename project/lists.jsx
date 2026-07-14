@@ -65,73 +65,227 @@ const ListPage = window.ListPage = function ListPage({ table }) {
 
 // ---- generic paginated task list (fetches via /api/<table>) ---------------
 
+const TASK_FILTER_KEYS = [
+  'active', 'state', 'priority', 'impact', 'urgency', 'category', 'subcategory',
+  'contact_type', 'assignment_group', 'opened_at_after', 'opened_at_before',
+];
+
+function readTaskListQuery() {
+  const query = (window.location.hash.split('?')[1] || '').split('#')[0];
+  const params = new URLSearchParams(query);
+  const filters = Object.fromEntries(TASK_FILTER_KEYS.map(key => [key, params.get(key) || '']));
+  // Preserve any additional indexed table-specific filter supplied by a
+  // dashboard (for example sc_req_item.cat_item or change_request.type).
+  // Capability validation below blocks it if the current DB cannot honor it.
+  for (const [key, value] of params.entries()) {
+    if (!['q', 'order_by', 'dir', 'limit', 'offset', 'slim'].includes(key) && !(key in filters)) {
+      filters[key] = value;
+    }
+  }
+  const requestedOrder = params.get('order_by') || 'sys_updated_on';
+  return {
+    q: params.get('q') || '',
+    filters,
+    orderBy: ['sys_updated_on', 'opened_at', 'number'].includes(requestedOrder)
+      ? requestedOrder : 'sys_updated_on',
+    dir: params.get('dir') === 'asc' ? 'asc' : 'desc',
+  };
+}
+
 function TaskList({ table }) {
   const data = window.HistoricalWowData;
-  const [q, setQ] = React.useState('');
-  const [debouncedQ, setDebouncedQ] = React.useState('');
+  const initial = React.useMemo(() => readTaskListQuery(), [table]);
+  const [q, setQ] = React.useState(initial.q);
+  const [debouncedQ, setDebouncedQ] = React.useState(initial.q);
+  const [filters, setFilters] = React.useState(initial.filters);
+  const [orderBy, setOrderBy] = React.useState(initial.orderBy);
+  const [dir, setDir] = React.useState(initial.dir);
+  const [moreOpen, setMoreOpen] = React.useState(
+    Boolean(initial.filters.contact_type || initial.filters.assignment_group ||
+            initial.filters.opened_at_after || initial.filters.opened_at_before)
+  );
   const [page, setPage] = React.useState(0);
   const [resp, setResp] = React.useState({ rows: null, total: 0 });
+  const [metrics, setMetrics] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [metricsError, setMetricsError] = React.useState(false);
 
-  // Debounce q so we don't fire a query on every keystroke
+  React.useEffect(() => {
+    let cancelled = false;
+    setMetrics(null); setMetricsError(false);
+    data.fetchTaskMetrics(table)
+      .then(m => { if (!cancelled) setMetrics(m); })
+      .catch(() => { if (!cancelled) { setMetrics({ indexed_columns: [], dimensions: {} }); setMetricsError(true); } });
+    return () => { cancelled = true; };
+  }, [table, data.hrStatus && data.hrStatus.unlocked]);
+
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 250);
     return () => clearTimeout(t);
   }, [q]);
 
-  // Reset to page 0 on q change
-  React.useEffect(() => { setPage(0); }, [debouncedQ, table]);
+  const filterKey = JSON.stringify(filters);
+  React.useEffect(() => { setPage(0); }, [debouncedQ, filterKey, orderBy, dir, table]);
+
+  // Keep refinements shareable without causing a hashchange/remount on every
+  // select. A navigation from elsewhere still remounts this page because App
+  // keys ListPage by the route's original query string.
+  React.useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedQ) params.set('q', debouncedQ);
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+    if (orderBy !== 'sys_updated_on') params.set('order_by', orderBy);
+    if (dir !== 'desc') params.set('dir', dir);
+    const next = window.urlWithQuery(window.listUrl(table), params);
+    if (window.location.hash !== `#${next}`) history.replaceState(null, '', `#${next}`);
+  }, [table, debouncedQ, filterKey, orderBy, dir]);
+
+  const indexed = new Set((metrics && metrics.indexed_columns) || []);
+  const requestedFilters = Object.entries(filters).filter(([, value]) => value);
+  const unsupported = metrics ? requestedFilters.filter(([key]) => {
+    const base = key.endsWith('_after') ? key.slice(0, -6)
+      : key.endsWith('_before') ? key.slice(0, -7) : key;
+    return !indexed.has(base);
+  }).map(([key]) => key) : [];
 
   React.useEffect(() => {
+    if (!metrics) return;
+    if (unsupported.length) {
+      setResp({ rows: [], total: 0, unsupported: true });
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
+    const activeFilters = Object.fromEntries(
+      Object.entries(filters).filter(([key, value]) => value && (
+        indexed.has(key) ||
+        (key.endsWith('_after') && indexed.has(key.slice(0, -6))) ||
+        (key.endsWith('_before') && indexed.has(key.slice(0, -7)))
+      ))
+    );
     data.fetchTaskList(table, {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: debouncedQ,
-      // Full envelope (not slim) so reference fields carry __display_<field>
-      // for cases where findUser/findGroup miss in the lookup map.
-      order_by: 'sys_updated_on',
-      dir: 'desc',
+      filters: activeFilters,
+      // Full envelope (not slim) so reference and choice display values are
+      // available even when a compact lookup has not loaded yet.
+      order_by: indexed.has(orderBy) ? orderBy : 'sys_id',
+      dir,
     }).then(r => {
       if (cancelled) return;
-      setResp(r);
-      setLoading(false);
+      setResp(r); setLoading(false);
     }).catch(e => {
       if (cancelled) return;
       console.warn('TaskList fetch failed:', e);
-      setResp({ rows: [], total: 0 });
-      setLoading(false);
+      setResp({ rows: [], total: 0 }); setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [table, debouncedQ, page]);
+  }, [table, debouncedQ, page, filterKey, orderBy, dir, metrics]);
 
+  const dimensions = (metrics && metrics.dimensions) || {};
   const label = window.taskLabel(table, 'plural');
   const manifestEntry = data.manifest.tables.find(t => t.table === table);
   const sourceCount = manifestEntry ? manifestEntry.source_rows.toLocaleString() : '?';
   const total = resp.total || 0;
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+  const setFilter = (key, value) => setFilters(prev => {
+    const next = { ...prev, [key]: value };
+    if (key === 'category') next.subcategory = '';
+    return next;
+  });
+  const clearAll = () => {
+    setQ('');
+    setFilters(Object.fromEntries(Object.keys(filters).map(key => [key, ''])));
+  };
+  const hasFilters = Boolean(q || requestedFilters.length);
+  const optionsFor = (key) => dimensions[key] || [];
+  const categoryValues = new Set(String(filters.category || '').split(',').filter(Boolean));
+  const subcategoryOptions = filters.category && metrics
+    ? [...new Map((metrics.subcategory_pairs || [])
+        .filter(item => categoryValues.has(item.category))
+        .map(item => [item.value, { value: item.value, label: item.label, count: item.count }])).values()]
+        .sort((a, b) => b.count - a.count)
+    : optionsFor('subcategory');
+  const filterLabel = (key, value) => {
+    if (key === 'opened_at_after') return `Opened from ${value}`;
+    if (key === 'opened_at_before') return `Opened before ${value}`;
+    const pool = key === 'subcategory' ? subcategoryOptions : optionsFor(key);
+    const hit = pool.find(item => item.value === value);
+    const names = {
+      active: 'Status', state: 'State', priority: 'Priority', category: 'Category',
+      impact: 'Impact', urgency: 'Urgency', subcategory: 'Subcategory',
+      contact_type: 'Channel', assignment_group: 'Group',
+    };
+    return `${names[key] || key}: ${hit ? hit.label : value}`;
+  };
+  const showClassification = indexed.has('category') || indexed.has('subcategory');
+  const colSpan = showClassification ? 8 : 7;
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header task-list-header">
         <h1>{label} <span className="count mono">{sourceCount}</span></h1>
         <div className="sub">
           <span className="mono" style={{ color: 'var(--fg-4)' }}>{table}</span> ·
           {' '}{total.toLocaleString()} matching · page {page + 1} of {lastPage + 1}
+          {' · '}<a href={`#${window.taskAnalyticsUrl(table)}`}>analysis →</a>
         </div>
-        <div className="toolbar">
+        <div className="toolbar task-filter-bar">
+          {optionsFor('active').length > 0 && <FacetSelect label="Any activity" value={filters.active} items={optionsFor('active')} onChange={v => setFilter('active', v)} />}
+          {optionsFor('state').length > 0 && <FacetSelect label="Any state" value={filters.state} items={optionsFor('state')} onChange={v => setFilter('state', v)} />}
+          {optionsFor('priority').length > 0 && <FacetSelect label="Any priority" value={filters.priority} items={optionsFor('priority')} onChange={v => setFilter('priority', v)} />}
+          {optionsFor('category').length > 0 && <FacetSelect label="Any category" value={filters.category} items={optionsFor('category')} onChange={v => setFilter('category', v)} />}
+          {subcategoryOptions.length > 0 && <FacetSelect label="Any subcategory" value={filters.subcategory} items={subcategoryOptions} onChange={v => setFilter('subcategory', v)} />}
+          <button className={'filter-pill' + (moreOpen ? ' active' : '')} onClick={() => setMoreOpen(v => !v)}>
+            <window.Icon name="filter" size={12} /> More filters
+          </button>
           <div className="spacer" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search number or short description…"
-            style={{ height: 26, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 14, background: 'var(--bg-elev)', fontSize: 12, outline: 'none', width: 280 }} />
+          <input className="task-search-input" value={q} onChange={e => setQ(e.target.value)} placeholder="Number or description…" />
+          <select className="facet-select" value={`${orderBy}:${dir}`} onChange={e => {
+            const [field, direction] = e.target.value.split(':'); setOrderBy(field); setDir(direction);
+          }} aria-label="Sort records">
+            <option value="sys_updated_on:desc">Recently updated</option>
+            <option value="opened_at:desc">Recently opened</option>
+            <option value="number:asc">Number A–Z</option>
+          </select>
           <Pager page={page} setPage={setPage} lastPage={lastPage} />
         </div>
+        {moreOpen && (
+          <div className="task-filter-more">
+            {optionsFor('assignment_group').length > 0 && <FacetSelect label="Any assignment group" value={filters.assignment_group} items={optionsFor('assignment_group')} onChange={v => setFilter('assignment_group', v)} />}
+            {optionsFor('contact_type').length > 0 && <FacetSelect label="Any contact channel" value={filters.contact_type} items={optionsFor('contact_type')} onChange={v => setFilter('contact_type', v)} />}
+            {optionsFor('impact').length > 0 && <FacetSelect label="Any impact" value={filters.impact} items={optionsFor('impact')} onChange={v => setFilter('impact', v)} />}
+            {optionsFor('urgency').length > 0 && <FacetSelect label="Any urgency" value={filters.urgency} items={optionsFor('urgency')} onChange={v => setFilter('urgency', v)} />}
+            {indexed.has('opened_at') && <label className="date-filter">Opened from <input type="date" value={filters.opened_at_after} onChange={e => setFilter('opened_at_after', e.target.value)} /></label>}
+            {indexed.has('opened_at') && <label className="date-filter">Before <input type="date" value={filters.opened_at_before} onChange={e => setFilter('opened_at_before', e.target.value)} /></label>}
+          </div>
+        )}
+        {hasFilters && (
+          <div className="active-filter-ledger" aria-label="Active filters">
+            {requestedFilters.map(([key, value]) => (
+              <button key={key} className="active-filter-chip" onClick={() => setFilter(key, '')} title="Remove filter">
+                {filterLabel(key, value)} <window.Icon name="close" size={10} />
+              </button>
+            ))}
+            {q && <button className="active-filter-chip" onClick={() => setQ('')}>Search: {q} <window.Icon name="close" size={10} /></button>}
+            <button className="clear-filter-button" onClick={clearAll}>Clear all</button>
+          </div>
+        )}
+        {unsupported.length > 0 && (
+          <div className="filter-warning">
+            This saved filter needs indexed {unsupported.join(', ')} data that is not in the current database build. Clear it or rebuild the archive database before using this link.
+          </div>
+        )}
+        {metricsError && <div className="filter-warning">Filters are unavailable because task metrics could not be loaded.</div>}
       </div>
       <table className="dt">
         <thead>
           <tr>
             <th style={{ width: 130 }}>Number</th>
             <th>Short description</th>
+            {showClassification && <th style={{ width: 190 }}>Category / subcategory</th>}
             <th style={{ width: 110 }}>Priority</th>
             <th style={{ width: 130 }}>State</th>
             <th style={{ width: 180 }}>Assigned to</th>
@@ -141,39 +295,41 @@ function TaskList({ table }) {
         </thead>
         <tbody>
           {loading && (resp.rows == null) && (
-            <tr><td colSpan={7} style={{ padding: '60px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
-              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />
-              loading…
+            <tr><td colSpan={colSpan} className="list-message">
+              <span className="dot-pulse" style={{ display: 'inline-block', marginRight: 8 }} />loading…
             </td></tr>
           )}
-          {!loading && resp.rows && resp.rows.length === 0 && (
-            <tr><td colSpan={7} style={{ padding: '40px 20px', color: 'var(--fg-4)', textAlign: 'center' }}>
-              No matching records.
-            </td></tr>
+          {!loading && resp.rows && resp.rows.length === 0 && !resp.unsupported && (
+            <tr><td colSpan={colSpan} className="list-message">No matching records. Remove a filter or broaden the search.</td></tr>
+          )}
+          {!loading && resp.unsupported && (
+            <tr><td colSpan={colSpan} className="list-message">Records are not shown because applying this link would silently ignore an unavailable filter.</td></tr>
           )}
           {(resp.rows || []).map(r => {
-            const stDec = window.decodeChoice('incident', 'state', r.state);
-            const prDec = window.decodeChoice('incident', 'priority', r.priority);
+            const stDec = window.decodeChoice(table, 'state', r.state);
+            const prDec = window.decodeChoice(table, 'priority', r.priority);
+            const stateLabel = r.__display_state || stDec.label || r.state;
+            const priorityLabel = r.__display_priority || prDec.label || r.priority;
             const bars = window.priorityBars(r.priority);
             return (
               <tr key={r.sys_id} onClick={() => window.navigate(window.recordUrl(table, r.sys_id))}>
                 <td className="num">{r.number || r.sys_id?.slice(0, 8)}</td>
                 <td className="short"><span className="truncate">{r.short_description || '—'}</span></td>
+                {showClassification && <td className="classification-cell">
+                  <span>{r.__display_category || r.category || '—'}</span>
+                  {(r.__display_subcategory || r.subcategory) && <small>{r.__display_subcategory || r.subcategory}</small>}
+                </td>}
                 <td>
                   {r.priority ? (
-                    <span className={`chip ${window.priorityChipClass(r.priority)}`} title={prDec.label}>
+                    <span className={`chip ${window.priorityChipClass(r.priority)}`} title={priorityLabel}>
                       <span className={`priority-bar ${bars.cls}`}>
                         {[0,1,2,3,4].map(i => <span key={i} className={'b' + (i < bars.filled ? ' on' : '')} style={{ height: 4 + i * 2 }} />)}
                       </span>
-                      {prDec.label.split(' — ')[0] || `P${r.priority}`}
+                      {priorityLabel.split(' — ')[0] || `P${r.priority}`}
                     </span>
                   ) : <span className="muted">—</span>}
                 </td>
-                <td>
-                  {r.state
-                    ? <span className={`chip ${window.stateChipClass('incident', r.state)}`}>{stDec.label || r.state}</span>
-                    : <span className="muted">—</span>}
-                </td>
+                <td>{r.state ? <span className={`chip ${window.stateChipClass(table, r.state)}`}>{stateLabel}</span> : <span className="muted">—</span>}</td>
                 <td>{r.assigned_to ? <window.UserCell sys_id={r.assigned_to} displayName={r.__display_assigned_to} /> : <span className="muted">—</span>}</td>
                 <td className="muted">{window.findGroup(r.assignment_group)?.name || r.__display_assignment_group || '—'}</td>
                 <td className="num muted" title={r.sys_updated_on}>{window.fmtRelative(r.sys_updated_on)}</td>
@@ -183,6 +339,17 @@ function TaskList({ table }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function FacetSelect({ label, value, items, onChange }) {
+  return (
+    <select className="facet-select" value={value} onChange={e => onChange(e.target.value)} aria-label={label}>
+      <option value="">{label}</option>
+      {(items || []).map(item => (
+        <option key={item.value} value={item.value}>{item.label} ({(item.count || 0).toLocaleString()})</option>
+      ))}
+    </select>
   );
 }
 
@@ -198,6 +365,240 @@ function Pager({ page, setPage, lastPage }) {
       <button className="filter-pill" disabled={page >= lastPage}
         onClick={() => setPage(lastPage)}>last »</button>
     </div>
+  );
+}
+
+// ---- Task analytics -----------------------------------------------------
+// Every ranked row is also a saved list query. The analytics page deliberately
+// reuses the generic task-list API instead of inventing a second result view:
+// click a bucket, land on all matching records, then combine it with the list's
+// other facets/search/date controls.
+
+window.TaskAnalyticsPage = function TaskAnalyticsPage({ table }) {
+  const data = window.HistoricalWowData;
+  const [metrics, setMetrics] = React.useState(null);
+  const [error, setError] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setMetrics(null); setError(false);
+    data.fetchTaskMetrics(table)
+      .then(m => { if (!cancelled) setMetrics(m); })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [table, data.hrStatus && data.hrStatus.unlocked]);
+
+  const availableTables = (window.TASK_TABLES || []).filter(t => {
+    const entry = data.manifest.tables.find(x => x.table === t);
+    return t === table || (entry && entry.source_rows > 0);
+  });
+  const openList = (filters = {}) => window.navigate(window.filteredListUrl(table, filters));
+  const shell = (body) => (
+    <div className="task-analytics-page">
+      <div className="task-analytics-header">
+        <div>
+          <div className="analytics-eyebrow">Task archive · analysis</div>
+          <h1>{window.taskLabel(table, 'singular')} classification ledger</h1>
+          <p>Usage, coverage, and configured choices at the snapshot. Every non-zero row opens the complete filtered record list.</p>
+        </div>
+        <div className="analytics-actions">
+          <label>
+            Record type
+            <select className="facet-select" value={table} onChange={e => window.navigate(window.taskAnalyticsUrl(e.target.value))}>
+              {availableTables.map(t => <option key={t} value={t}>{window.taskLabel(t, 'plural')}</option>)}
+            </select>
+          </label>
+          <button className="analytics-records-button" onClick={() => openList()}>
+            Browse records <window.Icon name="arrow_right" size={13} />
+          </button>
+        </div>
+      </div>
+      {body}
+    </div>
+  );
+
+  if (error) return shell(<div className="analytics-empty">Task metrics are unavailable for this snapshot.</div>);
+  if (!metrics) return shell(<div className="analytics-empty"><span className="dot-pulse" /> Building the ledger…</div>);
+
+  const dimensions = metrics.dimensions || {};
+  const indexed = new Set(metrics.indexed_columns || []);
+  const find = (field, value) => (dimensions[field] || []).find(item => String(item.value) === String(value));
+  const active = (find('active', '1') || {}).count || 0;
+  const categoryRows = dimensions.category || [];
+  const categoryUsed = categoryRows.filter(x => x.value !== '__empty__').length;
+  const categoryEmpty = ((metrics.coverage || {}).category || {}).empty;
+  const groupEmpty = ((metrics.coverage || {}).assignment_group || {}).empty;
+  const unused = metrics.unused || { category: [], subcategory: [] };
+  const pct = (n) => metrics.total ? `${Math.round((n / metrics.total) * 100)}%` : '0%';
+
+  return shell(
+    <>
+      <div className="analytics-summary-ledger">
+        <AnalyticsSummary label="Records" value={metrics.total} note="visible at snapshot" onClick={() => openList()} />
+        <AnalyticsSummary label="Active" value={indexed.has('active') ? active : null}
+          note={indexed.has('active') ? pct(active) : 'available after the indexed build'}
+          onClick={indexed.has('active') ? () => openList({ active: '1' }) : null} />
+        <AnalyticsSummary label="Categories used" value={indexed.has('category') ? categoryUsed : null}
+          note={indexed.has('category') ? `${unused.category.length} active choices unused` : 'not a field on this type'} />
+        <AnalyticsSummary label="Needs classification" value={categoryEmpty == null ? null : categoryEmpty}
+          note={categoryEmpty == null ? 'not a field on this type' : pct(categoryEmpty)}
+          onClick={categoryEmpty ? () => openList({ category: '__empty__' }) : null} />
+        <AnalyticsSummary label="No assignment group" value={groupEmpty == null ? null : groupEmpty}
+          note={groupEmpty == null ? 'not available' : pct(groupEmpty)}
+          onClick={groupEmpty ? () => openList({ assignment_group: '__empty__' }) : null} />
+      </div>
+
+      {indexed.has('category') && (
+        <div className="analytics-grid analytics-grid-primary">
+          <TaskMetricPanel title="Category usage" subtitle="All observed categories, ranked"
+            items={categoryRows} total={metrics.total} fieldLabel="category"
+            onOpen={item => openList({ category: item.value })} />
+          <UnusedChoicePanel category={unused.category || []} subcategory={unused.subcategory || []} />
+        </div>
+      )}
+
+      {indexed.has('subcategory') && (
+        <TaskSubcategoryPanel items={metrics.subcategory_pairs || []} total={metrics.total}
+          onOpen={item => openList({ category: item.category, subcategory: item.value })} />
+      )}
+
+      <div className="analytics-grid analytics-grid-secondary">
+        <TaskMetricPanel title="State" subtitle="Lifecycle position at snapshot"
+          items={dimensions.state || []} total={metrics.total} fieldLabel="state"
+          onOpen={item => openList({ state: item.value })} />
+        <TaskMetricPanel title="Priority" subtitle="Service priority mix"
+          items={dimensions.priority || []} total={metrics.total} fieldLabel="priority"
+          onOpen={item => openList({ priority: item.value })} />
+        {dimensions.impact && <TaskMetricPanel title="Impact" subtitle="Breadth of business effect"
+          items={dimensions.impact} total={metrics.total} fieldLabel="impact"
+          onOpen={item => openList({ impact: item.value })} />}
+        {dimensions.urgency && <TaskMetricPanel title="Urgency" subtitle="Time sensitivity"
+          items={dimensions.urgency} total={metrics.total} fieldLabel="urgency"
+          onOpen={item => openList({ urgency: item.value })} />}
+        <TaskMetricPanel title="Assignment group" subtitle="Work ownership"
+          items={dimensions.assignment_group || []} total={metrics.total} fieldLabel="assignment_group"
+          onOpen={item => openList({ assignment_group: item.value })} />
+        {dimensions.contact_type && <TaskMetricPanel title="Contact channel" subtitle="How records entered the system"
+          items={dimensions.contact_type} total={metrics.total} fieldLabel="contact_type"
+          onOpen={item => openList({ contact_type: item.value })} />}
+        {dimensions.cat_item && <TaskMetricPanel title="Catalog item" subtitle="Requested-item demand"
+          items={dimensions.cat_item} total={metrics.total} fieldLabel="cat_item"
+          onOpen={item => openList({ cat_item: item.value })} />}
+        {dimensions.type && <TaskMetricPanel title="Type" subtitle="Record type mix"
+          items={dimensions.type} total={metrics.total} fieldLabel="type"
+          onOpen={item => openList({ type: item.value })} />}
+        {dimensions.chg_model && <TaskMetricPanel title="Change model" subtitle="Model usage"
+          items={dimensions.chg_model} total={metrics.total} fieldLabel="chg_model"
+          onOpen={item => openList({ chg_model: item.value })} />}
+      </div>
+    </>
+  );
+};
+
+function AnalyticsSummary({ label, value, note, onClick }) {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+    <Tag className={'analytics-summary' + (onClick ? ' is-linked' : '')} onClick={onClick || undefined}>
+      <span>{label}</span>
+      <strong>{value == null ? '—' : Number(value).toLocaleString()}</strong>
+      <small>{note}</small>
+    </Tag>
+  );
+}
+
+function TaskMetricPanel({ title, subtitle, items, total, fieldLabel, onOpen }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = (items || []).filter(item => item.count > 0);
+  const visible = expanded ? rows : rows.slice(0, 10);
+  const max = Math.max(1, ...rows.map(item => item.count));
+  return (
+    <section className="analytics-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <span>{rows.length.toLocaleString()} values</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">No populated values on this record type.</div> : (
+        <div className="analytics-ranking">
+          {visible.map((item, index) => (
+            <button key={`${item.value}:${index}`} className="analytics-rank-row" onClick={() => onOpen(item)}>
+              <span className="analytics-rank-number">{String(index + 1).padStart(2, '0')}</span>
+              <span className="analytics-rank-main">
+                <span className="analytics-rank-label">{item.label}</span>
+                <span className="analytics-query-clause">{fieldLabel} = {item.value}</span>
+                <span className="analytics-rank-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
+              </span>
+              <span className="analytics-rank-count">{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(item.count / total < .01 ? 1 : 0) : 0}%</small></span>
+              <window.Icon name="arrow_right" size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+      {rows.length > 10 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show top 10' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
+  );
+}
+
+function TaskSubcategoryPanel({ items, total, onOpen }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = (items || []).filter(item => item.count > 0);
+  const visible = expanded ? rows : rows.slice(0, 12);
+  const max = Math.max(1, ...rows.map(item => item.count));
+  return (
+    <section className="analytics-panel analytics-subcategory-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>Category → subcategory paths</h2><p>Dependent classifications stay paired, so repeated subcategory codes do not collapse together.</p></div>
+        <span>{rows.length.toLocaleString()} observed paths</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">No populated subcategories.</div> : (
+        <div className="subcategory-ranking">
+          {visible.map((item, index) => (
+            <button key={`${item.category}:${item.value}:${index}`} className="subcategory-rank-row" onClick={() => onOpen(item)}>
+              <span className="subcategory-path"><b>{item.category_label}</b><window.Icon name="arrow_right" size={11} /><span>{item.label}</span></span>
+              <span className="analytics-query-clause">category = {item.category} · subcategory = {item.value}</span>
+              <span className="subcategory-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
+              <strong>{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(1) : 0}%</small></strong>
+              <window.Icon name="arrow_right" size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+      {rows.length > 12 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show top 12' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
+  );
+}
+
+function UnusedChoicePanel({ category, subcategory }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const rows = [
+    ...(category || []).map(item => ({ ...item, kind: 'Category', parent: '' })),
+    ...(subcategory || []).map(item => ({ ...item, kind: 'Subcategory', parent: item.category_label })),
+  ];
+  const visible = expanded ? rows : rows.slice(0, 12);
+  return (
+    <section className="analytics-panel unused-choice-panel">
+      <div className="analytics-panel-heading">
+        <div><h2>Configured but unused</h2><p>Active choices with zero matching records in the snapshot.</p></div>
+        <span>{rows.length.toLocaleString()} choices</span>
+      </div>
+      {rows.length === 0 ? <div className="analytics-panel-empty">Every active configured choice has recorded usage.</div> : (
+        <div className="unused-choice-list">
+          {visible.map((item, index) => (
+            <div key={`${item.kind}:${item.parent}:${item.value}:${index}`}>
+              <span><b>{item.label}</b>{item.parent && <small>{item.parent}</small>}</span>
+              <em>{item.kind}</em>
+              <strong>0</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      {rows.length > 12 && <button className="analytics-show-all" onClick={() => setExpanded(v => !v)}>
+        {expanded ? 'Show first 12' : `Show all ${rows.length.toLocaleString()}`}
+      </button>}
+    </section>
   );
 }
 

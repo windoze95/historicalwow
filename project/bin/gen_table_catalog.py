@@ -101,10 +101,13 @@ def hr_parent_note(table):
 
 def cache_note(table):
     if table in server.CACHE_5MIN:
-        return (
+        note = (
             'Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` '
             'when the `q` parameter is empty and `limit > 200`.'
         )
+        if table == 'incident' or table in server.HR_PARENT_COLUMN:
+            note += ' Public caching is disabled while the HR gate is configured because visibility varies by cookie.'
+        return note
     return None
 
 
@@ -121,7 +124,7 @@ def build_catalog():
             if kind == 'display-string':
                 note = 'extracted from `display_value` (label form, e.g. "Active" rather than the underlying code)'
             elif kind == 'bool-int':
-                note = 'ServiceNow boolean stored as 0 or 1; filter with `?col=true|false` (auto-coerced) or `?col=1|0`'
+                note = 'ServiceNow boolean serialized as `"0"` or `"1"`; filter with `?col=true|false` (auto-coerced) or `?col=1|0`'
             rows.append({'name': col_name, 'type': kind, 'note': note})
         catalog.append({
             'table': table,
@@ -146,9 +149,11 @@ def render_tables_md(catalog):
     out.append('Every table here is queryable via `GET /api/<table>` (list, paginated) '
                'and `GET /api/<table>/<sys_id>` (single record). The columns listed are '
                'the **indexed** columns — those are the only ones you can filter on '
-               'with `?col=value`. Every other field on the record stays inside the '
-               '`raw` JSON envelope and is merged into the response unless you pass '
-               '`?slim=1`.')
+               'with `?col=value`, and the table-list route returns them as scalars '
+               'with `?slim=1`. Non-slim lists and single-record responses merge the '
+               'stored `raw` JSON envelope on top; a same-named field can therefore '
+               'retain its ServiceNow `{value, display_value}` object. The single-record '
+               'route does not support slim mode.')
     out.append('')
     out.append('## Tag legend')
     out.append('')
@@ -165,7 +170,7 @@ def render_tables_md(catalog):
     out.append('| --- | --- |')
     out.append('| `string` | Raw value (most columns). |')
     out.append('| `string (display)` | Display value (the human-friendly label rather than the underlying code). |')
-    out.append('| `bool 0/1` | ServiceNow boolean stored as integer `0` or `1`. Filter with `?col=true` or `?col=false` (auto-coerced) or `?col=1` / `?col=0`. |')
+    out.append('| `bool 0/1` | ServiceNow boolean serialized as string `"0"` or `"1"` in slim/indexed responses. Filter with `?col=true` or `?col=false` (auto-coerced) or `?col=1` / `?col=0`. |')
     out.append('')
 
     # Group tables: task → reference → activity → catalog → server-side logic →
@@ -255,7 +260,11 @@ def render_openapi_schemas_yaml(catalog):
     for entry in catalog:
         schema_name = _schema_name_for(entry['table'])
         tags_phrase = ', '.join(entry['tags']) if entry['tags'] else 'reference'
-        desc = f"Row from the `{entry['table']}` table ({tags_phrase})."
+        desc = (
+            f"Slim/indexed row shape from the `{entry['table']}` table ({tags_phrase}). "
+            'In a non-slim response, a same-named raw field may instead retain its '
+            'ServiceNow {value, display_value} envelope.'
+        )
         if entry['hr_note']:
             desc += ' ' + entry['hr_note']
         out.append(f'    {schema_name}:')
@@ -268,9 +277,9 @@ def render_openapi_schemas_yaml(catalog):
         for col in entry['columns']:
             out.append(f"        {col['name']}:")
             if col['type'] == 'bool-int':
-                out.append('          type: integer')
-                out.append('          enum: [0, 1]')
-                out.append('          description: ServiceNow boolean stored as 0 or 1.')
+                out.append('          type: string')
+                out.append("          enum: ['0', '1']")
+                out.append('          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.')
             elif col['type'] == 'display-string':
                 out.append('          type: string')
                 out.append('          description: Display value (label form).')

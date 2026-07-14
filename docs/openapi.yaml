@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: HistoricalWow API
-  version: '1.1.0'
+  version: '1.2.0'
   description: |
     Read-only HTTP API over a frozen ServiceNow archive. Returns records from
     a SQLite database that was built from an offline ServiceNow export — no
@@ -177,6 +177,89 @@ paths:
                             label: {type: string}
                             count: {type: integer}
         '304': {description: Not modified.}
+
+  /api/task/metrics/{table}:
+    get:
+      tags: [tables]
+      summary: Task-table analysis metrics
+      description: |
+        Indexed distributions and coverage for one supported task table. The
+        response powers the task analysis page and its drill-through list
+        filters. Dimensions are capability-driven: a field appears only when
+        it is an extracted column in the current SQLite build. Distribution
+        entries carry the exact stored `value`, display `label`, and `count`;
+        pass `value` back to `/api/{table}?<dimension>=<value>`.
+
+        `category` and dependent `(category, subcategory)` definitions are
+        reconciled with active `sys_choice` rows. `unused` contains active
+        configured choices with zero observed records. `__empty__` is the
+        explicit drill-through value for records whose indexed field is NULL
+        or empty.
+
+        Incident and incident-task totals honor the HR gate. Responses vary by
+        cookie and are revalidated on every request; server-side aggregates are
+        cached separately for locked and unlocked visibility.
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - incident
+              - change_request
+              - problem
+              - problem_task
+              - sc_request
+              - sc_req_item
+              - sc_task
+              - incident_task
+              - change_task
+              - sysapproval_group
+              - asset_task
+              - sn_contract_renewal_task
+      responses:
+        '200':
+          description: Task metrics visible to the current HR-gate session.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`no-cache, must-revalidate`.'}
+            Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie`.'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [table, total, indexed_columns, dimensions, coverage, subcategory_pairs, unused]
+                properties:
+                  table: {type: string}
+                  total: {type: integer}
+                  snapshot_date: {type: string}
+                  indexed_columns:
+                    type: array
+                    items: {type: string}
+                  dimensions:
+                    type: object
+                    additionalProperties: {$ref: '#/components/schemas/TaskDistribution'}
+                  coverage:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      required: [set, empty]
+                      properties:
+                        set: {type: integer}
+                        empty: {type: integer}
+                  subcategory_pairs:
+                    type: array
+                    items: {$ref: '#/components/schemas/TaskSubcategoryMetric'}
+                  unused:
+                    type: object
+                    properties:
+                      category: {$ref: '#/components/schemas/TaskDistribution'}
+                      subcategory:
+                        type: array
+                        items: {$ref: '#/components/schemas/TaskSubcategoryMetric'}
+        '404':
+          description: Unknown or unsupported task table.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
   /api/sys_user_lookup:
     get:
@@ -524,7 +607,9 @@ paths:
         `cmdb_ci?last_discovered_before=2026-02-01`. A comma-separated filter
         value is matched as `IN (...)` — e.g. `?install_status=7,3` — which is
         how a single CMDB-metrics option can cover several codes that share one
-        display label.
+        display label. The reserved value `__empty__` matches rows where the
+        indexed column is NULL or the empty string, enabling drill-throughs
+        such as `?category=__empty__`.
 
         **HR gate**: when the gate is locked, the `incident` table hides
         rows whose `assignment_group` is the HR group, and child tables
@@ -655,7 +740,10 @@ paths:
           headers:
             Cache-Control:
               schema: {type: string}
-              description: '`public, max-age=300` for tables in `x-cache-5min` when `q` is empty and `limit > 200`; otherwise `no-cache, must-revalidate`.'
+              description: '`public, max-age=300` for non-HR-dependent tables in `x-cache-5min` when `q` is empty and `limit > 200`; otherwise `no-cache, must-revalidate`.'
+            Vary:
+              schema: {type: string}
+              description: 'Always includes `Accept-Encoding`; also includes `Cookie` when the configured HR gate can change row visibility.'
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ListEnvelope'}
@@ -668,9 +756,9 @@ paths:
       tags: [tables]
       summary: Fetch a single row by sys_id
       description: |
-        Returns the row as a flat JSON object. Indexed columns appear as
-        scalars; every other field comes from the `raw` envelope merged into
-        the response. Returns `403 hr_locked` for `incident` rows whose
+        Returns the row as one merged JSON object. The stored `raw` envelope
+        wins on duplicate keys, so a same-named indexed field can retain its
+        ServiceNow `{value, display_value}` object. Returns `403 hr_locked` for `incident` rows whose
         `assignment_group` is the HR group, and for child-table rows whose
         parent points at an HR-assigned incident — see `x-hr-parent-columns`.
       parameters:
@@ -808,6 +896,30 @@ components:
           label: {type: string}
           count: {type: integer}
 
+    TaskDistribution:
+      type: array
+      description: |
+        Count-descending indexed task dimension. `value` round-trips through
+        the generic list filter; `__empty__` means NULL or empty string.
+      items:
+        type: object
+        required: [value, label, count]
+        properties:
+          value: {type: string}
+          label: {type: string}
+          count: {type: integer}
+
+    TaskSubcategoryMetric:
+      type: object
+      required: [category, category_label, value, label, count]
+      properties:
+        category: {type: string, description: 'Parent category value, or `__empty__`.'}
+        category_label: {type: string}
+        value: {type: string, description: Subcategory value.}
+        label: {type: string}
+        count: {type: integer}
+        defined: {type: boolean, description: Whether an active matching sys_choice definition exists.}
+
     ListEnvelope:
       type: object
       required: [rows, total, limit, offset]
@@ -817,9 +929,10 @@ components:
           description: |
             One element per row. The shape varies by table — see the per-table
             `*Row` schemas in `openapi-schemas.yaml` and the `x-filterable-columns`
-            extension. Every row carries at least `sys_id`. Indexed columns
-            appear as scalars; every other field comes from the row's `raw`
-            envelope merged into the response (unless `?slim=1`).
+            extension. Every row carries at least `sys_id`. With `?slim=1`,
+            indexed columns are scalars. Otherwise the row's `raw` envelope is
+            merged on top, and same-named fields can retain ServiceNow
+            `{value, display_value}` objects.
           items:
             type: object
             additionalProperties: true

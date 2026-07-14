@@ -6,7 +6,7 @@ components:
   schemas:
     IncidentRow:
       type: object
-      description: 'Row from the `incident` table (task, hr-gated). Directly gated: rows where `assignment_group` is the HR group are hidden when locked.'
+      description: 'Slim/indexed row shape from the `incident` table (task, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Directly gated: rows where `assignment_group` is the HR group are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -17,7 +17,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -27,6 +35,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -34,18 +44,22 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
+          type: string
+        category:
+          type: string
+        subcategory:
           type: string
       required: [sys_id]
       additionalProperties: true
     ChangeRequestRow:
       type: object
-      description: 'Row from the `change_request` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `change_request` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -56,7 +70,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -66,6 +88,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -73,12 +97,14 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
+          type: string
+        category:
           type: string
         std_change_producer_version:
           type: string
@@ -90,7 +116,7 @@ components:
       additionalProperties: true
     ProblemRow:
       type: object
-      description: 'Row from the `problem` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `problem` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -101,7 +127,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -111,6 +145,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -118,18 +154,22 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
+          type: string
+        category:
+          type: string
+        subcategory:
           type: string
       required: [sys_id]
       additionalProperties: true
     ProblemTaskRow:
       type: object
-      description: 'Row from the `problem_task` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `problem_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -140,7 +180,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -150,6 +198,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -157,9 +207,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -168,7 +218,7 @@ components:
       additionalProperties: true
     ScRequestRow:
       type: object
-      description: 'Row from the `sc_request` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_request` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -179,7 +229,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -189,6 +247,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -196,9 +256,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -209,7 +269,7 @@ components:
       additionalProperties: true
     ScReqItemRow:
       type: object
-      description: 'Row from the `sc_req_item` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_req_item` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -220,7 +280,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -230,6 +298,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -237,9 +307,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -254,7 +324,7 @@ components:
       additionalProperties: true
     ScTaskRow:
       type: object
-      description: 'Row from the `sc_task` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -265,7 +335,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -275,6 +353,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -282,9 +362,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -299,7 +379,7 @@ components:
       additionalProperties: true
     IncidentTaskRow:
       type: object
-      description: 'Row from the `incident_task` table (task, cache-5min, hr-gated). Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `incident_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -310,7 +390,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -320,6 +408,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -327,9 +417,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -338,7 +428,7 @@ components:
       additionalProperties: true
     ChangeTaskRow:
       type: object
-      description: 'Row from the `change_task` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `change_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -349,7 +439,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -359,6 +457,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -366,9 +466,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -377,7 +477,7 @@ components:
       additionalProperties: true
     SysapprovalGroupRow:
       type: object
-      description: 'Row from the `sysapproval_group` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `sysapproval_group` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -388,7 +488,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -398,6 +506,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -405,9 +515,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -416,7 +526,7 @@ components:
       additionalProperties: true
     AssetTaskRow:
       type: object
-      description: 'Row from the `asset_task` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `asset_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -427,7 +537,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -437,6 +555,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -444,9 +564,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -455,7 +575,7 @@ components:
       additionalProperties: true
     SnContractRenewalTaskRow:
       type: object
-      description: 'Row from the `sn_contract_renewal_task` table (task, cache-5min).'
+      description: 'Slim/indexed row shape from the `sn_contract_renewal_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -466,7 +586,15 @@ components:
           type: string
         state:
           type: string
+        active:
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
+          type: string
+        impact:
+          type: string
+        urgency:
           type: string
         assigned_to:
           type: string
@@ -476,6 +604,8 @@ components:
           type: string
         caller_id:
           type: string
+        contact_type:
+          type: string
         opened_at:
           type: string
         sys_created_on:
@@ -483,9 +613,9 @@ components:
         sys_updated_on:
           type: string
         legal_hold:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_class_name:
           type: string
         parent:
@@ -494,7 +624,7 @@ components:
       additionalProperties: true
     SysUserRow:
       type: object
-      description: 'Row from the `sys_user` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_user` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -512,14 +642,14 @@ components:
         location:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysUserGroupRow:
       type: object
-      description: 'Row from the `sys_user_group` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_user_group` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -531,14 +661,14 @@ components:
         description:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysUserGrmemberRow:
       type: object
-      description: 'Row from the `sys_user_grmember` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_user_grmember` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -551,7 +681,7 @@ components:
       additionalProperties: true
     SysUserDelegateRow:
       type: object
-      description: 'Row from the `sys_user_delegate` table (reference).'
+      description: 'Slim/indexed row shape from the `sys_user_delegate` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -565,26 +695,26 @@ components:
         ends:
           type: string
         approvals:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         assignments:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         notifications:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         invitations:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysUserHasRoleRow:
       type: object
-      description: 'Row from the `sys_user_has_role` table (reference).'
+      description: 'Slim/indexed row shape from the `sys_user_has_role` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -598,14 +728,14 @@ components:
         granted_by:
           type: string
         inherited:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysUserRoleRow:
       type: object
-      description: 'Row from the `sys_user_role` table (reference).'
+      description: 'Slim/indexed row shape from the `sys_user_role` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -618,7 +748,7 @@ components:
       additionalProperties: true
     SysGroupHasRoleRow:
       type: object
-      description: 'Row from the `sys_group_has_role` table (reference).'
+      description: 'Slim/indexed row shape from the `sys_group_has_role` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -630,14 +760,14 @@ components:
         granted_by:
           type: string
         inherits:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     KbKnowledgeRow:
       type: object
-      description: 'Row from the `kb_knowledge` table (reference).'
+      description: 'Slim/indexed row shape from the `kb_knowledge` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -659,14 +789,14 @@ components:
         valid_to:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     CmdbCiRow:
       type: object
-      description: 'Row from the `cmdb_ci` table (reference).'
+      description: 'Slim/indexed row shape from the `cmdb_ci` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -699,7 +829,7 @@ components:
       additionalProperties: true
     CmdbRelCiRow:
       type: object
-      description: 'Row from the `cmdb_rel_ci` table (reference).'
+      description: 'Slim/indexed row shape from the `cmdb_rel_ci` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -715,7 +845,7 @@ components:
       additionalProperties: true
     SysChoiceRow:
       type: object
-      description: 'Row from the `sys_choice` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_choice` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -734,7 +864,7 @@ components:
       additionalProperties: true
     CoreCompanyRow:
       type: object
-      description: 'Row from the `core_company` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `core_company` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -747,7 +877,7 @@ components:
       additionalProperties: true
     CmnDepartmentRow:
       type: object
-      description: 'Row from the `cmn_department` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `cmn_department` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -760,7 +890,7 @@ components:
       additionalProperties: true
     CmnLocationRow:
       type: object
-      description: 'Row from the `cmn_location` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `cmn_location` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -775,7 +905,7 @@ components:
       additionalProperties: true
     CmnCostCenterRow:
       type: object
-      description: 'Row from the `cmn_cost_center` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `cmn_cost_center` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -788,7 +918,7 @@ components:
       additionalProperties: true
     SysJournalFieldRow:
       type: object
-      description: 'Row from the `sys_journal_field` table (hr-gated). Parent-gated: rows whose `element_id` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_journal_field` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `element_id` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -809,7 +939,7 @@ components:
       additionalProperties: true
     SysAuditRow:
       type: object
-      description: 'Row from the `sys_audit` table (hr-gated). Parent-gated: rows whose `documentkey` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_audit` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `documentkey` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -834,7 +964,7 @@ components:
       additionalProperties: true
     SysAttachmentRow:
       type: object
-      description: 'Row from the `sys_attachment` table (hr-gated). Parent-gated: rows whose `table_sys_id` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_attachment` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `table_sys_id` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -857,7 +987,7 @@ components:
       additionalProperties: true
     SysEmailRow:
       type: object
-      description: 'Row from the `sys_email` table (hr-gated). Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_email` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -884,7 +1014,7 @@ components:
       additionalProperties: true
     TaskCiRow:
       type: object
-      description: 'Row from the `task_ci` table (cache-5min, hr-gated). Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `task_ci` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -897,7 +1027,7 @@ components:
       additionalProperties: true
     TaskSlaRow:
       type: object
-      description: 'Row from the `task_sla` table (cache-5min, hr-gated). Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `task_sla` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
       properties:
         sys_id:
           type: string
@@ -915,7 +1045,7 @@ components:
       additionalProperties: true
     SysapprovalApproverRow:
       type: object
-      description: 'Row from the `sysapproval_approver` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sysapproval_approver` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -932,7 +1062,7 @@ components:
       additionalProperties: true
     ScCatItemRow:
       type: object
-      description: 'Row from the `sc_cat_item` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_cat_item` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -949,7 +1079,7 @@ components:
       additionalProperties: true
     ItemOptionNewRow:
       type: object
-      description: 'Row from the `item_option_new` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `item_option_new` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -963,9 +1093,9 @@ components:
         cat_item:
           type: string
         mandatory:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         order:
           type: string
         reference:
@@ -974,7 +1104,7 @@ components:
       additionalProperties: true
     ScItemOptionRow:
       type: object
-      description: 'Row from the `sc_item_option` table (reference).'
+      description: 'Slim/indexed row shape from the `sc_item_option` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -991,7 +1121,7 @@ components:
       additionalProperties: true
     ScItemOptionMtomRow:
       type: object
-      description: 'Row from the `sc_item_option_mtom` table (reference).'
+      description: 'Slim/indexed row shape from the `sc_item_option_mtom` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1004,7 +1134,7 @@ components:
       additionalProperties: true
     QuestionRow:
       type: object
-      description: 'Row from the `question` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `question` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1019,7 +1149,7 @@ components:
       additionalProperties: true
     QuestionChoiceRow:
       type: object
-      description: 'Row from the `question_choice` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `question_choice` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1036,7 +1166,7 @@ components:
       additionalProperties: true
     ScCatalogRow:
       type: object
-      description: 'Row from the `sc_catalog` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_catalog` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1046,14 +1176,14 @@ components:
         description:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     ScCategoryRow:
       type: object
-      description: 'Row from the `sc_category` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_category` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1067,14 +1197,14 @@ components:
         parent:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     CatalogUiPolicyRow:
       type: object
-      description: 'Row from the `catalog_ui_policy` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `catalog_ui_policy` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1084,17 +1214,17 @@ components:
         short_description:
           type: string
         on_load:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         reverse_if_false:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         applies_to:
           type: string
         order:
@@ -1103,7 +1233,7 @@ components:
       additionalProperties: true
     CatalogUiPolicyActionRow:
       type: object
-      description: 'Row from the `catalog_ui_policy_action` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `catalog_ui_policy_action` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1126,7 +1256,7 @@ components:
       additionalProperties: true
     CatalogScriptClientRow:
       type: object
-      description: 'Row from the `catalog_script_client` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `catalog_script_client` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1142,16 +1272,16 @@ components:
         ui_type:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         applies_to:
           type: string
       required: [sys_id]
       additionalProperties: true
     UserCriteriaRow:
       type: object
-      description: 'Row from the `user_criteria` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `user_criteria` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1161,18 +1291,18 @@ components:
         description:
           type: string
         advanced:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     ScCatItemUserCriteriaMtomRow:
       type: object
-      description: 'Row from the `sc_cat_item_user_criteria_mtom` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_cat_item_user_criteria_mtom` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1185,7 +1315,7 @@ components:
       additionalProperties: true
     ScCatItemUserCriteriaNoMtomRow:
       type: object
-      description: 'Row from the `sc_cat_item_user_criteria_no_mtom` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sc_cat_item_user_criteria_no_mtom` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1198,7 +1328,7 @@ components:
       additionalProperties: true
     ItemOptionNewSetRow:
       type: object
-      description: 'Row from the `item_option_new_set` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `item_option_new_set` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1212,14 +1342,14 @@ components:
         layout:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     IoSetItemRow:
       type: object
-      description: 'Row from the `io_set_item` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `io_set_item` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1234,7 +1364,7 @@ components:
       additionalProperties: true
     TopicRow:
       type: object
-      description: 'Row from the `topic` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `topic` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1244,14 +1374,14 @@ components:
         description:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     StdChangeProposalRow:
       type: object
-      description: 'Row from the `std_change_proposal` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `std_change_proposal` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1280,7 +1410,7 @@ components:
       additionalProperties: true
     SysScriptRow:
       type: object
-      description: 'Row from the `sys_script` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_script` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1292,9 +1422,9 @@ components:
         when:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         priority:
           type: string
         condition:
@@ -1305,7 +1435,7 @@ components:
       additionalProperties: true
     SysScriptClientRow:
       type: object
-      description: 'Row from the `sys_script_client` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_script_client` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1319,16 +1449,16 @@ components:
         ui_type:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         condition:
           type: string
       required: [sys_id]
       additionalProperties: true
     SysScriptIncludeRow:
       type: object
-      description: 'Row from the `sys_script_include` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_script_include` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1338,16 +1468,16 @@ components:
         api_name:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         description:
           type: string
       required: [sys_id]
       additionalProperties: true
     SysautoScriptRow:
       type: object
-      description: 'Row from the `sysauto_script` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sysauto_script` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1355,9 +1485,9 @@ components:
         name:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         run_type:
           type: string
         run_period:
@@ -1369,9 +1499,9 @@ components:
         run_dayofmonth:
           type: string
         conditional:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         condition:
           type: string
         run_as:
@@ -1380,7 +1510,7 @@ components:
       additionalProperties: true
     SysUiPolicyRow:
       type: object
-      description: 'Row from the `sys_ui_policy` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_ui_policy` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1392,22 +1522,22 @@ components:
         model_table:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         conditions:
           type: string
         ui_type:
           type: string
         run_scripts:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysUiPolicyActionRow:
       type: object
-      description: 'Row from the `sys_ui_policy_action` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_ui_policy_action` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1428,7 +1558,7 @@ components:
       additionalProperties: true
     SysDataPolicy2Row:
       type: object
-      description: 'Row from the `sys_data_policy2` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_data_policy2` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1438,16 +1568,16 @@ components:
         model_table:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         conditions:
           type: string
       required: [sys_id]
       additionalProperties: true
     SysDataPolicyRuleRow:
       type: object
-      description: 'Row from the `sys_data_policy_rule` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_data_policy_rule` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1466,7 +1596,7 @@ components:
       additionalProperties: true
     SysPropertiesRow:
       type: object
-      description: 'Row from the `sys_properties` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_properties` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1486,7 +1616,7 @@ components:
       additionalProperties: true
     SysUiActionRow:
       type: object
-      description: 'Row from the `sys_ui_action` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_ui_action` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1498,30 +1628,30 @@ components:
         table:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         condition:
           type: string
         client:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         form_button:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         list_button:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         order:
           type: string
       required: [sys_id]
       additionalProperties: true
     SysDictionaryRow:
       type: object
-      description: 'Row from the `sys_dictionary` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_dictionary` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1536,26 +1666,26 @@ components:
         column_label:
           type: string
         mandatory:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         default_value:
           type: string
         reference:
           type: string
         read_only:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysDictionaryOverrideRow:
       type: object
-      description: 'Row from the `sys_dictionary_override` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_dictionary_override` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1576,7 +1706,7 @@ components:
       additionalProperties: true
     SysHubFlowRow:
       type: object
-      description: 'Row from the `sys_hub_flow` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_flow` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1586,9 +1716,9 @@ components:
         internal_name:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         type:
           type: string
           description: Display value (label form).
@@ -1600,7 +1730,7 @@ components:
       additionalProperties: true
     FlowInventoryRow:
       type: object
-      description: 'Row from the `flow_inventory` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `flow_inventory` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1630,20 +1760,20 @@ components:
         created_by:
           type: string
         curated:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         sys_updated_on:
           type: string
       required: [sys_id]
       additionalProperties: true
     SysHubActionInstanceV2Row:
       type: object
-      description: 'Row from the `sys_hub_action_instance_v2` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_action_instance_v2` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1663,7 +1793,7 @@ components:
       additionalProperties: true
     SysHubActionInstanceRow:
       type: object
-      description: 'Row from the `sys_hub_action_instance` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_action_instance` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1683,7 +1813,7 @@ components:
       additionalProperties: true
     SysHubTriggerInstanceRow:
       type: object
-      description: 'Row from the `sys_hub_trigger_instance` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_trigger_instance` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1700,7 +1830,7 @@ components:
       additionalProperties: true
     SysHubTriggerInstanceV2Row:
       type: object
-      description: 'Row from the `sys_hub_trigger_instance_v2` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_trigger_instance_v2` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1715,7 +1845,7 @@ components:
       additionalProperties: true
     SysHubFlowLogicRow:
       type: object
-      description: 'Row from the `sys_hub_flow_logic` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_hub_flow_logic` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1735,7 +1865,7 @@ components:
       additionalProperties: true
     SysSecurityAclRow:
       type: object
-      description: 'Row from the `sys_security_acl` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sys_security_acl` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1748,13 +1878,13 @@ components:
           type: string
           description: Display value (label form).
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         admin_overrides:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         decision_type:
           type: string
         sys_class_name:
@@ -1763,7 +1893,7 @@ components:
       additionalProperties: true
     SyseventInEmailActionRow:
       type: object
-      description: 'Row from the `sysevent_in_email_action` table (reference).'
+      description: 'Slim/indexed row shape from the `sysevent_in_email_action` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1781,18 +1911,18 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         stop_processing:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SyseventEmailActionRow:
       type: object
-      description: 'Row from the `sysevent_email_action` table (reference).'
+      description: 'Slim/indexed row shape from the `sysevent_email_action` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1808,22 +1938,22 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         action_insert:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         action_update:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SyseventRegisterRow:
       type: object
-      description: 'Row from the `sysevent_register` table (reference).'
+      description: 'Slim/indexed row shape from the `sysevent_register` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1838,7 +1968,7 @@ components:
       additionalProperties: true
     SyseventScriptActionRow:
       type: object
-      description: 'Row from the `sysevent_script_action` table (reference).'
+      description: 'Slim/indexed row shape from the `sysevent_script_action` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1850,14 +1980,14 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SyseventEmailTemplateRow:
       type: object
-      description: 'Row from the `sysevent_email_template` table (reference).'
+      description: 'Slim/indexed row shape from the `sysevent_email_template` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1870,7 +2000,7 @@ components:
       additionalProperties: true
     EmMatchRuleRow:
       type: object
-      description: 'Row from the `em_match_rule` table (reference).'
+      description: 'Slim/indexed row shape from the `em_match_rule` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1885,14 +2015,14 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     EmAlertCorrelationRuleRow:
       type: object
-      description: 'Row from the `em_alert_correlation_rule` table (reference).'
+      description: 'Slim/indexed row shape from the `em_alert_correlation_rule` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1907,14 +2037,14 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     EmAlertManagementRuleRow:
       type: object
-      description: 'Row from the `em_alert_management_rule` table (reference).'
+      description: 'Slim/indexed row shape from the `em_alert_management_rule` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1927,14 +2057,14 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     EmImpactRuleRow:
       type: object
-      description: 'Row from the `em_impact_rule` table (reference).'
+      description: 'Slim/indexed row shape from the `em_impact_rule` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1948,7 +2078,7 @@ components:
       additionalProperties: true
     EmConnectorDefinitionRow:
       type: object
-      description: 'Row from the `em_connector_definition` table (reference).'
+      description: 'Slim/indexed row shape from the `em_connector_definition` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1962,7 +2092,7 @@ components:
       additionalProperties: true
     EmConnectorInstanceRow:
       type: object
-      description: 'Row from the `em_connector_instance` table (reference).'
+      description: 'Slim/indexed row shape from the `em_connector_instance` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1970,14 +2100,14 @@ components:
         name:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SpPortalRow:
       type: object
-      description: 'Row from the `sp_portal` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_portal` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -1990,7 +2120,7 @@ components:
       additionalProperties: true
     SpPageRow:
       type: object
-      description: 'Row from the `sp_page` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_page` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2000,18 +2130,18 @@ components:
         title:
           type: string
         internal:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         public:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SpContainerRow:
       type: object
-      description: 'Row from the `sp_container` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_container` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2026,7 +2156,7 @@ components:
       additionalProperties: true
     SpRowRow:
       type: object
-      description: 'Row from the `sp_row` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_row` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2039,7 +2169,7 @@ components:
       additionalProperties: true
     SpColumnRow:
       type: object
-      description: 'Row from the `sp_column` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_column` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2054,7 +2184,7 @@ components:
       additionalProperties: true
     SpInstanceRow:
       type: object
-      description: 'Row from the `sp_instance` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_instance` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2068,14 +2198,14 @@ components:
         order:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SpWidgetRow:
       type: object
-      description: 'Row from the `sp_widget` table (reference).'
+      description: 'Slim/indexed row shape from the `sp_widget` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2085,14 +2215,14 @@ components:
         name:
           type: string
         public:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     SysTemplateRow:
       type: object
-      description: 'Row from the `sys_template` table (reference).'
+      description: 'Slim/indexed row shape from the `sys_template` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2106,18 +2236,18 @@ components:
         user:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
         global:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     CmdbCiOutageRow:
       type: object
-      description: 'Row from the `cmdb_ci_outage` table (reference).'
+      description: 'Slim/indexed row shape from the `cmdb_ci_outage` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2142,7 +2272,7 @@ components:
       additionalProperties: true
     StdChangeRecordProducerRow:
       type: object
-      description: 'Row from the `std_change_record_producer` table (reference).'
+      description: 'Slim/indexed row shape from the `std_change_record_producer` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2158,14 +2288,14 @@ components:
         sys_class_name:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     ContractSlaRow:
       type: object
-      description: 'Row from the `contract_sla` table (reference).'
+      description: 'Slim/indexed row shape from the `contract_sla` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2179,14 +2309,14 @@ components:
         target:
           type: string
         active:
-          type: integer
-          enum: [0, 1]
-          description: ServiceNow boolean stored as 0 or 1.
+          type: string
+          enum: ['0', '1']
+          description: ServiceNow boolean serialized as 0 or 1 in slim/indexed responses.
       required: [sys_id]
       additionalProperties: true
     AlmAssetRow:
       type: object
-      description: 'Row from the `alm_asset` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_asset` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2225,7 +2355,7 @@ components:
       additionalProperties: true
     AlmHardwareRow:
       type: object
-      description: 'Row from the `alm_hardware` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_hardware` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2262,7 +2392,7 @@ components:
       additionalProperties: true
     SnEntFacilityAssetRow:
       type: object
-      description: 'Row from the `sn_ent_facility_asset` table (cache-5min).'
+      description: 'Slim/indexed row shape from the `sn_ent_facility_asset` table (cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2297,7 +2427,7 @@ components:
       additionalProperties: true
     AlmSoftwareLicenseRow:
       type: object
-      description: 'Row from the `alm_software_license` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_software_license` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2328,7 +2458,7 @@ components:
       additionalProperties: true
     AlmConsumableRow:
       type: object
-      description: 'Row from the `alm_consumable` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_consumable` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2353,7 +2483,7 @@ components:
       additionalProperties: true
     AlmFacilityRow:
       type: object
-      description: 'Row from the `alm_facility` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_facility` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2374,7 +2504,7 @@ components:
       additionalProperties: true
     AlmStockroomRow:
       type: object
-      description: 'Row from the `alm_stockroom` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_stockroom` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2395,7 +2525,7 @@ components:
       additionalProperties: true
     AlmLicenseRow:
       type: object
-      description: 'Row from the `alm_license` table (reference).'
+      description: 'Slim/indexed row shape from the `alm_license` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2426,7 +2556,7 @@ components:
       additionalProperties: true
     CmdbCiSpkgRow:
       type: object
-      description: 'Row from the `cmdb_ci_spkg` table (reference).'
+      description: 'Slim/indexed row shape from the `cmdb_ci_spkg` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2451,7 +2581,7 @@ components:
       additionalProperties: true
     CmdbSoftwareInstanceRow:
       type: object
-      description: 'Row from the `cmdb_software_instance` table (reference).'
+      description: 'Slim/indexed row shape from the `cmdb_software_instance` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
       properties:
         sys_id:
           type: string
@@ -2478,18 +2608,18 @@ components:
       additionalProperties: true
 
 x-filterable-columns:
-  incident: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  change_request: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, std_change_producer_version, chg_model, type]
-  problem: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  problem_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sc_request: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for]
-  sc_req_item: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request, cat_item]
-  sc_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request_item, request]
-  incident_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  change_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sysapproval_group: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  asset_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
-  sn_contract_renewal_task: [sys_id, number, short_description, state, priority, assigned_to, assignment_group, cmdb_ci, caller_id, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  incident: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, subcategory]
+  change_request: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, std_change_producer_version, chg_model, type]
+  problem: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, category, subcategory]
+  problem_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  sc_request: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for]
+  sc_req_item: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request, cat_item]
+  sc_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent, requested_for, request_item, request]
+  incident_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  change_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  sysapproval_group: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  asset_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
+  sn_contract_renewal_task: [sys_id, number, short_description, state, active, priority, impact, urgency, assigned_to, assignment_group, cmdb_ci, caller_id, contact_type, opened_at, sys_created_on, sys_updated_on, legal_hold, sys_class_name, parent]
   sys_user: [sys_id, user_name, name, email, title, department, location, active]
   sys_user_group: [sys_id, name, manager, description, active]
   sys_user_grmember: [sys_id, group, user]

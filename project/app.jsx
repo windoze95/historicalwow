@@ -85,6 +85,7 @@ function App() {
   useEffect(() => {
     if (route.view === 'list') window.AuditLog.push('list', route.table, '');
     if (route.view === 'home') window.AuditLog.push('view', 'home', 'Snapshot landing');
+    if (route.view === 'task_analytics') window.AuditLog.push('view', `${route.table}/analytics`, 'Task analytics');
     if (route.view === 'service_catalog_home') window.AuditLog.push('view', 'service-catalog', 'Service catalog overview');
     if (route.view === 'logic_home') window.AuditLog.push('view', 'logic', 'Server/client-side logic overview');
     if (route.view === 'sn_table_inspector') window.AuditLog.push('view', `sn-table/${route.name}`, `Logic on ${route.name}`);
@@ -166,6 +167,7 @@ function App() {
           {route.view === 'cmdb_home' && <window.CMDBOverviewPage />}
           {route.view === 'service_status_home' && <window.ServiceStatusPage />}
           {route.view === 'sn_table_inspector' && <window.SnTableInspectorPage name={route.name} />}
+          {route.view === 'task_analytics' && <window.TaskAnalyticsPage key={route.table} table={route.table} />}
           {route.view === 'list' && route.table === 'sc_cat_item' && <window.CatalogItemListPage />}
           {route.view === 'list' && route.table === 'sys_script' && <window.BusinessRuleListPage />}
           {route.view === 'list' && route.table === 'sys_script_client' && <window.ClientScriptListPage />}
@@ -174,7 +176,7 @@ function App() {
           {route.view === 'list' && route.table === 'sys_ui_policy' && <window.UIPolicyListPage />}
           {route.view === 'list' && route.table === 'sys_data_policy2' && <window.DataPolicyListPage />}
           {route.view === 'list' && route.table === 'flow_inventory' && <window.FlowInventoryListPage />}
-          {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage table={route.table} />}
+          {route.view === 'list' && !LOGIC_LIST_TABLES.has(route.table) && route.table !== 'sc_cat_item' && <window.ListPage key={`${route.table}:${route.query || ''}`} table={route.table} />}
           {route.view === 'record' && route.table === 'sc_cat_item' && <window.CatalogItemRecordPage sys_id={route.sys_id} showRaw={showRaw} />}
           {route.view === 'record' && route.table === 'sys_script' && <window.BusinessRuleRecordPage sys_id={route.sys_id} />}
           {route.view === 'record' && route.table === 'sys_script_client' && <window.ClientScriptRecordPage sys_id={route.sys_id} />}
@@ -298,6 +300,7 @@ function Sidebar({ route }) {
     { sep: 'Tickets' },
     navItem('/incidents',       'incident', 'Incidents',        'incident'),
     navItem('/problems',        'flag',     'Problems',         'problem'),
+    { id: '/incidents/analytics', icon: 'filter', label: 'Task analysis' },
     { sep: 'Changes' },
     navItem('/changes',         'change',   'Change requests',  'change_request'),
     { sep: 'Service catalog' },
@@ -366,6 +369,7 @@ function Sidebar({ route }) {
     if (id === '/logic') return route.view === 'logic_home' || route.view === 'sn_table_inspector';
     if (id === '/cmdb') return route.view === 'cmdb_home';
     if (id === '/service-status') return route.view === 'service_status_home';
+    if (id === '/incidents/analytics') return route.view === 'task_analytics';
     // Derive the slug→table mapping from URL_TO_TABLE instead of duplicating it
     // here — the two would otherwise drift as routes are added or renamed.
     const table = window.URL_TO_TABLE[id.slice(1)];

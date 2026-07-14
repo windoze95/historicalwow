@@ -276,6 +276,13 @@ window.HistoricalWowData = (function () {
     return apiGet('/api/cmdb/metrics');
   };
 
+  // Indexed task-table distributions for the analytics page and list facets.
+  // The server applies the same HR visibility rule as /api/<table> and returns
+  // `indexed_columns` so an older DB never exposes a filter it cannot honor.
+  data.fetchTaskMetrics = async function (table) {
+    return apiGet(`/api/task/metrics/${encodeURIComponent(table)}`);
+  };
+
   data.fetchSearch = async function (q, types) {
     const params = new URLSearchParams({ q });
     if (types && types.length) params.set('types', types.join(','));

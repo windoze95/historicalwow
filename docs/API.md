@@ -39,7 +39,7 @@ This API is intended for internal engineering teams and pre-approved external pa
 - **Minor** (`x.Y.0`) — new endpoint, new optional response field, new query parameter, new table added to the catalog.
 - **Major** (`X.0.0`) — breaking change: removed endpoint, removed response field, changed response shape, changed status code semantics.
 
-The current spec is **`1.0.0`**. The `/docs` URL itself is a stable name — if it ever has to move (e.g., a viewer page wants `/docs`), the replacement will be `/api-docs` and the old route will redirect for at least one minor bump.
+The current spec is **`1.2.0`**. The `/docs` URL itself is a stable name — if it ever has to move (e.g., a viewer page wants `/docs`), the replacement will be `/api-docs` and the old route will redirect for at least one minor bump.
 
 ## 2. Quick start
 
@@ -141,11 +141,12 @@ Use `?slim=1` to skip the `raw` envelope and return only the indexed columns —
 
 ### 4.3 Filtering
 
-Three filter shapes coexist on `/api/<table>`:
+Four filter shapes coexist on `/api/<table>`:
 
 1. **Free-text `q`** — substring match (`LIKE %q%`) against whichever of `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn` exist on the target table (so `cmdb_ci` is searchable by IP / hostname). A `q` against a table that has none of these columns returns every row (see [§10](#10-footguns)).
 2. **Exact-match `?col=value`** — only on **indexed columns**. The full per-table list is in [`tables.md`](tables.md) and machine-readable as `x-filterable-columns` in [`openapi-schemas.yaml`](openapi-schemas.yaml). A comma-separated value is matched as `IN (...)`: `?install_status=7,3` matches either code (this is how one CMDB-metrics option can cover several codes that share a display label).
 3. **Range `?col_before=` / `?col_after=`** — on an indexed column, compares with `<` and `>=` respectively (a `_before` bound also excludes empty values, so "no value" isn't treated as an early one). Drives the CI staleness filter, e.g. `cmdb_ci?last_discovered_before=2026-02-01`.
+4. **Empty `?col=__empty__`** — matches rows where the indexed column is NULL or the empty string. Use this for analysis drill-throughs such as uncategorized records or records with no assignment group; a literal `?col=` is not equivalent because query parsing drops blank values.
 
 Boolean filters are auto-coerced: `?active=true` matches stored `1`, `?active=false` matches `0`. Other string forms (`Y`/`yes`/`1`-as-string) are **not** coerced — `?active=Y` would attempt to match stored `Y`, which doesn't exist. See [§10](#10-footguns).
 
@@ -164,7 +165,7 @@ The `sys_id` default exists because it's the only column with a guaranteed index
 
 ### 4.5 Response shape
 
-**List endpoints** (`/api/<table>` and `/api/search`) return:
+**Generic table-list endpoints** (`/api/<table>`) return:
 
 ```json
 {
@@ -175,11 +176,13 @@ The `sys_id` default exists because it's the only column with a guaranteed index
 }
 ```
 
-**Single-record endpoints** (`/api/<table>/<sys_id>`) return a flat JSON object. Indexed columns appear as **scalar** values; every other field comes from the row's `raw` JSON envelope merged into the response.
+`/api/search` instead returns `{ "rows": [...], "q": "..." }`; it is not paginated and has no `total`, `limit`, or `offset` fields.
 
-Some fields inside `raw` use ServiceNow's `{value, display_value}` envelope — `{"value": "abc", "display_value": "Alice"}`. The indexed columns are already flat scalars (they were extracted at build time using either `_v` for the raw value or `_dv` for the display value; see [`tables.md`](tables.md) for which is which). Other fields under `raw` keep their envelope shape.
+**Single-record endpoints** (`/api/<table>/<sys_id>`) always return one merged JSON object. The stored `raw` envelope wins when it has the same key as an indexed column, so that field can retain its ServiceNow `{value, display_value}` object. Single-record routes do not support `slim`.
 
-Use `?slim=1` to drop `raw` entirely — the response then contains only the indexed scalars plus `sys_id`.
+Some fields inside `raw` use ServiceNow's `{value, display_value}` envelope — `{"value": "abc", "display_value": "Alice"}`. Indexed values were separately extracted at build time using either `_v` for the raw value or `_dv` for the display value; see [`tables.md`](tables.md) for which is which.
+
+On `/api/<table>` list requests, use `?slim=1` to drop `raw` entirely — each row then contains only the indexed scalars plus `sys_id`.
 
 ### 4.6 Compression
 
@@ -190,7 +193,8 @@ Send `Accept-Encoding: gzip` to enable gzip on responses larger than 4 KiB. The 
 Two kinds of cache hints:
 
 - **`ETag` + `If-None-Match`** on the lookup blobs (`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`, `/api/cmdb/metrics`). Clients should cache aggressively and revalidate by sending the previous `ETag` back in `If-None-Match`. A match returns `304 Not Modified` with no body.
-- **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
+- **Cookie-varying task metrics** (`/api/task/metrics/<table>`) return `no-cache, must-revalidate` and vary on both `Accept-Encoding` and `Cookie` because incident totals can change when the HR gate is unlocked. The server still memoizes locked and unlocked aggregates separately per DB build.
+- **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. All JSON responses vary on `Accept-Encoding`; HR-cookie-dependent lists are never public and additionally vary on `Cookie`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
 
 If you're operating a forward-proxy or CDN, the lookup blobs are the most valuable to cache.
 
@@ -222,6 +226,7 @@ Compact reference. Full details, request/response shapes, and try-it-out are in 
 | GET  | `/api/cmdb_ci_lookup` | manifest | Compact CI sys_id → display fields. |
 | GET  | `/api/sys_user_lookup` | manifest | Compact user sys_id → display fields. |
 | GET  | `/api/cmdb/metrics` | manifest | CMDB overview aggregates (class / status / discovery / staleness / ownership / relationships). |
+| GET  | `/api/task/metrics/<table>` | tables | Indexed task distributions, classification coverage, and configured-but-unused choices. |
 | GET  | `/api/hr-status` | hr-gate | Gate state. |
 | POST | `/api/hr-unlock` | hr-gate | Exchange password for cookie. |
 | POST | `/api/hr-lock` | hr-gate | Invalidate cookie. |
@@ -282,6 +287,14 @@ Pre-built, in-memory `{sys_id: {<display fields>}}` blobs. Hit them once per ses
 ### `/api/cmdb/metrics`
 
 Pre-computed CMDB overview aggregates over `cmdb_ci` + `cmdb_rel_ci`: counts by class, operational/install status, discovery source, and last-discovered freshness; ownership coverage (`owned_by` vs `support_group`); and relationship coverage (`connected` vs `orphans`, plus the relationship-type distribution). Cached in-memory per DB build (`ETag`). A dimension is only present once its column is indexed — read `indexed_columns` to see what's available. Distribution entries are `{value, label, count}`, with `value` comma-joined when several codes share a label (so it round-trips through the `IN (...)` filter described in [§4.3](#43-filtering)).
+
+### `/api/task/metrics/<table>`
+
+Returns capability-driven, indexed analysis for a supported task table: state, active status, priority, impact, urgency, contact channel, assignment group, and subtype-specific dimensions such as incident/problem category + subcategory, requested-item catalog item, or change type/model. A field is present in `dimensions` only when the current SQLite build has the supporting extracted column.
+
+Category and subcategory metrics reconcile observed records with active `sys_choice` definitions. `subcategory_pairs` preserves the dependent `(category, subcategory)` relationship; `unused.category` and `unused.subcategory` contain active configured choices with zero observed rows. Distribution `value` fields can be passed directly back to `/api/<table>?<field>=<value>`. The special value `__empty__` drills into missing classification/ownership.
+
+Incident and incident-task totals honor the HR gate. The endpoint sends `Vary: Accept-Encoding, Cookie` and must be revalidated rather than shared as a public lookup blob.
 
 ### `/api/search`
 
@@ -404,6 +417,7 @@ See [`docs/glossary.md`](glossary.md) for ServiceNow term explanations: `sys_id`
 | --- | --- | --- |
 | `1.0.0` | 2026-05 | Initial publication. |
 | `1.1.0` | 2026-06 | Added `/api/cmdb/metrics` (CMDB overview aggregates). `/api/<table>` gains `?col_before=` / `?col_after=` range filters, comma-separated `IN (...)` filter values, and `ip_address` / `fqdn` in free-text search. `cmdb_ci` indexes additional columns (install status, discovery source, last discovered, support group, category, IP, FQDN). |
+| `1.2.0` | 2026-07 | Added `/api/task/metrics/<table>`, task classification/usage analytics, URL-backed task-list facets, and `?col=__empty__` drill-through filters. Task tables add indexed active/impact/urgency/contact-channel fields; incident/problem/change add subtype classification indexes. |
 
 ## 13. Reporting issues
 

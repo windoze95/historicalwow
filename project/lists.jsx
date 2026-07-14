@@ -524,7 +524,7 @@ function TaskMetricPanel({ title, subtitle, items, total, fieldLabel, onOpen }) 
               <span className="analytics-rank-number">{String(index + 1).padStart(2, '0')}</span>
               <span className="analytics-rank-main">
                 <span className="analytics-rank-label">{item.label}</span>
-                <span className="analytics-query-clause">{fieldLabel} = {item.label}</span>
+                <span className="analytics-query-clause">{fieldLabel} = {item.value}</span>
                 <span className="analytics-rank-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
               </span>
               <span className="analytics-rank-count">{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(item.count / total < .01 ? 1 : 0) : 0}%</small></span>
@@ -556,7 +556,7 @@ function TaskSubcategoryPanel({ items, total, onOpen }) {
           {visible.map((item, index) => (
             <button key={`${item.category}:${item.value}:${index}`} className="subcategory-rank-row" onClick={() => onOpen(item)}>
               <span className="subcategory-path"><b>{item.category_label}</b><window.Icon name="arrow_right" size={11} /><span>{item.label}</span></span>
-              <span className="analytics-query-clause">category + subcategory</span>
+              <span className="analytics-query-clause">category = {item.category} · subcategory = {item.value}</span>
               <span className="subcategory-track"><span style={{ width: `${Math.max(1, item.count / max * 100)}%` }} /></span>
               <strong>{item.count.toLocaleString()}<small>{total ? (item.count / total * 100).toFixed(1) : 0}%</small></strong>
               <window.Icon name="arrow_right" size={12} />

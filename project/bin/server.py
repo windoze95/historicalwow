@@ -1339,6 +1339,11 @@ def _raw_scalar(raw, key):
     return '' if value is None else str(value)
 
 
+def _fold_choice(value):
+    """Matching key for choice metadata vs stored values (case/space drift)."""
+    return str(value or '').strip().lower()
+
+
 def _task_choice_definitions(conn, table, field):
     """Active table-specific choices, including subcategory dependencies."""
     if not _table_exists(conn, 'sys_choice'):
@@ -1401,35 +1406,65 @@ def _task_subcategory_pairs(conn, table, cols, where, args, category_defs, sub_d
         args,
     ).fetchall()
     category_labels = {d['value']: d['label'] for d in category_defs}
-    sub_labels = {(d['parent_value'], d['value']): d['label'] for d in sub_defs}
+    # sys_choice metadata drifts from the rows it describes: a subcategory's
+    # dependent_value can record the parent category's *label*, or the value
+    # with different casing, while records store the parent's stored value.
+    # An exact-string join then reports a heavily-used choice as "configured
+    # but unused". Resolve parents through the category definitions and match
+    # on folded keys; stored values win over labels when both fold alike.
+    category_alias = {}
+    for d in category_defs:
+        category_alias[_fold_choice(d['value'])] = d['value']
+    for d in category_defs:
+        category_alias.setdefault(_fold_choice(d['label']), d['value'])
+
+    def resolve_category(value):
+        return category_alias.get(_fold_choice(value), value)
+
+    def category_key(value):
+        return _fold_choice(resolve_category(value))
+
+    sub_labels = {}
+    for d in sub_defs:
+        sub_labels.setdefault(
+            (category_key(d['parent_value']), _fold_choice(d['value'])),
+            d['label'],
+        )
     observed = []
     counts = {}
     for r in rows:
         category = '' if r['c'] is None else str(r['c'])
         subcategory = '' if r['s'] is None else str(r['s'])
-        counts[(category, subcategory)] = r['n']
+        pair_key = (category_key(category), _fold_choice(subcategory))
+        counts[pair_key] = counts.get(pair_key, 0) + r['n']
         observed.append({
             'category': category or EMPTY_FILTER_VALUE,
             'category_label': category_labels.get(category) or r['cl'] or category or 'Not set',
             'value': subcategory,
-            'label': sub_labels.get((category, subcategory))
-                     or sub_labels.get(('', subcategory)) or r['sl'] or subcategory,
+            'label': sub_labels.get(pair_key)
+                     or sub_labels.get(('', pair_key[1])) or r['sl'] or subcategory,
             'count': r['n'],
-            'defined': ((category, subcategory) in sub_labels or ('', subcategory) in sub_labels),
+            'defined': (pair_key in sub_labels or ('', pair_key[1]) in sub_labels),
         })
 
     unused = []
+    seen = set()
     for choice in sub_defs:
         parent = choice['parent_value']
+        pair_key = (category_key(parent), _fold_choice(choice['value']))
+        if pair_key in seen:
+            continue
+        seen.add(pair_key)
         if parent:
-            count = counts.get((parent, choice['value']), 0)
+            count = counts.get(pair_key, 0)
         else:
-            count = sum(n for (cat, sub), n in counts.items() if sub == choice['value'])
+            count = sum(n for (cat, sub), n in counts.items() if sub == pair_key[1])
         if count:
             continue
+        resolved = resolve_category(parent)
         unused.append({
-            'category': parent or EMPTY_FILTER_VALUE,
-            'category_label': category_labels.get(parent) or parent or 'Any category',
+            'category': resolved or EMPTY_FILTER_VALUE,
+            'category_label': category_labels.get(resolved) or resolved or 'Any category',
             'value': choice['value'],
             'label': choice['label'],
             'count': 0,
@@ -1481,14 +1516,18 @@ def _build_task_metrics_payload(conn, table, hr_unlocked=True):
     category_defs = _task_choice_definitions(conn, table, 'category')
     subcategory_defs = _task_choice_definitions(conn, table, 'subcategory')
     used_categories = {
-        value
+        _fold_choice(value)
         for item in dimensions.get('category', [])
         for value in str(item['value']).split(',')
         if value and value != EMPTY_FILTER_VALUE
     }
+    # A category is "used" when rows store its value or its label (folded) —
+    # same metadata drift as dependent_value, and claiming an in-use choice
+    # is unused is the costly direction to be wrong in.
     unused_categories = [
         {'value': d['value'], 'label': d['label'], 'count': 0, 'defined': True}
-        for d in category_defs if d['value'] not in used_categories
+        for d in category_defs
+        if used_categories.isdisjoint({_fold_choice(d['value']), _fold_choice(d['label'])})
     ]
     pairs, unused_subcategories = _task_subcategory_pairs(
         conn, table, cols, where, args, category_defs, subcategory_defs,

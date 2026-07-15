@@ -6,6 +6,8 @@
 
 Every table here is queryable via `GET /api/<table>` (list, paginated) and `GET /api/<table>/<sys_id>` (single record). The columns listed are the **indexed** columns — those are the only ones you can filter on with `?col=value`, and the table-list route returns them as scalars with `?slim=1`. Non-slim lists and single-record responses merge the stored `raw` JSON envelope on top; a same-named field can therefore retain its ServiceNow `{value, display_value}` object. The single-record route does not support slim mode.
 
+Exact filters on different columns are combined with **AND**; comma-separated values within one column match any listed value. For example, `GET /api/incident?state=2&priority=3` requires both stored codes, while `?state=1,2` matches either state code.
+
 ## Tag legend
 
 | Tag | Meaning |

@@ -12,10 +12,13 @@ Usage:
 
 The generator reads SCHEMAS from build_sqlite.py and the table groupings
 (TASK_TABLES, REFERENCE_TABLES, CACHE_5MIN, HR_PARENT_COLUMN) from server.py.
+It also checks that public dispatcher operations have matching OpenAPI methods
+and paths.
 Column types are inferred by inspecting each lambda's source. Only three
 patterns are recognised; anything else raises so SCHEMAS edits surface here.
 """
 import argparse
+import ast
 import inspect
 import re
 import sys
@@ -154,6 +157,11 @@ def render_tables_md(catalog):
                'stored `raw` JSON envelope on top; a same-named field can therefore '
                'retain its ServiceNow `{value, display_value}` object. The single-record '
                'route does not support slim mode.')
+    out.append('')
+    out.append('Exact filters on different columns are combined with **AND**; '
+               'comma-separated values within one column match any listed value. '
+               'For example, `GET /api/incident?state=2&priority=3` requires both '
+               'stored codes, while `?state=1,2` matches either state code.')
     out.append('')
     out.append('## Tag legend')
     out.append('')
@@ -338,6 +346,151 @@ def check_openapi_table_enum():
     return problems
 
 
+def _normalise_openapi_path(path):
+    return re.sub(r'\{[^{}]+\}', '{}', path)
+
+
+def _normalise_route_regex(pattern):
+    """Turn a dispatcher regex into the comparable OpenAPI path shape."""
+    pattern = pattern.removeprefix('^').removesuffix('$')
+    return re.sub(r'\((?!\?:)[^()]*\)', '{}', pattern)
+
+
+def _route_strings(node):
+    """Yield string constants from one AST node (including tuple literals)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield node.value
+    elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        for item in node.elts:
+            yield from _route_strings(item)
+
+
+_PREFIX_ROUTE_SHAPES = {
+    ('GET', '/data/attachments/'): '/data/attachments/{}/{}/{}',
+}
+
+
+def _openapi_operations(spec):
+    """Return `(METHOD, path)` pairs from the hand-authored paths section."""
+    matches = list(re.finditer(
+        r'^  ((?:/api|/data)/[^:]+):\s*$', spec, re.MULTILINE,
+    ))
+    components_at = spec.find('\ncomponents:')
+    operations = set()
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(spec)
+        if components_at != -1:
+            end = min(end, components_at)
+        body = spec[match.end():end]
+        for method in re.findall(
+                r'^    (get|post|put|patch|delete|head|options|trace):\s*$',
+                body, re.MULTILINE):
+            operations.add((method.upper(), match.group(1)))
+    return operations
+
+
+def check_openapi_route_coverage():
+    """Compare public dispatcher operations with the OpenAPI paths and methods.
+
+    Static `path == ...` / `path in (...)` checks and `re.match(...)` route
+    patterns are extracted from the `Handler` methods in server.py's AST.
+    Parameter names differ between regex captures and OpenAPI, so both sides are
+    compared as `{}` path shapes. Prefix dispatchers need an explicit shape map
+    so the check cannot accept the wrong number of path segments.
+
+    Concrete table overlays such as `GET /api/incident` are allowed in the spec:
+    the generic `GET /api/{table}` dispatcher serves them, while the concrete
+    operation gives Swagger useful table-specific query inputs.
+    """
+    spec = (DOCS / 'openapi.yaml').read_text(encoding='utf-8')
+    documented = _openapi_operations(spec)
+
+    source = (HERE / 'server.py').read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    handler = next(
+        (node for node in tree.body
+         if isinstance(node, ast.ClassDef) and node.name == 'Handler'),
+        None,
+    )
+    if handler is None:
+        return ['could not locate Handler in project/bin/server.py']
+
+    dispatched = set()
+    unmapped_prefixes = set()
+    for method_node in handler.body:
+        if not isinstance(method_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if method_node.name == '_route':
+            method = 'GET'
+        elif method_node.name.startswith('do_'):
+            method = method_node.name.removeprefix('do_').upper()
+        else:
+            continue
+        for node in ast.walk(method_node):
+            if (isinstance(node, ast.Compare)
+                    and isinstance(node.left, ast.Name)
+                    and node.left.id == 'path'):
+                for op, comparator in zip(node.ops, node.comparators):
+                    if not isinstance(op, (ast.Eq, ast.In)):
+                        continue
+                    for value in _route_strings(comparator):
+                        if value.startswith(('/api/', '/data/')):
+                            dispatched.add((method, value))
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == 're'
+                    and func.attr == 'match'
+                    and node.args):
+                patterns = list(_route_strings(node.args[0]))
+                if patterns and patterns[0].startswith(('^/api/', '^/data/')):
+                    dispatched.add((method, _normalise_route_regex(patterns[0])))
+            if (isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == 'path'
+                    and func.attr == 'startswith'
+                    and node.args):
+                values = list(_route_strings(node.args[0]))
+                if values and values[0].startswith(('/api/', '/data/')):
+                    prefix = values[0]
+                    shape = _PREFIX_ROUTE_SHAPES.get((method, prefix))
+                    if shape:
+                        dispatched.add((method, shape))
+                    else:
+                        unmapped_prefixes.add((method, prefix))
+
+    overlays = {
+        (method, path) for method, path in documented
+        if method == 'GET'
+        and re.fullmatch(r'/api/([a-z_][a-z_0-9]*)', path)
+        and path.rsplit('/', 1)[-1] in server.ALL_TABLES
+    }
+    documented_shapes = {
+        (method, _normalise_openapi_path(path))
+        for method, path in documented - overlays
+    }
+    dispatched_shapes = {
+        (method, _normalise_openapi_path(path))
+        for method, path in dispatched
+    }
+
+    def _format(operations):
+        return ', '.join(f'{method} {path}' for method, path in sorted(operations))
+
+    problems = []
+    missing = dispatched_shapes - documented_shapes
+    extra = documented_shapes - dispatched_shapes
+    if missing:
+        problems.append('missing operations: ' + _format(missing))
+    if unmapped_prefixes:
+        problems.append('unmapped dispatcher prefixes: ' + _format(unmapped_prefixes))
+    if extra:
+        problems.append('operations not dispatched: ' + _format(extra))
+    return problems
+
+
 # --- main -------------------------------------------------------------------
 
 def main():
@@ -357,6 +510,7 @@ def main():
         (DOCS / 'openapi-schemas.yaml', yml),
     ]
     enum_problems = check_openapi_table_enum()
+    route_problems = check_openapi_route_coverage()
 
     if args.check:
         drift = []
@@ -364,7 +518,7 @@ def main():
             existing = path.read_text(encoding='utf-8') if path.is_file() else ''
             if existing != content:
                 drift.append(path)
-        if drift or enum_problems:
+        if drift or enum_problems or route_problems:
             if drift:
                 paths = ', '.join(str(p.relative_to(REPO_ROOT)) for p in drift)
                 print(
@@ -374,6 +528,8 @@ def main():
                 )
             for p in enum_problems:
                 print(f'gen_table_catalog: docs/openapi.yaml /api/{{table}} enum {p}', file=sys.stderr)
+            for p in route_problems:
+                print(f'gen_table_catalog: docs/openapi.yaml route coverage {p}', file=sys.stderr)
             sys.exit(1)
         print('gen_table_catalog: all docs are up to date.')
         return
@@ -381,9 +537,11 @@ def main():
     DOCS.mkdir(parents=True, exist_ok=True)
     for path, content in targets:
         path.write_text(content, encoding='utf-8')
+        print(f'wrote {path.relative_to(REPO_ROOT)} ({len(content):,} bytes)')
     for p in enum_problems:
         print(f'gen_table_catalog: WARNING — docs/openapi.yaml /api/{{table}} enum {p}', file=sys.stderr)
-        print(f'wrote {path.relative_to(REPO_ROOT)} ({len(content):,} bytes)')
+    for p in route_problems:
+        print(f'gen_table_catalog: WARNING — docs/openapi.yaml route coverage {p}', file=sys.stderr)
 
 
 if __name__ == '__main__':

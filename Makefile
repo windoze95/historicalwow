@@ -12,9 +12,10 @@ help:
 docs:
 	python3 project/bin/gen_table_catalog.py
 
-# Used by CI on every PR. Two checks:
+# Used by CI on every PR. Three checks:
 #   1. tables.md and openapi-schemas.yaml are in sync with SCHEMAS.
-#   2. openapi.yaml is a valid OpenAPI 3.0 document.
+#   2. OpenAPI table enums and public route methods/paths match the server.
+#   3. openapi.yaml is a valid OpenAPI 3.0 document.
 verify-docs:
 	python3 project/bin/gen_table_catalog.py --check
 	python3 -m openapi_spec_validator docs/openapi.yaml

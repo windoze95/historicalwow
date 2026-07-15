@@ -128,6 +128,14 @@ python3 project/bin/build_sqlite.py
 - Refresh the viewer in your browser (no container restart needed —
   the data dir is a read-only volume mount, the viewer's loader rereads
   the NDJSON files on page load).
+- Run the analytics gate against the running viewer (read-only; every
+  number the metrics pages show is re-verified against the DB):
+
+  ```sh
+  cd ~/historicalwow
+  HISTORICALWOW_APP=$PWD/project HISTORICALWOW_ACCESS_LOG= \
+    python3 project/bin/audit_metrics.py
+  ```
 ---
 
 ## Where things live
@@ -153,6 +161,7 @@ python3 project/bin/build_sqlite.py
   re-generate in ServiceNow → System OAuth → Application Registry →
   HistoricalWow Export → reveal Client Secret → update `.env`.
 - **Sanity check archive completeness**: `cd ~/historicalwow/project/export && python3 verify_export.py`
+- **Analytics numbers look off**: `cd ~/historicalwow && HISTORICALWOW_APP=$PWD/project HISTORICALWOW_ACCESS_LOG= python3 project/bin/audit_metrics.py` — re-verifies every metrics claim (drill-down counts, unused-choice claims, CMDB tiles, SLA stats) against the DB and prints FAIL lines for any mismatch.
 
 ## What NOT to do
 

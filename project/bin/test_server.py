@@ -254,6 +254,16 @@ def _fixture():
              subcategory=('', ''), contact_type=('phone', 'Phone'),
              assignment_group=('group-a', 'Support'), assigned_to=('', ''), cmdb_ci=('', ''),
          )),
+        ('e', 'INC-E', 'Keyboard issue', '0', '7', '4', '3', '3',
+         'hardware', 'Keyboard', 'phone', 'group-a', 'user-a', '',
+         '2025-01-05 10:00:00',
+         _envelope(
+             active=('false', 'false'), state=('7', 'Closed'), priority=('4', 'Low'),
+             impact=('3', 'Low'), urgency=('3', 'Low'),
+             category=('hardware', 'Hardware'), subcategory=('Keyboard', 'Keyboard'),
+             contact_type=('phone', 'Phone'), assignment_group=('group-a', 'Support'),
+             assigned_to=('user-a', 'Analyst'), cmdb_ci=('', ''),
+         )),
     ]
     conn.executemany(
         'INSERT INTO incident VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', rows
@@ -395,6 +405,12 @@ def _fixture():
          _choice_raw(parent='hardware', sequence=2)),
         ('sub-a', 'incident', 'subcategory', 'application', 'Application',
          _choice_raw(parent='software', sequence=1)),
+        # dependent_value drift seen on real instances: the parent recorded
+        # by the category's label ('Hardware'), rows storing its value.
+        ('sub-k', 'incident', 'subcategory', 'Keyboard', 'Keyboard',
+         _choice_raw(parent='Hardware', sequence=3)),
+        ('sub-m', 'incident', 'subcategory', 'Monitor', 'Monitor',
+         _choice_raw(parent='Hardware', sequence=4)),
     ]
     conn.executemany('INSERT INTO sys_choice VALUES (?,?,?,?,?,?)', choices)
     conn.commit()
@@ -431,16 +447,27 @@ def test_task_metrics_used_unused_and_hr_visibility():
         unlocked = server._build_task_metrics_payload(conn, 'incident', True)
     finally:
         server.HR_GROUP_SYS_ID = old_group
-    assert locked['total'] == 3, locked
-    assert unlocked['total'] == 4, unlocked
+    assert locked['total'] == 4, locked
+    assert unlocked['total'] == 5, unlocked
     hardware = next(x for x in locked['dimensions']['category'] if x['value'] == 'hardware')
-    assert hardware['label'] == 'Hardware' and hardware['count'] == 1, hardware
-    assert locked['coverage']['category'] == {'set': 2, 'empty': 1}
+    assert hardware['label'] == 'Hardware' and hardware['count'] == 2, hardware
+    assert locked['coverage']['category'] == {'set': 3, 'empty': 1}
     assert [x['value'] for x in locked['unused']['category']] == ['software']
     unused_pairs = {(x['category'], x['value']) for x in locked['unused']['subcategory']}
-    assert unused_pairs == {('hardware', 'desktop'), ('software', 'application')}, unused_pairs
+    assert unused_pairs == {
+        ('hardware', 'desktop'), ('software', 'application'), ('hardware', 'Monitor'),
+    }, unused_pairs
     assert any(x['category'] == 'hardware' and x['value'] == 'laptop'
                for x in locked['subcategory_pairs'])
+    # A choice whose dependent_value drifted from the stored category (label
+    # or casing) still pairs with its recorded usage: never in "unused", and
+    # its observed path reports as a configured choice.
+    keyboard = next(x for x in locked['subcategory_pairs'] if x['value'] == 'Keyboard')
+    assert keyboard['category'] == 'hardware' and keyboard['defined'], keyboard
+    assert keyboard['count'] == 1 and keyboard['label'] == 'Keyboard', keyboard
+    assert not any(x['value'] == 'Keyboard' for x in locked['unused']['subcategory'])
+    monitor = next(x for x in locked['unused']['subcategory'] if x['value'] == 'Monitor')
+    assert monitor['category'] == 'hardware' and monitor['category_label'] == 'Hardware', monitor
     # An inactive historical code remains visible in observed usage but is not
     # misreported as an active configured choice with zero usage.
     assert any(x['value'] == 'legacy' for x in locked['dimensions']['category'])

@@ -14,7 +14,9 @@ HistoricalWow serves a frozen, read-only ServiceNow archive over HTTP. The data 
 
 What you get:
 
-- 70 tables (incidents, change requests, users, groups, CIs, journal entries, audit history, attachments, catalog metadata, server-side logic, asset inventory — see [`tables.md`](tables.md))
+- A generated catalog of archived tables (incidents, change requests, users,
+  groups, CIs, journal entries, audit history, attachments, catalog metadata,
+  server-side logic, asset inventory, and more — see [`tables.md`](tables.md))
 - Pagination, exact-match filters on indexed columns, free-text search on text columns, ordering
 - Two compact pre-computed lookup blobs for CIs and users
 - Cross-table search on task numbers and descriptions
@@ -25,7 +27,9 @@ What you do *not* get:
 
 - Writes. Every endpoint is `GET` except the two HR-gate POSTs.
 - Real-time ServiceNow data. Everything is as-of the snapshot date — see `/api/manifest`'s `snapshot_date`.
-- Joins. The API is record-oriented; clients perform their own joins via the `*_lookup` blobs and follow-up requests.
+- Arbitrary joins. The generic table API is record-oriented; a few special
+  endpoints expose purpose-built joins, while clients handle the rest via the
+  `*_lookup` blobs and follow-up requests.
 
 ### Audience
 
@@ -39,7 +43,7 @@ This API is intended for internal engineering teams and pre-approved external pa
 - **Minor** (`x.Y.0`) — new endpoint, new optional response field, new query parameter, new table added to the catalog.
 - **Major** (`X.0.0`) — breaking change: removed endpoint, removed response field, changed response shape, changed status code semantics.
 
-The current spec is **`1.2.0`**. The `/docs` URL itself is a stable name — if it ever has to move (e.g., a viewer page wants `/docs`), the replacement will be `/api-docs` and the old route will redirect for at least one minor bump.
+The current spec is **`1.3.0`**. The `/docs` URL itself is a stable name — if it ever has to move (e.g., a viewer page wants `/docs`), the replacement will be `/api-docs` and the old route will redirect for at least one minor bump.
 
 ## 2. Quick start
 
@@ -51,6 +55,9 @@ curl --compressed -s https://<host>/api/manifest | jq '.snapshot_date, .integrit
 
 # List 5 most recently updated incidents
 curl --compressed -s "https://<host>/api/incident?limit=5&order_by=sys_updated_on&dir=desc" | jq '.rows[] | {number, short_description, state}'
+
+# Incidents whose stored state code is 2 AND priority code is 3
+curl --compressed -s "https://<host>/api/incident?state=2&priority=3&limit=200&order_by=sys_updated_on&dir=desc"
 
 # Single record
 curl --compressed -s "https://<host>/api/incident/<sys_id>" | jq '.'
@@ -70,7 +77,11 @@ The API has **no general authentication** — anyone who can reach the listening
 A subset of the data is gated by an additional cookie-based check called the **HR gate**:
 
 - Incidents whose `assignment_group` is the configured HR group (see `/api/hr-status` → `group_sys_id`) are **hidden** from `/api/incident` list responses, returned as `403 hr_locked` on direct record fetches, and excluded from cross-table search.
-- Their child rows — entries in `sys_journal_field`, `sys_audit`, `sys_attachment`, `task_ci`, `task_sla`, and `incident_task` whose parent reference points at an HR-assigned incident — are likewise hidden from generic list responses and 403 on direct record fetches.
+- Their child and descendant rows are likewise hidden from generic list
+  responses and return `403 hr_locked` on direct record fetches. The generated
+  `x-hr-parent-columns` map is the authoritative list of gated tables and
+  parent-reference columns; it includes activity, email, task/CI, SLA,
+  incident-task, and approval records.
 - The attachment file binary route (`/data/attachments/...`) refuses to serve files whose parent record is an HR-assigned incident.
 
 The full list of HR-gated child tables and their parent-reference columns is in [`openapi-schemas.yaml`](openapi-schemas.yaml) under `x-hr-parent-columns`.
@@ -143,12 +154,24 @@ Use `?slim=1` to skip the `raw` envelope and return only the indexed columns —
 
 Four filter shapes coexist on `/api/<table>`:
 
-1. **Free-text `q`** — substring match (`LIKE %q%`) against whichever of `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn` exist on the target table (so `cmdb_ci` is searchable by IP / hostname). A `q` against a table that has none of these columns returns every row (see [§10](#10-footguns)).
+1. **Free-text `q`** — substring match (`LIKE %q%`) against whichever of `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn`, `event_name` exist on the target table (so `cmdb_ci` is searchable by IP / hostname and event tables by event name). A `q` against a table that has none of these columns returns every row (see [§10](#10-footguns)).
 2. **Exact-match `?col=value`** — only on **indexed columns**. The full per-table list is in [`tables.md`](tables.md) and machine-readable as `x-filterable-columns` in [`openapi-schemas.yaml`](openapi-schemas.yaml). A comma-separated value is matched as `IN (...)`: `?install_status=7,3` matches either code (this is how one CMDB-metrics option can cover several codes that share a display label).
 3. **Range `?col_before=` / `?col_after=`** — on an indexed column, compares with `<` and `>=` respectively (a `_before` bound also excludes empty values, so "no value" isn't treated as an early one). Drives the CI staleness filter, e.g. `cmdb_ci?last_discovered_before=2026-02-01`.
 4. **Empty `?col=__empty__`** — matches rows where the indexed column is NULL or the empty string. Use this for analysis drill-throughs such as uncategorized records or records with no assignment group; a literal `?col=` is not equivalent because query parsing drops blank values.
 
 Boolean filters are auto-coerced: `?active=true` matches stored `1`, `?active=false` matches `0`. Other string forms (`Y`/`yes`/`1`-as-string) are **not** coerced — `?active=Y` would attempt to match stored `Y`, which doesn't exist. See [§10](#10-footguns).
+
+Filters on different columns are combined with **AND**. Comma-separated values
+within one column are combined as **OR** (`IN (...)`). For example,
+`/api/incident?state=2&priority=3` means `state = 2 AND priority = 3`, while
+`/api/incident?state=1,2&priority=3` means `(state = 1 OR state = 2) AND
+priority = 3`.
+
+Task fields such as `state` and `priority` are filtered by their stored
+ServiceNow **codes**, not display labels. To discover the codes and labels in
+this snapshot, read `/api/task/metrics/<table>` and use the `value` returned by
+entries in `dimensions.state`, `dimensions.priority`, and the other available
+dimensions.
 
 Reserved query parameter names — these are pagination / search controls, never filters: `limit`, `offset`, `q`, `order_by`, `dir`, `slim`.
 
@@ -176,7 +199,9 @@ The `sys_id` default exists because it's the only column with a guaranteed index
 }
 ```
 
-`/api/search` instead returns `{ "rows": [...], "q": "..." }`; it is not paginated and has no `total`, `limit`, or `offset` fields.
+`/api/search` instead returns `{ "rows": [...], "q": "..." }` for a non-empty
+search. A missing or blank `q` returns `{ "rows": [] }`. The endpoint is not
+paginated and has no `total`, `limit`, or `offset` fields.
 
 **Single-record endpoints** (`/api/<table>/<sys_id>`) always return one merged JSON object. The stored `raw` envelope wins when it has the same key as an indexed column, so that field can retain its ServiceNow `{value, display_value}` object. Single-record routes do not support `slim`.
 
@@ -186,15 +211,24 @@ On `/api/<table>` list requests, use `?slim=1` to drop `raw` entirely — each r
 
 ### 4.6 Compression
 
-Send `Accept-Encoding: gzip` to enable gzip on responses larger than 4 KiB. The `Content-Encoding: gzip` response header signals when it's been applied. List endpoints can return millions of rows; an uncompressed body of 1 M task rows is several hundred megabytes. **Always set `Accept-Encoding: gzip`** unless your client genuinely can't decompress.
+Most JSON endpoints enable gzip when the request sends `Accept-Encoding: gzip`
+and the response is larger than 4 KiB. The four prebuilt lookup endpoints —
+`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`, and
+`/api/cmdb/metrics` (plus the manifest compatibility alias) — are stored and
+served as gzip on every `200` response, regardless of the request header. The
+`Content-Encoding: gzip` header signals the representation in either case.
+
+List endpoints can return millions of rows; an uncompressed body of 1 M task
+rows is several hundred megabytes. Use a client with gzip support and **always
+send `Accept-Encoding: gzip`** (curl's `--compressed` does both).
 
 ### 4.7 Caching
 
-Two kinds of cache hints:
+Three kinds of cache hints:
 
 - **`ETag` + `If-None-Match`** on the lookup blobs (`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`, `/api/cmdb/metrics`). Clients should cache aggressively and revalidate by sending the previous `ETag` back in `If-None-Match`. A match returns `304 Not Modified` with no body.
-- **Cookie-varying task metrics** (`/api/task/metrics/<table>`) return `no-cache, must-revalidate` and vary on both `Accept-Encoding` and `Cookie` because incident totals can change when the HR gate is unlocked. The server still memoizes locked and unlocked aggregates separately per DB build.
-- **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. All JSON responses vary on `Accept-Encoding`; HR-cookie-dependent lists are never public and additionally vary on `Cookie`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
+- **Cookie-varying task metrics** (`/api/task/metrics/<table>`) return `no-cache, must-revalidate` and vary on both `Accept-Encoding` and `Cookie` because metrics for HR-dependent task tables can change when the gate is unlocked. The server still memoizes locked and unlocked aggregates separately per DB build.
+- **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. List responses vary on `Accept-Encoding`; HR-cookie-dependent lists are never public and additionally vary on `Cookie`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
 
 If you're operating a forward-proxy or CDN, the lookup blobs are the most valuable to cache.
 
@@ -214,7 +248,7 @@ Status codes:
 | `403` | HR gate locked (`{"error": "hr_locked"}`), wrong password, or path traversal on attachment URLs (`{"error": "forbidden path"}`). |
 | `404` | Unknown route, unknown table, record not found, attachment file missing on disk. |
 | `500` | Server-side exception. Should be rare and is logged server-side. |
-| `503` | `POST /api/hr-unlock` when the server has no HR password configured (`enabled: false`). |
+| `503` | `POST /api/hr-unlock` when the server has no HR password configured (`enabled: false`), or a generic list/record request for an HR-dependent child table while the recursive ancestry indexes are not yet built (`{"error":"hr_schema_pending"}`). |
 
 ## 5. Endpoint summary
 
@@ -230,6 +264,8 @@ Compact reference. Full details, request/response shapes, and try-it-out are in 
 | GET  | `/api/hr-status` | hr-gate | Gate state. |
 | POST | `/api/hr-unlock` | hr-gate | Exchange password for cookie. |
 | POST | `/api/hr-lock` | hr-gate | Invalidate cookie. |
+| GET  | `/api/whoami` | identity | Caller network identity visible to the server. |
+| GET  | `/api/incident` | tables | Incident list with interactive `state` and `priority` filters. |
 | GET  | `/api/<table>` | tables | List rows from a table (paginated, filtered, ordered). |
 | GET  | `/api/<table>/<sys_id>` | tables | Fetch one row. |
 | GET  | `/api/search` | search | Cross-table search on `number` and `short_description`. |
@@ -238,6 +274,10 @@ Compact reference. Full details, request/response shapes, and try-it-out are in 
 | GET  | `/api/attachments/<table_sys_id>` | activity | Attachment metadata for a parent record. |
 | GET  | `/api/related/cmdb/<sys_id>` | search | Upstream + downstream CMDB relations for a CI. |
 | GET  | `/api/variables/<ritm_sys_id>` | catalog | Catalog variables submitted on an RITM. |
+| GET  | `/api/sla-stats/{kind}/{sys_id}` | activity | Incident SLA totals for a user or group. |
+| GET  | `/api/flow_reconstruction/<flow_id>` | flows | Decoded raw Flow Designer records. |
+| GET  | `/api/service_status?days=<n>` | service-status | Historical outage-status grid. |
+| GET  | `/data/manifest.json` | manifest | Compatibility alias for `/api/manifest`. |
 | GET  | `/data/attachments/<shard>/<sys_id>/<file>` | files | Attachment file binary. |
 
 ## 6. Generic table API
@@ -247,8 +287,8 @@ Compact reference. Full details, request/response shapes, and try-it-out are in 
 Paginated list. See [§4](#4-conventions) for shared parameters. Returns a `ListEnvelope`.
 
 ```sh
-# 50 highest-priority open incidents
-curl --compressed -s "https://<host>/api/incident?priority=1&state=2&limit=50&order_by=sys_updated_on&dir=desc"
+# Incidents matching two coded fields (state 2 AND priority 3)
+curl --compressed -s "https://<host>/api/incident?state=2&priority=3&limit=50&order_by=sys_updated_on&dir=desc"
 
 # All groups whose name contains 'network'
 curl --compressed -s "https://<host>/api/sys_user_group?q=network&limit=200"
@@ -258,6 +298,19 @@ curl --compressed -s "https://<host>/api/cmdb_ci?limit=1000&slim=1"
 ```
 
 The `<table>` segment must be one of the tables enumerated in [`openapi.yaml`](openapi.yaml) (and [`tables.md`](tables.md)). Unknown tables return `404 {"error": "unknown table: <name>"}`.
+
+During a staged rollout, an allowed table whose NDJSON has not yet been built
+into the active database returns an empty `200` list. That response is
+indistinguishable from a table that was built successfully but contains no rows;
+the manifest and deployment state are the tie-breakers. A single-record request
+against the same not-yet-built table returns `404`.
+
+Swagger UI exposes `state`, `priority`, and the shared pagination/search
+parameters directly on its dedicated **List incidents** operation. The generic
+**List rows from a table** operation cannot render a different set of query
+inputs for each table; use [`tables.md`](tables.md) or
+`x-filterable-columns` in [`openapi-schemas.yaml`](openapi-schemas.yaml) for the
+complete list of accepted filters.
 
 ### `GET /api/<table>/<sys_id>`
 
@@ -278,7 +331,7 @@ Returns:
 
 ### `/api/manifest`
 
-The exporter's manifest. Contains snapshot date, source instance hostname, per-table row totals, integrity counters (`missing_attachments`, etc.), and the manifest's own SHA-256. Cache aggressively with `ETag`.
+The exporter's manifest. Contains snapshot date, source instance hostname, per-table row totals, integrity counters (`missing_attachments`, etc.), and the manifest's own SHA-256. Cache aggressively with `ETag`. Returns `404 {"error":"manifest.json missing"}` if the manifest file is absent.
 
 ### `/api/cmdb_ci_lookup` and `/api/sys_user_lookup`
 
@@ -294,7 +347,7 @@ Returns capability-driven, indexed analysis for a supported task table: state, a
 
 Category and subcategory metrics reconcile observed records with active `sys_choice` definitions. `subcategory_pairs` preserves the dependent `(category, subcategory)` relationship; `unused.category` and `unused.subcategory` contain active configured choices with zero observed rows. Distribution `value` fields can be passed directly back to `/api/<table>?<field>=<value>`. The special value `__empty__` drills into missing classification/ownership.
 
-Incident and incident-task totals honor the HR gate. The endpoint sends `Vary: Accept-Encoding, Cookie` and must be revalidated rather than shared as a public lookup blob.
+Metrics for supported task tables with HR-dependent rows honor the gate. The endpoint sends `Vary: Accept-Encoding, Cookie` and must be revalidated rather than shared as a public lookup blob.
 
 ### `/api/search`
 
@@ -323,19 +376,68 @@ Each relation has the connected CI's full row merged in under `ci`. Use this to 
 
 Rebuilds the form a user submitted when they raised this request item. Joins through `sc_item_option_mtom` → `sc_item_option` → `item_option_new`. Variables are returned in display order (by definition's `order` field, then by question text).
 
+### `/api/whoami`
+
+Returns the caller identity visible to the server:
+
+```json
+{"ip":"192.0.2.10","host":"client.example","access_log":true}
+```
+
+`ip` and `host` can be `null`. `host` is a best-effort reverse-DNS result, and
+`access_log` says whether this server process has access logging configured.
+This is identity by network position, not authentication.
+
+### `/api/sla-stats/<user|group>/<sys_id>`
+
+Returns incident SLA totals for one user's `assigned_to` sys_id or one group's
+`assignment_group` sys_id:
+
+```json
+{"total":42,"breached":3,"by_stage":{"completed":38,"in_progress":4}}
+```
+
+When the HR gate is locked, SLA rows belonging to gated incidents are omitted
+from these aggregates. Missing source tables produce the same shape with zero
+counts rather than an error.
+
+### `/api/flow_reconstruction/<flow_id>`
+
+Returns the archived records behind a Flow Designer flow: the flow header,
+triggers, action instances from both generations, and recovered flow-logic
+blocks. Base64+gzip configuration fields are decoded into JSON. The response is
+intended for inspection and reverse engineering; its nested record fields follow
+the stored ServiceNow payload and can vary by flow. Returns `404` when neither a
+flow header nor related internals exist, and successful responses are cached for
+five minutes.
+
+### `/api/service_status?days=<n>`
+
+Reconstructs the historical service-status grid from `cmdb_ci_outage`. `days`
+defaults to 30 and is clamped to 1–180. Because this is a frozen archive, the
+window ends on the most recent outage date in the snapshot, not today's date.
+Each service contains its worst outage type per day plus the contributing outage
+records. The endpoint returns empty arrays and `window: null` when no outage data
+is available; populated responses are cached for five minutes.
+
 ## 8. Static / attachment routes
 
 ### `/data/attachments/<shard>/<sys_id>/<file_name>`
 
-Returns the file body as `application/octet-stream` (or the original `Content-Type` if recognized — see the MIME table in the source). `<shard>` is the lower-cased first two characters of `<sys_id>`.
+Returns the file body using a content type inferred from the file-name extension,
+falling back to `application/octet-stream`. `<shard>` is the lower-cased first
+two characters of `<sys_id>`.
 
 - The HR gate checks the parent record before serving — HR-linked attachment bodies are refused with `403 hr_locked`.
+- While the gate is enabled and the caller is locked, missing attachment
+  metadata is treated as unknown and fails closed with `403 hr_locked` rather
+  than exposing an unclassified file body. An unlocked caller can proceed.
 - Path traversal segments (`.`, `..`, empty) are rejected with `403 forbidden path` before any sys_id is extracted. A defense-in-depth `relative_to(DATA_DIR)` check runs after path resolution.
 - Returns `404` if the file isn't on disk. Attachments may not have been downloaded yet — check the manifest's `integrity.missing_attachments`.
 
 ## 9. Table catalog
 
-The full list of 70 tables, their indexed columns, types, and tags is in [`docs/tables.md`](tables.md). That file is **auto-generated** from `project/bin/build_sqlite.py`'s `SCHEMAS` dict — do not edit it by hand. To regenerate after a SCHEMAS edit:
+The full generated list of tables, their indexed columns, types, and tags is in [`docs/tables.md`](tables.md). That file is **auto-generated** from `project/bin/build_sqlite.py`'s `SCHEMAS` dict — do not edit it by hand. To regenerate after a SCHEMAS edit:
 
 ```sh
 make docs
@@ -371,7 +473,11 @@ The server's boolean coercion table is: `'true' → '1'`, `'false' → '0'`. Any
 
 ### `q` searches whichever text column exists — sometimes none
 
-`q` matches `number`, `short_description`, `name`, or `value` — but only on tables that actually have those columns. A `q` against `sys_user` (no `number`/`short_description`/`name`/`value` indexed — `name` exists but the table has `user_name` not `name`) effectively becomes no filter. Check [`tables.md`](tables.md) before assuming `q` works.
+`q` matches whichever indexed columns exist from this fixed set: `number`,
+`short_description`, `name`, `value`, `ip_address`, `fqdn`, and `event_name`.
+A `q` against a table with none of them — for example `sys_user_grmember` —
+effectively becomes no filter and returns every otherwise-matching row. Check
+[`tables.md`](tables.md) before assuming `q` works.
 
 ### HR gate hides rows silently
 
@@ -383,9 +489,12 @@ Direct record fetches **do** return `403 hr_locked`, so single-record lookups ar
 
 With `slim=1`, the response only contains indexed columns. Fields you'd find under the `raw` envelope (resolution notes, custom fields, etc.) **disappear**. Don't toggle slim mode based on UI state without making sure consumers can handle both shapes.
 
-### gzip is opt-in
+### gzip is opt-in on ordinary endpoints
 
-If you forget `Accept-Encoding: gzip`, large responses come back uncompressed — multiple megabytes per request on big tables. **Always set the header**, or use a client like curl with `--compressed`.
+Except for the pre-compressed lookup endpoints listed in §4.6, forgetting
+`Accept-Encoding: gzip` makes large responses come back uncompressed — multiple
+megabytes per request on big tables. **Always set the header**, or use a client
+like curl with `--compressed`.
 
 ### HR tokens reset on restart
 
@@ -397,7 +506,10 @@ Inside `raw`, fields come from ServiceNow as `{value, display_value}` objects. T
 
 ### `cache-5min` only kicks in for big list pages
 
-`Cache-Control: max-age=300` is set when **both** `q` is empty **and** `limit > 200`. A small or filtered list response still returns `no-cache, must-revalidate`. This is intentional — filtered queries are usually for live UI, while large unfiltered dumps are safe to cache.
+For tables tagged `cache-5min`, `Cache-Control: max-age=300` is set when **both**
+`q` is empty **and** `limit > 200`. Exact-match and range filters do not disable
+that cache, so a large filtered request can also be cached. Small pages, requests
+with `q`, and HR-cookie-dependent lists return `no-cache, must-revalidate`.
 
 ### The viewer URL `/` and `/index.html` serve HTML, not JSON
 
@@ -418,6 +530,7 @@ See [`docs/glossary.md`](glossary.md) for ServiceNow term explanations: `sys_id`
 | `1.0.0` | 2026-05 | Initial publication. |
 | `1.1.0` | 2026-06 | Added `/api/cmdb/metrics` (CMDB overview aggregates). `/api/<table>` gains `?col_before=` / `?col_after=` range filters, comma-separated `IN (...)` filter values, and `ip_address` / `fqdn` in free-text search. `cmdb_ci` indexes additional columns (install status, discovery source, last discovered, support group, category, IP, FQDN). |
 | `1.2.0` | 2026-07 | Added `/api/task/metrics/<table>`, task classification/usage analytics, URL-backed task-list facets, and `?col=__empty__` drill-through filters. Task tables add indexed active/impact/urgency/contact-channel fields; incident/problem/change add subtype classification indexes. |
+| `1.3.0` | 2026-07 | Documented the existing caller-identity, SLA-statistics, flow-reconstruction, service-status, and manifest-alias routes. Added an explicit Swagger operation for incident `state` / `priority` filtering and synchronized generic filter, search, caching, and table-catalog guidance with the server. |
 
 ## 13. Reporting issues
 

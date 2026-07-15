@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: HistoricalWow API
-  version: '1.2.0'
+  version: '1.3.0'
   description: |
     Read-only HTTP API over a frozen ServiceNow archive. Returns records from
     a SQLite database that was built from an offline ServiceNow export — no
@@ -20,10 +20,10 @@ info:
 
     ## Authentication
     Most endpoints are unauthenticated read-only. A subset of incidents
-    (those assigned to a configured HR group) plus their child rows
-    (journal, audit, attachments, links) is hidden unless the caller
-    holds a valid `hr_unlock` session cookie. See `/api/hr-status` and
-    `/api/hr-unlock`.
+    (those assigned to a configured HR group) plus their child and descendant
+    rows is hidden unless the caller holds a valid `hr_unlock` session cookie.
+    See `/api/hr-status`, `/api/hr-unlock`, and `x-hr-parent-columns` in
+    `openapi-schemas.yaml`.
 
     ## Versioning
     `info.version` tracks the API surface, not the deployed image tag.
@@ -53,6 +53,12 @@ tags:
     description: Cross-table search and CMDB relations.
   - name: catalog
     description: Service catalog variables submitted on a request item.
+  - name: identity
+    description: Caller network identity visible to the server.
+  - name: flows
+    description: Decoded Flow Designer source records.
+  - name: service-status
+    description: Historical outage and service-status reconstruction.
   - name: files
     description: Attachment file binaries.
 
@@ -75,7 +81,33 @@ paths:
             Cache-Control: {schema: {type: string}}
             Content-Encoding:
               schema: {type: string, enum: [gzip]}
-              description: 'Present iff the request advertised `Accept-Encoding: gzip` and the payload is larger than 4 KiB.'
+              description: 'Always `gzip` on a 200 response; this endpoint serves a pre-compressed cached representation.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '304': {description: 'Not modified (matched `If-None-Match`).'}
+        '404': {description: 'Manifest missing on disk.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+
+  /data/manifest.json:
+    get:
+      tags: [manifest]
+      summary: Build manifest compatibility alias
+      deprecated: true
+      description: |
+        Compatibility alias for `/api/manifest`, with the same payload, caching,
+        and conditional-request behavior. New clients should use
+        `/api/manifest`.
+      responses:
+        '200':
+          description: Manifest payload.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+            Content-Encoding:
+              schema: {type: string, enum: [gzip]}
+              description: 'Always `gzip` on a 200 response; this endpoint serves a pre-compressed cached representation.'
           content:
             application/json:
               schema:
@@ -99,6 +131,9 @@ paths:
           headers:
             ETag: {schema: {type: string}}
             Cache-Control: {schema: {type: string}}
+            Content-Encoding:
+              schema: {type: string, enum: [gzip]}
+              description: 'Always `gzip`; this endpoint serves a pre-compressed cached representation.'
           content:
             application/json:
               schema:
@@ -134,6 +169,9 @@ paths:
           headers:
             ETag: {schema: {type: string}}
             Cache-Control: {schema: {type: string}}
+            Content-Encoding:
+              schema: {type: string, enum: [gzip]}
+              description: 'Always `gzip`; this endpoint serves a pre-compressed cached representation.'
           content:
             application/json:
               schema:
@@ -196,9 +234,10 @@ paths:
         explicit drill-through value for records whose indexed field is NULL
         or empty.
 
-        Incident and incident-task totals honor the HR gate. Responses vary by
-        cookie and are revalidated on every request; server-side aggregates are
-        cached separately for locked and unlocked visibility.
+        Metrics for supported task tables with HR-dependent rows honor the gate.
+        Responses vary by cookie and are revalidated on every request;
+        server-side aggregates are cached separately for locked and unlocked
+        visibility.
       parameters:
         - name: table
           in: path
@@ -274,6 +313,9 @@ paths:
           headers:
             ETag: {schema: {type: string}}
             Cache-Control: {schema: {type: string}}
+            Content-Encoding:
+              schema: {type: string, enum: [gzip]}
+              description: 'Always `gzip`; this endpoint serves a pre-compressed cached representation.'
           content:
             application/json:
               schema:
@@ -372,6 +414,30 @@ paths:
                 properties:
                   ok: {type: boolean, enum: [true]}
 
+  /api/whoami:
+    get:
+      tags: [identity]
+      summary: Inspect caller network identity
+      description: |
+        Returns the source IP address and best-effort reverse-DNS hostname the
+        server sees for this request, plus whether access logging is configured.
+        This reports identity by network position; it does not authenticate the
+        caller. `ip` and `host` can be null when unavailable.
+      responses:
+        '200':
+          description: Caller identity visible to the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ip, host, access_log]
+                properties:
+                  ip: {type: string, nullable: true, example: 192.0.2.10}
+                  host: {type: string, nullable: true, example: client.example}
+                  access_log:
+                    type: boolean
+                    description: Whether this server process has access logging configured.
+
   /api/search:
     get:
       tags: [search]
@@ -380,13 +446,13 @@ paths:
         Searches `number` and `short_description` across the configured task
         tables (see `x-task-tables` in openapi-schemas.yaml). HR-assigned
         incidents and HR-linked child rows are filtered out when the gate is
-        locked. Returns at most `limit` rows per table.
+        locked. Returns at most `limit` rows per table. A missing or blank `q`
+        returns `{rows: []}` without running a search.
       parameters:
         - name: q
           in: query
-          required: true
-          schema: {type: string, minLength: 1}
-          description: Search needle. Matched with SQL `LIKE %q%` against `number` and `short_description`.
+          schema: {type: string}
+          description: Search needle. Matched with SQL `LIKE %q%` against `number` and `short_description`; missing or blank returns an empty result.
         - name: types
           in: query
           schema: {type: string}
@@ -582,6 +648,194 @@ paths:
           description: HR-locked.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
+  /api/sla-stats/{kind}/{sys_id}:
+    get:
+      tags: [activity]
+      summary: Incident SLA totals for a user or group
+      description: |
+        Joins `task_sla` to `incident` and returns total SLAs, breached SLAs,
+        and counts by stage for incidents assigned to one user or group. When
+        the HR gate is locked, gated incidents are silently excluded. If either
+        source table is unavailable, the endpoint returns zero counts.
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: {type: string, enum: [user, group]}
+          description: Use `user` to match `incident.assigned_to`; use `group` to match `incident.assignment_group`.
+        - name: sys_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{1,32}$'}
+          description: User or group sys_id, according to `kind`.
+      responses:
+        '200':
+          description: SLA totals visible to the current HR-gate session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, breached, by_stage]
+                properties:
+                  total: {type: integer, minimum: 0}
+                  breached: {type: integer, minimum: 0}
+                  by_stage:
+                    type: object
+                    additionalProperties: {type: integer, minimum: 0}
+
+  /api/flow_reconstruction/{flow_id}:
+    get:
+      tags: [flows]
+      summary: Decode the archived records behind a flow
+      description: |
+        Returns the `sys_hub_flow` header plus legacy and modern triggers,
+        action instances, and recovered flow-logic blocks. Stored base64+gzip
+        configuration fields are decoded to JSON. Nested fields follow the raw
+        ServiceNow records and vary by flow.
+      parameters:
+        - name: flow_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{1,32}$'}
+          description: '`sys_hub_flow.sys_id`.'
+      responses:
+        '200':
+          description: Decoded flow source records.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`public, max-age=300`.'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [flow, triggers, actions, logic, counts]
+                properties:
+                  flow:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  triggers:
+                    type: array
+                    items: {type: object, additionalProperties: true}
+                  actions:
+                    type: array
+                    items: {type: object, additionalProperties: true}
+                  logic:
+                    type: array
+                    items: {type: object, additionalProperties: true}
+                  counts:
+                    type: object
+                    required: [actions, triggers, logic]
+                    properties:
+                      actions: {type: integer, minimum: 0}
+                      triggers: {type: integer, minimum: 0}
+                      logic: {type: integer, minimum: 0}
+        '404':
+          description: No flow header or related internals exist in the snapshot.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+
+  /api/service_status:
+    get:
+      tags: [service-status]
+      summary: Reconstruct the historical service-status grid
+      description: |
+        Builds a daily outage grid from `cmdb_ci_outage`. The window ends on
+        the most recent outage date in the frozen snapshot, not the current
+        date. For overlapping outages, the worst status wins for each service
+        and day. If no outage data is available, `window` is null and both
+        arrays are empty; populated responses are cached for five minutes.
+      parameters:
+        - name: days
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 180, default: 30}
+          description: Number of snapshot-relative calendar days. Values are clamped to 1–180; invalid values use 30.
+      responses:
+        '200':
+          description: Historical status window and service rows.
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              description: '`public, max-age=300` when outage data is available; otherwise `no-cache, must-revalidate`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [window, dates, services]
+                properties:
+                  window:
+                    type: object
+                    nullable: true
+                    required: [start, end, days]
+                    properties:
+                      start: {type: string, format: date}
+                      end: {type: string, format: date}
+                      days: {type: integer}
+                  dates:
+                    type: array
+                    items: {type: string, format: date}
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      required: [ci, name, days, outages]
+                      properties:
+                        ci: {type: string}
+                        name: {type: string}
+                        days:
+                          type: object
+                          additionalProperties: {type: string}
+                        outages:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              type: {type: string}
+                              begin: {type: string}
+                              end: {type: string}
+                              desc: {type: string}
+                              number: {type: string}
+
+  /api/incident:
+    get:
+      tags: [tables]
+      summary: List incidents
+      description: |
+        Convenience documentation for the generic table-list route with common
+        incident filters exposed as interactive Swagger inputs. `state` and
+        `priority` use stored ServiceNow codes and are combined with AND. For
+        example, `?state=2&priority=3` returns incidents matching both codes.
+        Unknown or unindexed filter names are silently ignored. When the HR gate
+        is locked, gated incidents are omitted from both `rows` and `total`.
+
+        Every other incident column listed in [tables.md](tables.md#incident)
+        and `x-filterable-columns` remains available as an exact-match query
+        parameter even though OpenAPI 3.0 cannot render a dynamic input for
+        every table-specific filter. Use `/api/task/metrics/incident` to map
+        stored dimension values to display labels.
+      parameters:
+        - name: state
+          in: query
+          schema: {type: string, example: '2'}
+          description: Exact stored incident-state code. Comma-separate codes to match any of them.
+        - name: priority
+          in: query
+          schema: {type: string, example: '3'}
+          description: Exact stored priority code. Comma-separate codes to match any of them.
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Q'}
+        - {$ref: '#/components/parameters/OrderBy'}
+        - {$ref: '#/components/parameters/Dir'}
+        - {$ref: '#/components/parameters/Slim'}
+      responses:
+        '200':
+          description: Incident list envelope visible to the current HR-gate session.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`no-cache, must-revalidate`.'}
+            Vary: {schema: {type: string}, description: 'Includes `Accept-Encoding` and, when the HR gate is configured, `Cookie`.'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListEnvelope'}
+
   /api/{table}:
     get:
       tags: [tables]
@@ -600,6 +854,11 @@ paths:
         [tables.md](tables.md) and machine-readable as `x-filterable-columns`
         in [openapi-schemas.yaml](openapi-schemas.yaml).
 
+        Filters on different columns are combined with AND. Comma-separated
+        values within one column are combined as OR (`IN (...)`). For example,
+        `incident?state=1,2&priority=3` means `(state = 1 OR state = 2) AND
+        priority = 3`.
+
         **Range filters**: `?<col>_before=<value>` and `?<col>_after=<value>`
         compare an indexed `<col>` with `<` and `>=` respectively (a `_before`
         bound also excludes empty values, so "no value" is not treated as an
@@ -612,11 +871,14 @@ paths:
         such as `?category=__empty__`.
 
         **HR gate**: when the gate is locked, the `incident` table hides
-        rows whose `assignment_group` is the HR group, and child tables
-        (`sys_journal_field`, `sys_audit`, `sys_attachment`, `task_ci`,
-        `task_sla`, `incident_task` — see `x-hr-parent-columns`) hide rows
-        whose parent reference points at an HR-assigned incident. Row counts
-        drop silently; check `/api/hr-status` to know.
+        rows whose `assignment_group` is the HR group. Child and descendant
+        rows in the tables enumerated by `x-hr-parent-columns` are also hidden
+        when their parent chain reaches a gated incident. Row counts drop
+        silently; check `/api/hr-status` to know.
+
+        **Rollout window**: a table that is allowed by this API but has not yet
+        been built into the active database returns an empty `200` list. A list
+        response cannot distinguish that state from a genuinely empty table.
       parameters:
         - name: table
           in: path
@@ -750,6 +1012,9 @@ paths:
         '404':
           description: Unknown table.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+        '503':
+          description: HR ancestry schema pending for a gated child table.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
   /api/{table}/{sys_id}:
     get:
@@ -758,9 +1023,10 @@ paths:
       description: |
         Returns the row as one merged JSON object. The stored `raw` envelope
         wins on duplicate keys, so a same-named indexed field can retain its
-        ServiceNow `{value, display_value}` object. Returns `403 hr_locked` for `incident` rows whose
-        `assignment_group` is the HR group, and for child-table rows whose
-        parent points at an HR-assigned incident — see `x-hr-parent-columns`.
+        ServiceNow `{value, display_value}` object. Returns `403 hr_locked` for
+        `incident` rows whose `assignment_group` is the HR group, and for child
+        or descendant rows whose parent chain reaches an HR-assigned incident —
+        see `x-hr-parent-columns`.
       parameters:
         - name: table
           in: path
@@ -789,6 +1055,9 @@ paths:
         '404':
           description: Row or table not found.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
+        '503':
+          description: HR ancestry schema pending for a gated child table.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
   /data/attachments/{shard}/{attachment_sys_id}/{file_name}:
     get:
@@ -799,8 +1068,12 @@ paths:
         first two characters of `attachment_sys_id`. Returns `403 hr_locked` if
         the parent record is an HR-assigned incident and the request lacks an
         `hr_unlock` cookie. Returns `403 forbidden path` for any URL containing
-        `.`, `..`, or empty path segments. Returns `404` if the file is missing
-        on disk (rare — attachments may not have been downloaded yet).
+        `.`, `..`, or empty path segments. While the HR gate is enabled and the
+        caller is locked, missing attachment metadata is treated as protected
+        and also returns `403`; unlocked callers can proceed.
+        Returns `404` if the file body is missing on disk (rare — attachments
+        may not have been downloaded yet). Content type is inferred from the
+        file-name extension and falls back to `application/octet-stream`.
       parameters:
         - name: shard
           in: path
@@ -848,10 +1121,11 @@ components:
       schema: {type: string}
       description: |
         Free-text needle. Matched with SQL `LIKE %q%` against whichever of
-        `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn`
-        actually exist on the target table (so `cmdb_ci` is searchable by IP or
-        hostname). A `q` against a table that has none of those columns returns
-        every row (footgun).
+        `number`, `short_description`, `name`, `value`, `ip_address`, `fqdn`,
+        `event_name` actually exist on the target table (so `cmdb_ci` is
+        searchable by IP or hostname and event tables by event name). A `q`
+        against a table that has none of those columns returns every row
+        (footgun).
     OrderBy:
       name: order_by
       in: query

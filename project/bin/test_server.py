@@ -17,6 +17,7 @@ os.environ.setdefault('HISTORICALWOW_ACCESS_LOG', '')
 
 import build_sqlite as build  # noqa: E402
 import server                 # noqa: E402
+from hr_test_support import ensure_hr_tables
 
 
 def _envelope(**fields):
@@ -423,6 +424,7 @@ def _fixture():
         for column in ('parent', 'assignment_group'):
             if column not in cols:
                 conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" TEXT')
+    ensure_hr_tables(conn)
     conn.commit()
     return conn
 

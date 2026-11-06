@@ -12,6 +12,7 @@ import unittest
 os.environ.setdefault('HISTORICALWOW_ACCESS_LOG', '')
 
 import server  # noqa: E402
+from hr_test_support import ensure_hr_tables
 
 
 class Handler:
@@ -59,6 +60,7 @@ class HrAuthenticationTests(unittest.TestCase):
                  'synthetic ordinary content', '{}'),
             ],
         )
+        ensure_hr_tables(self.conn)
         server._local.conn = self.conn
 
     def tearDown(self):

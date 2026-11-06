@@ -560,19 +560,14 @@ HR_PROTECTED_TABLES = frozenset(HR_PARENT_COLUMNS) | {'sc_item_option'}
 
 
 def hr_ancestry_schema_ready(conn) -> bool:
-    """Missing optional tables are empty; incomplete present tables fail closed."""
-    if not _table_exists(conn, 'incident'):
+    """A missing owner table or unfinished import cannot establish public access."""
+    if not all(_table_exists(conn, table) for table in HR_PROTECTED_TABLES):
         return False
-    # Values can be imported before their ownership links. Until the catalog
-    # chain exists, their absence cannot mean the submitted answers are public.
-    if any(_table_exists(conn, t) for t in ('sc_item_option', 'sc_item_option_mtom')):
-        if not all(_table_exists(conn, t) for t in (
-            'sc_item_option_mtom', 'sc_req_item', 'sc_request',
-        )):
+    if _table_exists(conn, '_build_state'):
+        completed = {row[0] for row in conn.execute('SELECT table_name FROM _build_state')}
+        if not HR_PROTECTED_TABLES.issubset(completed):
             return False
     for table in HR_PROTECTED_TABLES:
-        if not _table_exists(conn, table):
-            continue
         cols = {row['name'] for row in conn.execute(f'PRAGMA table_info("{table}")')}
         required = {'sys_id', *HR_PARENT_COLUMNS.get(table, ())}
         if table in TASK_TABLES:

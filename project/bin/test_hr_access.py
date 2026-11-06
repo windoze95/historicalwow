@@ -426,9 +426,9 @@ def test_active_attachment_content_is_sandboxed():
         assert result.response_headers.get('X-Content-Type-Options') == 'nosniff'
 
 
-def test_optional_absence_is_safe_and_present_incomplete_relation_fails_closed():
+def test_unrelated_table_absence_is_safe_and_incomplete_relation_fails_closed():
     with _archive() as (conn, _):
-        conn.execute('DROP TABLE cmdb_ci_outage')
+        conn.execute('DROP TABLE cmdb_ci')
         assert _call(server.get_record, 'incident', 'public-incident').status == 200
         conn.execute('ALTER TABLE sc_task RENAME COLUMN request_item TO old_request_item')
         for getter, args in (
@@ -451,6 +451,22 @@ def test_catalog_values_stay_locked_until_ownership_tables_are_built():
             ):
                 result = _call(getter, *args, cookie=cookie)
                 assert result.status == 503, (getter.__name__, result.status)
+                _no_secret(result)
+
+
+def test_missing_or_unfinished_owner_table_keeps_surviving_sidecars_locked():
+    for unfinished in (False, True):
+        with _archive() as (conn, _):
+            if unfinished:
+                conn.execute('CREATE TABLE _build_state (table_name TEXT PRIMARY KEY)')
+                conn.executemany('INSERT INTO _build_state VALUES (?)',
+                                 [(t,) for t in server.HR_PROTECTED_TABLES if t != 'sc_task'])
+            else:
+                conn.execute('DROP TABLE sc_task')
+            for table, record in (('sys_journal_field', 'hr-journal'),
+                                  ('sys_attachment', 'hr-task-attachment')):
+                result = _call(server.get_record, table, record)
+                assert result.status == 503
                 _no_secret(result)
 
 

@@ -81,7 +81,7 @@ A subset of the data is gated by an additional cookie-based check called the **H
 - A catalog variable value linked to an HR request item remains hidden even when the same value is also linked to an ordinary request item.
 - The attachment file route (`/data/attachments/...`) checks both the requested attachment and any canonical symlink target before serving bytes.
 
-The generated task and relationship maps are in [`openapi-schemas.yaml`](openapi-schemas.yaml). Missing unrelated optional tables are allowed, but catalog values stay locked until their request and ownership tables are available. If a table is present but lacks columns required to establish HR relationships, protected reads fail closed until the archive schema is rebuilt.
+The generated task and relationship maps are in [`openapi-schemas.yaml`](openapi-schemas.yaml). All HR ownership tables and their required columns must be available. Protected reads fail closed during missing or unfinished ownership-table imports; the builder completion records are checked when available. Missing unrelated tables do not affect HR protection.
 
 ### Inspecting state
 

@@ -15,6 +15,7 @@ from unittest import mock
 os.environ.setdefault('HISTORICALWOW_ACCESS_LOG', '')
 
 import server  # noqa: E402
+from hr_test_support import ensure_hr_tables
 
 
 class Handler:
@@ -43,6 +44,7 @@ def create_archive(path, group='ordinary-group', wal=False):
     )''')
     conn.execute('INSERT INTO incident VALUES (?, ?, ?, ?)',
                  ('synthetic-record', group, '', '{}'))
+    ensure_hr_tables(conn)
     conn.commit()
     return conn
 

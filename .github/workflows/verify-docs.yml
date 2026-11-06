@@ -14,6 +14,7 @@ on:
       - 'project/bin/build_sqlite.py'
       - 'project/bin/server.py'
       - 'project/bin/test_*.py'
+      - 'project/bin/hr_test_support.py'
       - 'project/bin/gen_table_catalog.py'
       - 'Makefile'
       - '.github/workflows/verify-docs.yml'

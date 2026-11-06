@@ -37,8 +37,12 @@ jobs:
       - name: Install doc-verify deps
         run: python3 -m pip install --quiet openapi-spec-validator
 
-      - name: Test server metrics and drill-down filters
-        run: python3 project/bin/test_server.py
+      - name: Test server filters and HR access control
+        run: |
+          python3 project/bin/test_server.py
+          python3 project/bin/test_hr_auth.py
+          python3 project/bin/test_hr_access.py
+          python3 project/bin/test_hr_cache.py
 
       - name: Verify docs in sync with SCHEMAS and openapi.yaml is valid
         run: make verify-docs

@@ -76,15 +76,12 @@ The API has **no general authentication** — anyone who can reach the listening
 
 A subset of the data is gated by an additional cookie-based check called the **HR gate**:
 
-- Incidents whose `assignment_group` is the configured HR group (see `/api/hr-status` → `group_sys_id`) are **hidden** from `/api/incident` list responses, returned as `403 hr_locked` on direct record fetches, and excluded from cross-table search.
-- Their child and descendant rows are likewise hidden from generic list
-  responses and return `403 hr_locked` on direct record fetches. The generated
-  `x-hr-parent-columns` map is the authoritative list of gated tables and
-  parent-reference columns; it includes activity, email, task/CI, SLA,
-  incident-task, and approval records.
-- The attachment file binary route (`/data/attachments/...`) refuses to serve files whose parent record is an HR-assigned incident.
+- Records in every supported task table whose `assignment_group` is the configured HR group (see `/api/hr-status` → `group_sys_id`) are **hidden** from lists, search, and aggregates while locked. Direct fetches return `403 hr_locked`.
+- Protection follows task `parent` references and table-specific relationships recursively. It covers descendant tasks, journal and audit entries, emails, attachments, task/CI and SLA records, approvals, catalog variable links and values, and outages linked to protected tasks.
+- A catalog variable value linked to an HR request item remains hidden even when the same value is also linked to an ordinary request item.
+- The attachment file route (`/data/attachments/...`) checks both the requested attachment and any canonical symlink target before serving bytes.
 
-The full list of HR-gated child tables and their parent-reference columns is in [`openapi-schemas.yaml`](openapi-schemas.yaml) under `x-hr-parent-columns`.
+The generated task and relationship maps are in [`openapi-schemas.yaml`](openapi-schemas.yaml). All HR ownership tables and their required columns must be available. Protected reads fail closed during missing or unfinished ownership-table imports; the builder completion records are checked when available. Missing unrelated tables do not affect HR protection.
 
 ### Inspecting state
 
@@ -93,8 +90,8 @@ curl --compressed -s https://<host>/api/hr-status
 # {"enabled": true, "unlocked": false, "group_sys_id": "...", "group_label": "..."}
 ```
 
-- `enabled: false` means the server has no HR password configured — no gating happens, all rows are visible to everyone. Skip the unlock flow.
-- `enabled: true, unlocked: false` means the gate is active and your request would see the filtered view.
+- `enabled` is always `true`. If the server has no HR password configured, protected data stays locked and unlocking is unavailable.
+- `unlocked: false` means your request receives the filtered view. `unlocked: true` requires a valid cookie and a configured HR password.
 
 ### Unlocking
 
@@ -105,7 +102,7 @@ curl -s -X POST -c hr.jar -H 'Content-Type: application/json' \
      https://<host>/api/hr-unlock
 # {"ok": true}    -> 200, Set-Cookie: hr_unlock=<token>; Path=/; HttpOnly; SameSite=Strict
 # 403 {"error": "wrong password"} on a bad password
-# 503 {"error": "gate disabled (HR_UNLOCK_PASSWORD unset)"} if the server has no password configured
+# 503 {"error": "HR data is locked; unlocking is not configured"} if the server has no password configured
 
 # Subsequent reads pass the cookie:
 curl --compressed -s -b hr.jar https://<host>/api/incident?limit=5
@@ -124,7 +121,9 @@ curl -s -X POST -b hr.jar https://<host>/api/hr-lock
 
 ### Security warnings
 
-> **The gate filters by parent-record sys_id, not by content.** Once you unlock, you can read every HR row — there's no field-level redaction or row-level user binding. A leaked unlock cookie is equivalent to leaking the password until the server restarts.
+Catalog descriptions render in sandboxed frames; archived HTML cannot execute with the viewer's session.
+
+> **The gate uses assignment groups and record relationships, not content scanning.** Once you unlock, you can read every HR row — there's no field-level redaction or row-level user binding. A leaked unlock cookie grants that access until it is revoked or the server restarts.
 
 > **The gate is not an authentication system.** It's a single shared secret that toggles visibility of a known group's records. It is not a substitute for network-level access control, audit logging on the consumer side, or row-level entitlement.
 
@@ -227,8 +226,8 @@ send `Accept-Encoding: gzip`** (curl's `--compressed` does both).
 Three kinds of cache hints:
 
 - **`ETag` + `If-None-Match`** on the lookup blobs (`/api/manifest`, `/api/cmdb_ci_lookup`, `/api/sys_user_lookup`, `/api/cmdb/metrics`). Clients should cache aggressively and revalidate by sending the previous `ETag` back in `If-None-Match`. A match returns `304 Not Modified` with no body.
-- **Cookie-varying task metrics** (`/api/task/metrics/<table>`) return `no-cache, must-revalidate` and vary on both `Accept-Encoding` and `Cookie` because metrics for HR-dependent task tables can change when the gate is unlocked. The server still memoizes locked and unlocked aggregates separately per DB build.
-- **`Cache-Control: public, max-age=300`** on list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. List responses vary on `Accept-Encoding`; HR-cookie-dependent lists are never public and additionally vary on `Cookie`. Other list responses return `Cache-Control: no-cache, must-revalidate`.
+- **HR-dependent JSON responses** return `Cache-Control: private, no-store` and `Vary: Accept-Encoding, Cookie`, whether locked or unlocked. This includes protected lists and records, search, activity, catalog variables, SLA/task metrics, `/api/service_status`, and `/api/hr-status`. Do not store these responses or reuse an unlocked response after locking. The server may still memoize locked and unlocked aggregates separately per DB build.
+- **`Cache-Control: public, max-age=300`** on non-HR-dependent list endpoints for tables in `x-cache-5min` (see [`openapi-schemas.yaml`](openapi-schemas.yaml)) when `q` is empty and `limit > 200`. These lists vary on `Accept-Encoding`. Other non-HR-dependent list responses return `Cache-Control: no-cache, must-revalidate`.
 
 If you're operating a forward-proxy or CDN, the lookup blobs are the most valuable to cache.
 
@@ -248,7 +247,7 @@ Status codes:
 | `403` | HR gate locked (`{"error": "hr_locked"}`), wrong password, or path traversal on attachment URLs (`{"error": "forbidden path"}`). |
 | `404` | Unknown route, unknown table, record not found, attachment file missing on disk. |
 | `500` | Server-side exception. Should be rare and is logged server-side. |
-| `503` | `POST /api/hr-unlock` when the server has no HR password configured (`enabled: false`), or a generic list/record request for an HR-dependent child table while the recursive ancestry indexes are not yet built (`{"error":"hr_schema_pending"}`). |
+| `503` | `POST /api/hr-unlock` when the server has no HR password configured (the gate remains enabled and locked), or a protected read while a present table lacks the required HR relationship columns (`{"error":"hr_schema_pending"}`). |
 
 ## 5. Endpoint summary
 
@@ -347,7 +346,7 @@ Returns capability-driven, indexed analysis for a supported task table: state, a
 
 Category and subcategory metrics reconcile observed records with active `sys_choice` definitions. `subcategory_pairs` preserves the dependent `(category, subcategory)` relationship; `unused.category` and `unused.subcategory` contain active configured choices with zero observed rows. Distribution `value` fields can be passed directly back to `/api/<table>?<field>=<value>`. The special value `__empty__` drills into missing classification/ownership.
 
-Metrics for supported task tables with HR-dependent rows honor the gate. The endpoint sends `Vary: Accept-Encoding, Cookie` and must be revalidated rather than shared as a public lookup blob.
+Metrics for supported task tables honor the gate. The endpoint sends `Cache-Control: private, no-store` and `Vary: Accept-Encoding, Cookie`.
 
 ### `/api/search`
 
@@ -374,7 +373,7 @@ Each relation has the connected CI's full row merged in under `ci`. Use this to 
 
 ### `/api/variables/<ritm_sys_id>`
 
-Rebuilds the form a user submitted when they raised this request item. Joins through `sc_item_option_mtom` → `sc_item_option` → `item_option_new`. Variables are returned in display order (by definition's `order` field, then by question text).
+Rebuilds the form a user submitted when they raised this request item. Joins through `sc_item_option_mtom` → `sc_item_option` → `item_option_new`. Variables are returned in display order (by definition's `order` field, then by question text). While locked, protected request items return `403 hr_locked`; variable values linked to any protected request item are also omitted from ordinary request items that share them.
 
 ### `/api/whoami`
 
@@ -418,7 +417,9 @@ defaults to 30 and is clamped to 1–180. Because this is a frozen archive, the
 window ends on the most recent outage date in the snapshot, not today's date.
 Each service contains its worst outage type per day plus the contributing outage
 records. The endpoint returns empty arrays and `window: null` when no outage data
-is available; populated responses are cached for five minutes.
+is available. HR-linked outages are excluded while locked, including from the
+window bounds. All responses use `Cache-Control: private, no-store` and
+`Vary: Accept-Encoding, Cookie`.
 
 ## 8. Static / attachment routes
 
@@ -429,10 +430,11 @@ falling back to `application/octet-stream`. `<shard>` is the lower-cased first
 two characters of `<sys_id>`.
 
 - The HR gate checks the parent record before serving — HR-linked attachment bodies are refused with `403 hr_locked`.
-- While the gate is enabled and the caller is locked, missing attachment
+- While the caller is locked, missing attachment
   metadata is treated as unknown and fails closed with `403 hr_locked` rather
   than exposing an unclassified file body. An unlocked caller can proceed.
-- Path traversal segments (`.`, `..`, empty) are rejected with `403 forbidden path` before any sys_id is extracted. A defense-in-depth `relative_to(DATA_DIR)` check runs after path resolution.
+- Paths must have exactly the expected shard, attachment sys_id, and filename segments, with the shard matching the sys_id. Traversal segments (`.`, `..`, empty) and paths escaping the attachment directory are rejected with `403 forbidden path`. A symlink target must also have a valid attachment path and pass the HR check.
+- File responses use `Cache-Control: private, no-store` and `Vary: Cookie`. `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff` prevent archived HTML or SVG from executing with the archive application's privileges.
 - Returns `404` if the file isn't on disk. Attachments may not have been downloaded yet — check the manifest's `integrity.missing_attachments`.
 
 ## 9. Table catalog
@@ -506,10 +508,11 @@ Inside `raw`, fields come from ServiceNow as `{value, display_value}` objects. T
 
 ### `cache-5min` only kicks in for big list pages
 
-For tables tagged `cache-5min`, `Cache-Control: max-age=300` is set when **both**
+For non-HR-dependent tables tagged `cache-5min`, `Cache-Control: max-age=300` is set when **both**
 `q` is empty **and** `limit > 200`. Exact-match and range filters do not disable
-that cache, so a large filtered request can also be cached. Small pages, requests
-with `q`, and HR-cookie-dependent lists return `no-cache, must-revalidate`.
+that cache, so a large filtered request can also be cached. Small non-HR pages and
+requests with `q` return `no-cache, must-revalidate`. HR-dependent lists always
+return `private, no-store`.
 
 ### The viewer URL `/` and `/index.html` serve HTML, not JSON
 

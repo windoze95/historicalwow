@@ -31,7 +31,7 @@ Exact filters on different columns are combined with **AND**; comma-separated va
 
 Tags: `task` `hr-gated`
 
-> Directly gated: rows where `assignment_group` is the HR group are hidden when locked.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
 
 Filterable columns:
 
@@ -61,9 +61,11 @@ Filterable columns:
 
 ### `change_request`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -95,9 +97,11 @@ Filterable columns:
 
 ### `problem`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -127,9 +131,11 @@ Filterable columns:
 
 ### `problem_task`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `problem`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -158,9 +164,11 @@ Filterable columns:
 
 ### `sc_request`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -189,9 +197,11 @@ Filterable columns:
 
 ### `sc_req_item`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `request`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -223,9 +233,11 @@ Filterable columns:
 
 ### `sc_task`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `request_item`, `request`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -258,9 +270,9 @@ Filterable columns:
 
 Tags: `task` `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `incident` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `incident`.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -289,9 +301,11 @@ Filterable columns:
 
 ### `change_task`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -321,9 +335,9 @@ Filterable columns:
 
 Tags: `task` `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -353,9 +367,11 @@ Filterable columns:
 
 ### `asset_task`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -383,9 +399,11 @@ Filterable columns:
 
 ### `sn_contract_renewal_task`
 
-Tags: `task` `cache-5min`
+Tags: `task` `cache-5min` `hr-gated`
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`.
+> Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.
+
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -653,7 +671,7 @@ Filterable columns:
 
 Tags: `hr-gated`
 
-> Parent-gated: rows whose `element_id` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `element_id`.
 
 Filterable columns:
 
@@ -671,7 +689,7 @@ Filterable columns:
 
 Tags: `hr-gated`
 
-> Parent-gated: rows whose `documentkey` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `documentkey`.
 
 Filterable columns:
 
@@ -691,7 +709,7 @@ Filterable columns:
 
 Tags: `hr-gated`
 
-> Parent-gated: rows whose `table_sys_id` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `table_sys_id`.
 
 Filterable columns:
 
@@ -710,7 +728,7 @@ Filterable columns:
 
 Tags: `hr-gated`
 
-> Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `instance`.
 
 Filterable columns:
 
@@ -731,9 +749,9 @@ Filterable columns:
 
 Tags: `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `task`.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -747,9 +765,9 @@ Filterable columns:
 
 Tags: `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `task`.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -765,9 +783,9 @@ Filterable columns:
 
 Tags: `cache-5min` `hr-gated`
 
-> Parent-gated: rows whose `sysapproval` references an HR-assigned incident are hidden when locked.
+> Hidden while locked: any HR-protected ancestor through `sysapproval`, `group`.
 
-> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Public caching is disabled while the HR gate is configured because visibility varies by cookie.
+> Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` when the `q` parameter is empty and `limit > 200`. Responses are private, no-store and vary by Cookie because HR visibility can change.
 
 Filterable columns:
 
@@ -817,7 +835,9 @@ Filterable columns:
 
 ### `sc_item_option`
 
-Tags: `reference`
+Tags: `hr-gated`
+
+> Hidden when any `sc_item_option_mtom` owner is HR-protected, including shared values.
 
 Filterable columns:
 
@@ -831,7 +851,9 @@ Filterable columns:
 
 ### `sc_item_option_mtom`
 
-Tags: `reference`
+Tags: `hr-gated`
+
+> Hidden while locked: any HR-protected ancestor through `request_item`, `sc_item_option`.
 
 Filterable columns:
 
@@ -1707,7 +1729,9 @@ Filterable columns:
 
 ### `cmdb_ci_outage`
 
-Tags: `reference`
+Tags: `hr-gated`
+
+> Hidden while locked: any HR-protected ancestor through `task_number`.
 
 Filterable columns:
 

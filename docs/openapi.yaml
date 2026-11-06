@@ -19,11 +19,20 @@ info:
     every response as sensitive company data.
 
     ## Authentication
-    Most endpoints are unauthenticated read-only. A subset of incidents
-    (those assigned to a configured HR group) plus their child and descendant
-    rows is hidden unless the caller holds a valid `hr_unlock` session cookie.
-    See `/api/hr-status`, `/api/hr-unlock`, and `x-hr-parent-columns` in
-    `openapi-schemas.yaml`.
+    Most endpoints are unauthenticated read-only. Records assigned to the
+    configured HR group in any supported task table, plus records connected
+    through protected task and related-record relationships, are hidden unless
+    the caller holds a valid `hr_unlock` session cookie. Protection remains
+    enabled when no password is configured; unlocking then returns 503.
+    See `/api/hr-status`, `/api/hr-unlock`, and the generated task and
+    relationship maps in `openapi-schemas.yaml`.
+
+    HR-dependent JSON responses use `Cache-Control: private, no-store` and
+    `Vary: Accept-Encoding, Cookie`, whether locked or unlocked. This includes
+    protected lists and records, search, activity, catalog variables,
+    SLA/task metrics, service status, and HR status. Missing optional tables
+    are allowed; present tables with incomplete required relationship columns
+    cause protected reads to fail closed with `503 hr_schema_pending`.
 
     ## Versioning
     `info.version` tracks the API surface, not the deployed image tag.
@@ -235,7 +244,7 @@ paths:
         or empty.
 
         Metrics for supported task tables with HR-dependent rows honor the gate.
-        Responses vary by cookie and are revalidated on every request;
+        Responses vary by cookie and must not be stored by clients or proxies;
         server-side aggregates are cached separately for locked and unlocked
         visibility.
       parameters:
@@ -261,7 +270,7 @@ paths:
         '200':
           description: Task metrics visible to the current HR-gate session.
           headers:
-            Cache-Control: {schema: {type: string}, description: '`no-cache, must-revalidate`.'}
+            Cache-Control: {schema: {type: string}, description: '`private, no-store`.'}
             Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie`.'}
           content:
             application/json:
@@ -335,12 +344,16 @@ paths:
       tags: [hr-gate]
       summary: Inspect HR gate state
       description: |
-        Reports whether the gate is enabled, whether the current request bears
+        Reports the always-enabled gate, whether the current request bears
         a valid `hr_unlock` cookie, and the configured HR group sys_id and
-        label. Safe to call unauthenticated — no protected data is exposed.
+        label. With no configured password, `unlocked` is always false.
+        Safe to call unauthenticated — no protected data is exposed.
       responses:
         '200':
           description: Gate state.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`private, no-store`.'}
+            Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie`.'}
           content:
             application/json:
               schema:
@@ -349,13 +362,14 @@ paths:
                 properties:
                   enabled:
                     type: boolean
-                    description: True iff `HR_UNLOCK_PASSWORD` is configured server-side.
+                    enum: [true]
+                    description: Always true, including when no HR password is configured.
                   unlocked:
                     type: boolean
-                    description: True iff the request bears a valid `hr_unlock` cookie.
+                    description: True iff an HR password is configured and the request bears a valid `hr_unlock` cookie.
                   group_sys_id:
                     type: string
-                    description: sys_id of the HR group whose incidents are gated.
+                    description: sys_id of the HR group whose task records are gated.
                   group_label:
                     type: string
 
@@ -366,7 +380,8 @@ paths:
       description: |
         Exchanges a password for an `hr_unlock` session cookie. The cookie is
         `HttpOnly` and `SameSite=Strict`. Tokens live in process memory only;
-        a server restart invalidates every outstanding cookie.
+        a server restart invalidates every outstanding cookie. If no password
+        is configured, data remains locked and this operation returns 503.
       requestBody:
         required: true
         content:
@@ -391,7 +406,12 @@ paths:
                   ok: {type: boolean, enum: [true]}
         '400': {description: 'Invalid JSON body.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: 'Wrong password.', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '503': {description: 'Gate disabled (no password configured).', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503':
+          description: No HR password configured; protected data remains locked.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+              example: {error: 'HR data is locked; unlocking is not configured'}
 
   /api/hr-lock:
     post:
@@ -445,7 +465,7 @@ paths:
       description: |
         Searches `number` and `short_description` across the configured task
         tables (see `x-task-tables` in openapi-schemas.yaml). HR-assigned
-        incidents and HR-linked child rows are filtered out when the gate is
+        task records and their protected descendants are filtered out when the gate is
         locked. Returns at most `limit` rows per table. A missing or blank `q`
         returns `{rows: []}` without running a search.
       parameters:
@@ -494,8 +514,8 @@ paths:
         Returns every `sys_journal_field` row whose `element_id` matches the
         parent record's sys_id. Includes work notes and comments, ordered by
         `sys_created_on` ascending. Returns `403 hr_locked` if `element_id`
-        refers to an HR-assigned incident and the request lacks an `hr_unlock`
-        cookie.
+        refers to an HR-assigned task or a protected related record and the
+        request lacks a valid `hr_unlock` cookie.
       parameters:
         - name: element_id
           in: path
@@ -614,7 +634,9 @@ paths:
         Joins `sc_item_option_mtom` → `sc_item_option` → `item_option_new` to
         return the form fields a user typed when submitting a request item.
         Returns variables ordered by their definition's `order` field, then by
-        question text.
+        question text. Protected request items return `403 hr_locked` while
+        locked. Variable values linked to any protected request item are also
+        omitted from ordinary request items that share those values.
       parameters:
         - name: ritm_sys_id
           in: path
@@ -742,7 +764,8 @@ paths:
         the most recent outage date in the frozen snapshot, not the current
         date. For overlapping outages, the worst status wins for each service
         and day. If no outage data is available, `window` is null and both
-        arrays are empty; populated responses are cached for five minutes.
+        arrays are empty. HR-linked outages are omitted while locked, including
+        from window bounds. Responses must not be stored by clients or proxies.
       parameters:
         - name: days
           in: query
@@ -754,7 +777,8 @@ paths:
           headers:
             Cache-Control:
               schema: {type: string}
-              description: '`public, max-age=300` when outage data is available; otherwise `no-cache, must-revalidate`.'
+              description: '`private, no-store`.'
+            Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie`.'}
           content:
             application/json:
               schema:
@@ -830,8 +854,8 @@ paths:
         '200':
           description: Incident list envelope visible to the current HR-gate session.
           headers:
-            Cache-Control: {schema: {type: string}, description: '`no-cache, must-revalidate`.'}
-            Vary: {schema: {type: string}, description: 'Includes `Accept-Encoding` and, when the HR gate is configured, `Cookie`.'}
+            Cache-Control: {schema: {type: string}, description: '`private, no-store`.'}
+            Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie`.'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ListEnvelope'}
@@ -870,15 +894,19 @@ paths:
         indexed column is NULL or the empty string, enabling drill-throughs
         such as `?category=__empty__`.
 
-        **HR gate**: when the gate is locked, the `incident` table hides
-        rows whose `assignment_group` is the HR group. Child and descendant
-        rows in the tables enumerated by `x-hr-parent-columns` are also hidden
-        when their parent chain reaches a gated incident. Row counts drop
-        silently; check `/api/hr-status` to know.
+        **HR gate**: when locked, every supported task table hides rows whose
+        `assignment_group` is the HR group. Protection follows task `parent`
+        and table-specific relationships recursively, including related
+        activity, emails, attachments, task/CI and SLA records, approvals,
+        catalog variable links and values, and outages. Shared variable values
+        linked to any protected request item remain hidden through ordinary
+        request items too. Row counts drop silently; check `/api/hr-status`.
 
         **Rollout window**: a table that is allowed by this API but has not yet
         been built into the active database returns an empty `200` list. A list
         response cannot distinguish that state from a genuinely empty table.
+        A present table missing required HR relationship columns causes
+        protected reads to fail closed with `503 hr_schema_pending`.
       parameters:
         - name: table
           in: path
@@ -1002,10 +1030,10 @@ paths:
           headers:
             Cache-Control:
               schema: {type: string}
-              description: '`public, max-age=300` for non-HR-dependent tables in `x-cache-5min` when `q` is empty and `limit > 200`; otherwise `no-cache, must-revalidate`.'
+              description: '`private, no-store` for HR-dependent tables. For other tables, `public, max-age=300` applies to `x-cache-5min` lists when `q` is empty and `limit > 200`; otherwise `no-cache, must-revalidate`.'
             Vary:
               schema: {type: string}
-              description: 'Always includes `Accept-Encoding`; also includes `Cookie` when the configured HR gate can change row visibility.'
+              description: 'Always includes `Accept-Encoding`; HR-dependent lists also include `Cookie`, even when no password is configured.'
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ListEnvelope'}
@@ -1013,7 +1041,7 @@ paths:
           description: Unknown table.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
         '503':
-          description: HR ancestry schema pending for a gated child table.
+          description: A present table lacks required HR relationship columns; protected reads fail closed.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
   /api/{table}/{sys_id}:
@@ -1024,9 +1052,10 @@ paths:
         Returns the row as one merged JSON object. The stored `raw` envelope
         wins on duplicate keys, so a same-named indexed field can retain its
         ServiceNow `{value, display_value}` object. Returns `403 hr_locked` for
-        `incident` rows whose `assignment_group` is the HR group, and for child
-        or descendant rows whose parent chain reaches an HR-assigned incident —
-        see `x-hr-parent-columns`.
+        task rows whose `assignment_group` is the HR group, and for protected
+        child, descendant, and related rows. Protection follows recursive task
+        and table-specific relationships; see the generated relationship maps
+        in `openapi-schemas.yaml`.
       parameters:
         - name: table
           in: path
@@ -1041,6 +1070,9 @@ paths:
       responses:
         '200':
           description: Row as a flat object.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`private, no-store` for HR-dependent tables; otherwise `no-cache, must-revalidate`.'}
+            Vary: {schema: {type: string}, description: '`Accept-Encoding, Cookie` for HR-dependent tables; otherwise `Accept-Encoding`.'}
           content:
             application/json:
               schema:
@@ -1056,7 +1088,7 @@ paths:
           description: Row or table not found.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
         '503':
-          description: HR ancestry schema pending for a gated child table.
+          description: A present table lacks required HR relationship columns; protected reads fail closed.
           content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
 
   /data/attachments/{shard}/{attachment_sys_id}/{file_name}:
@@ -1066,10 +1098,13 @@ paths:
       description: |
         Serves the raw file bytes for an attachment. `shard` is the lower-cased
         first two characters of `attachment_sys_id`. Returns `403 hr_locked` if
-        the parent record is an HR-assigned incident and the request lacks an
-        `hr_unlock` cookie. Returns `403 forbidden path` for any URL containing
-        `.`, `..`, or empty path segments. While the HR gate is enabled and the
-        caller is locked, missing attachment metadata is treated as protected
+        the attachment belongs to an HR-assigned task or protected related
+        record and the request lacks a valid `hr_unlock` cookie. Paths must
+        have exactly the expected shard, attachment sys_id, and filename
+        segments. Invalid shards, `.`, `..`, empty segments, and paths escaping
+        the attachment directory return `403 forbidden path`. Any canonical
+        symlink target must also have a valid attachment path and pass the HR
+        check. While locked, missing attachment metadata is treated as protected
         and also returns `403`; unlocked callers can proceed.
         Returns `404` if the file body is missing on disk (rare — attachments
         may not have been downloaded yet). Content type is inferred from the
@@ -1090,6 +1125,11 @@ paths:
       responses:
         '200':
           description: File body.
+          headers:
+            Cache-Control: {schema: {type: string}, description: '`private, no-store`.'}
+            Vary: {schema: {type: string}, description: '`Cookie`.'}
+            Content-Security-Policy: {schema: {type: string}, description: '`sandbox` prevents archived active content from running with the application origin privileges.'}
+            X-Content-Type-Options: {schema: {type: string}, description: '`nosniff`.'}
           content:
             '*/*':
               schema: {type: string, format: binary}
@@ -1224,9 +1264,10 @@ components:
       name: hr_unlock
       description: |
         Session cookie issued by `POST /api/hr-unlock`. `HttpOnly`,
-        `SameSite=Strict`. Required to read HR-assigned incidents and their
-        child rows. Token lives in process memory only; a server restart
-        clears every outstanding cookie.
+        `SameSite=Strict`. Required to read HR-assigned task records and their
+        protected related rows. Token lives in process memory only; locking
+        revokes the caller's token and a server restart clears all tokens.
+        No HR password configured means all protected data remains locked.
 
 # Per-table response shapes ($refs above point into this file).
 # Auto-generated by project/bin/gen_table_catalog.py — see openapi-schemas.yaml.

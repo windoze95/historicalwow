@@ -968,8 +968,9 @@
           {desc && (
             <div className="section">
               <h3>Description</h3>
-              <div className="kv-block" style={{ whiteSpace: 'pre-wrap' }}
-                dangerouslySetInnerHTML={{ __html: stripUnsafe(desc) }} />
+              {/* Archived HTML cannot execute scripts or navigate the parent app. */}
+              <iframe title="Catalog item description" sandbox="" srcDoc={desc}
+                style={{ width: '100%', height: '240px', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }} />
             </div>
           )}
 
@@ -1074,17 +1075,6 @@
       </div>
     );
   };
-
-  // ServiceNow descriptions sometimes carry HTML. Strip script/style/event
-  // handlers and let the rest render — formatting (bold, lists, links)
-  // is part of how the catalog UI looks.
-  function stripUnsafe(html) {
-    return String(html || '')
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/\son\w+="[^"]*"/gi, '')
-      .replace(/javascript:/gi, '');
-  }
 
   function CatalogTabs({ tabs, active, onChange }) {
     return (

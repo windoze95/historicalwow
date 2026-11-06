@@ -17,6 +17,7 @@ os.environ.setdefault('HISTORICALWOW_ACCESS_LOG', '')
 
 import build_sqlite as build  # noqa: E402
 import server                 # noqa: E402
+from hr_test_support import ensure_hr_tables
 
 
 def _envelope(**fields):
@@ -413,6 +414,17 @@ def _fixture():
          _choice_raw(parent='Hardware', sequence=4)),
     ]
     conn.executemany('INSERT INTO sys_choice VALUES (?,?,?,?,?,?)', choices)
+    conn.execute('CREATE TABLE sc_request (sys_id TEXT PRIMARY KEY, parent TEXT, assignment_group TEXT)')
+    # Match the current task ownership schema while keeping fixture inserts
+    # concise above. Missing relationship columns intentionally fail closed.
+    for table in server.TASK_TABLES:
+        if not server._table_exists(conn, table):
+            continue
+        cols = {r['name'] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+        for column in ('parent', 'assignment_group'):
+            if column not in cols:
+                conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" TEXT')
+    ensure_hr_tables(conn)
     conn.commit()
     return conn
 
@@ -753,7 +765,7 @@ def test_hr_parent_lists_are_never_publicly_cached():
         handlers[1].headers['Cookie'] = f'hr_unlock={token}'
         for handler in handlers:
             server.list_table(handler, 'incident_task', {'limit': ['201']})
-            assert handler.response_headers['Cache-Control'] == 'no-cache, must-revalidate'
+            assert handler.response_headers['Cache-Control'] == 'private, no-store'
             vary = {x.strip() for x in handler.response_headers['Vary'].split(',')}
             assert vary == {'Accept-Encoding', 'Cookie'}
     finally:
@@ -844,7 +856,7 @@ def test_restricted_attachment_files_are_transitive_and_never_cached():
 
 def test_incomplete_hr_ancestry_schema_fails_closed_until_rebuild():
     conn = _fixture()
-    conn.execute('ALTER TABLE incident_task RENAME COLUMN incident TO parent')
+    conn.execute('ALTER TABLE incident_task RENAME COLUMN incident TO missing_incident')
     conn.commit()
     old_conn = getattr(server._local, 'conn', None)
     old_password = server.HR_UNLOCK_PASSWORD

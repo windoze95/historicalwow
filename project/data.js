@@ -313,7 +313,11 @@ window.HistoricalWowData = (function () {
     return true;
   };
   data.lockHr = async function () {
-    await fetch('/api/hr-lock', { method: 'POST', credentials: 'same-origin' });
+    const res = await fetch('/api/hr-lock', { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
     data.hrStatus = { ...data.hrStatus, unlocked: false };
     notify();
   };

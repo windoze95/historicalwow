@@ -11,7 +11,7 @@ Usage:
   python3 project/bin/gen_table_catalog.py --check     # nonzero exit if regen would change anything
 
 The generator reads SCHEMAS from build_sqlite.py and the table groupings
-(TASK_TABLES, REFERENCE_TABLES, CACHE_5MIN, HR_PARENT_COLUMN) from server.py.
+(TASK_TABLES, REFERENCE_TABLES, CACHE_5MIN, HR_PARENT_COLUMNS) from server.py.
 It also checks that public dispatcher operations have matching OpenAPI methods
 and paths.
 Column types are inferred by inspecting each lambda's source. Only three
@@ -85,7 +85,7 @@ def tags_for(table):
         out.append('task')
     if table in server.CACHE_5MIN:
         out.append('cache-5min')
-    if table == 'incident' or table in server.HR_PARENT_COLUMN:
+    if table in server.HR_PROTECTED_TABLES:
         out.append('hr-gated')
     if not out and table in server.REFERENCE_TABLES:
         out.append('reference')
@@ -93,13 +93,14 @@ def tags_for(table):
 
 
 def hr_parent_note(table):
-    """If the table is HR-gated by a parent column, return a human-readable note."""
-    if table == 'incident':
-        return 'Directly gated: rows where `assignment_group` is the HR group are hidden when locked.'
-    col = server.HR_PARENT_COLUMN.get(table)
-    if col:
-        return f'Parent-gated: rows whose `{col}` references an HR-assigned incident are hidden when locked.'
-    return None
+    """Describe roots and every recursive ownership edge, including shared values."""
+    if table not in server.HR_PROTECTED_TABLES:
+        return None
+    if table == 'sc_item_option':
+        return 'Hidden when any `sc_item_option_mtom` owner is HR-protected, including shared values.'
+    columns = ', '.join(f'`{column}`' for column in server.HR_PARENT_COLUMNS[table])
+    root = 'HR assignment group or ' if table in server.TASK_TABLES else ''
+    return f'Hidden while locked: {root}any HR-protected ancestor through {columns}.'
 
 
 def cache_note(table):
@@ -108,8 +109,8 @@ def cache_note(table):
             'Tagged `cache-5min`: list responses return `Cache-Control: public, max-age=300` '
             'when the `q` parameter is empty and `limit > 200`.'
         )
-        if table == 'incident' or table in server.HR_PARENT_COLUMN:
-            note += ' Public caching is disabled while the HR gate is configured because visibility varies by cookie.'
+        if table in server.HR_PROTECTED_TABLES:
+            note += ' Responses are private, no-store and vary by Cookie because HR visibility can change.'
         return note
     return None
 
@@ -315,8 +316,13 @@ def render_openapi_schemas_yaml(catalog):
 
     out.append('')
     out.append('x-hr-parent-columns:')
-    for table in sorted(server.HR_PARENT_COLUMN):
-        out.append(f"  {table}: {server.HR_PARENT_COLUMN[table]}")
+    for table, columns in sorted(server.HR_PARENT_COLUMNS.items()):
+        out.append(f"  {table}: [{', '.join(columns)}]")
+    out.append('')
+    out.append('x-hr-shared-value-link:')
+    out.append('  table: sc_item_option_mtom')
+    out.append('  owner: request_item')
+    out.append('  value: sc_item_option')
 
     return '\n'.join(out).rstrip() + '\n'
 

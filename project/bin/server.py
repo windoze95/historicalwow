@@ -72,11 +72,12 @@ ACCESS_LOG_BACKUPS = int(os.environ.get('HISTORICALWOW_ACCESS_LOG_BACKUPS', '5')
 TRUST_PROXY        = os.environ.get('HISTORICALWOW_TRUST_PROXY', '0') == '1'
 
 # --- HR gate --------------------------------------------------------------
-# Incidents assigned to this group (sys_user_group.sys_id) are hidden from
+# Tasks assigned to this group (sys_user_group.sys_id) and their descendants are hidden from
 # every API response unless the requesting browser holds a valid hr_unlock
 # cookie. Token is set when the user POSTs the correct password to
 # /api/hr-unlock; tokens live in process memory and are wiped on restart.
-HR_GROUP_SYS_ID    = os.environ.get('HR_GROUP_SYS_ID', '356fce0a4fcd255057a8847221ad48de')
+# Without HR_UNLOCK_PASSWORD, the protected data stays locked.
+HR_GROUP_SYS_ID    = os.environ.get('HR_GROUP_SYS_ID') or '356fce0a4fcd255057a8847221ad48de'
 HR_UNLOCK_PASSWORD = os.environ.get('HR_UNLOCK_PASSWORD', '')
 HR_GROUP_LABEL     = os.environ.get('HR_GROUP_LABEL', 'IT - HR Support')
 
@@ -101,6 +102,29 @@ _lookup_cache_lock = threading.Lock()
 
 def _db_mtime() -> float:
     return DB_PATH.stat().st_mtime if DB_PATH.exists() else 0.0
+
+
+def _db_file_identity():
+    """Identify the actual database file behind a persistent connection."""
+    try:
+        stat = DB_PATH.stat()
+    except FileNotFoundError:
+        return None
+    return str(DB_PATH), stat.st_dev, stat.st_ino
+
+
+def _db_cache_generation():
+    """Include uncheckpointed WAL commits in the task-metrics generation."""
+    def fingerprint(path):
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
+
+    return (str(DB_PATH), fingerprint(DB_PATH),
+            fingerprint(Path(str(DB_PATH) + '-wal')))
 
 
 def _serve_cached_lookup(handler, endpoint_id: str, builder, max_age: int = 3600):
@@ -333,6 +357,15 @@ _local = threading.local()
 
 def get_conn():
     conn = getattr(_local, 'conn', None)
+    tracked = getattr(_local, 'conn_identity', None)
+    # A rebuilt archive may be atomically replaced while a worker still has
+    # the previous inode open. Only inspect connections opened here; callers
+    # may supply an explicit in-memory connection for offline validation.
+    if conn is not None and tracked is not None and tracked[0] is conn:
+        if not conn.in_transaction and tracked[1] != _db_file_identity():
+            conn.close()
+            conn = None
+            _local.conn = None
     if conn is None:
         # Read-only URI open. The mount is rw (SQLite needs to coordinate
         # -shm/-wal files even when the app only SELECTs), but `mode=ro`
@@ -340,9 +373,17 @@ def get_conn():
         # paths must be absolute and forward-slash; sqlite3 handles that
         # since DB_PATH is already a Path on a POSIX volume.
         uri = f'file:{DB_PATH}?mode=ro'
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        _local.conn = conn
+        for _ in range(3):
+            identity = _db_file_identity()
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30.0)
+            if identity == _db_file_identity():
+                conn.row_factory = sqlite3.Row
+                _local.conn = conn
+                _local.conn_identity = (conn, identity)
+                break
+            conn.close()
+        else:
+            raise sqlite3.OperationalError('archive replaced while opening database')
     return conn
 
 
@@ -376,7 +417,9 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0, vary
     if encoding:
         handler.send_header('Content-Encoding', encoding)
     handler.send_header('Content-Length', str(len(body)))
-    if cache_seconds > 0:
+    if 'cookie' in {v.strip().lower() for v in (vary or '').split(',')}:
+        handler.send_header('Cache-Control', 'private, no-store')
+    elif cache_seconds > 0:
         handler.send_header('Cache-Control', f'public, max-age={cache_seconds}')
     else:
         handler.send_header('Cache-Control', 'no-cache, must-revalidate')
@@ -390,7 +433,7 @@ def _json_response(handler, payload, status=HTTPStatus.OK, cache_seconds=0, vary
     handler.wfile.write(body)
 
 
-def _send_static(handler, path, content_type=None, vary=None, cache_control=None):
+def _send_static(handler, path, content_type=None, vary=None, cache_control=None, sandbox=False):
     if not path.is_file():
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'not found: {path.name}')
     if content_type is None:
@@ -416,6 +459,11 @@ def _send_static(handler, path, content_type=None, vary=None, cache_control=None
     handler.send_response(HTTPStatus.OK)
     handler.send_header('Content-Type', content_type)
     handler.send_header('Content-Length', str(size))
+    if sandbox:
+        # Archived files are untrusted content, including HTML/SVG. They must
+        # never execute with this origin's authenticated API access.
+        handler.send_header('Content-Security-Policy', "sandbox; default-src 'none'")
+        handler.send_header('X-Content-Type-Options', 'nosniff')
     # Vary tells intermediate caches (browser HTTP cache, proxies, CDNs) to
     # key responses by the listed request headers. Required whenever a
     # single URL returns different bodies based on a header (e.g. /docs/<file>.md
@@ -474,14 +522,14 @@ def _parse_cookies(handler):
 
 
 def hr_gate_enabled() -> bool:
-    return bool(HR_UNLOCK_PASSWORD)
+    """HR protection stays enabled even when unlocking is not configured."""
+    return True
 
 
 def is_hr_unlocked(handler) -> bool:
-    """True if the request bears a valid hr_unlock cookie. Always True when
-    the gate is disabled (HR_UNLOCK_PASSWORD unset)."""
-    if not hr_gate_enabled():
-        return True
+    """True only for a valid cookie while the HR password is configured."""
+    if not HR_UNLOCK_PASSWORD:
+        return False
     token = _parse_cookies(handler).get('hr_unlock', '')
     if not token:
         return False
@@ -489,136 +537,143 @@ def is_hr_unlocked(handler) -> bool:
         return token in _hr_tokens
 
 
-def is_hr_record(sys_id: str) -> bool:
-    """Whether a sys_id refers to an incident assigned to the HR group.
-    Only checks `incident` — that's the table the gate covers."""
-    if not hr_gate_enabled():
-        return False
-    conn = get_conn()
-    row = conn.execute(
-        'SELECT 1 FROM incident WHERE sys_id = ? AND assignment_group = ? LIMIT 1',
-        (sys_id, HR_GROUP_SYS_ID),
-    ).fetchone()
-    return row is not None
-
-
-# Tables whose rows are tied to a parent incident's sys_id via the listed
-# column. When the HR gate is locked, rows referencing an HR-assigned
-# incident must be hidden from the generic /api/<table> list route and
-# /api/<table>/<sys_id> record route — otherwise a caller can pull HR
-# journal entries, audit trails, attachment metadata, etc. by querying the
-# child table directly with `?element_id=<hr_incident_sys_id>` or just
-# dumping the whole table.
-HR_PARENT_COLUMN = {
-    'sys_journal_field': 'element_id',
-    'sys_audit':         'documentkey',
-    'sys_attachment':    'table_sys_id',
-    'sys_email':         'instance',
-    'task_ci':           'task',
-    'task_sla':          'task',
-    'incident_task':     'incident',
-    'sysapproval_approver': 'sysapproval',
-    'sysapproval_group':    'parent',
+# Follow every archived ownership edge, including secondary parent references.
+# A record inherits the HR lock if ANY path reaches an HR-assigned task.
+# UNION (rather than UNION ALL) terminates cycles and shared ancestry.
+HR_PARENT_COLUMNS = {
+    **{table: ('parent',) for table in TASK_TABLES},
+    'incident_task': ('parent', 'incident'),
+    'problem_task': ('parent', 'problem'),
+    'sc_req_item': ('parent', 'request'),
+    'sc_task': ('parent', 'request_item', 'request'),
+    'sys_journal_field': ('element_id',),
+    'sys_audit': ('documentkey',),
+    'sys_attachment': ('table_sys_id',),
+    'sys_email': ('instance',),
+    'task_ci': ('task',),
+    'task_sla': ('task',),
+    'sysapproval_approver': ('sysapproval', 'group'),
+    'sc_item_option_mtom': ('request_item', 'sc_item_option'),
+    'cmdb_ci_outage': ('task_number',),
 }
-
-# Record types that can themselves own journals, audits, emails, attachments,
-# or another relation row. Build their ancestry recursively so sidecars on an
-# incident task or approval record inherit the parent incident's HR gate.
-HR_ANCESTRY_COLUMN = {
-    table: HR_PARENT_COLUMN[table]
-    for table in (
-        'task_ci', 'task_sla', 'incident_task',
-        'sysapproval_approver', 'sysapproval_group',
-    )
-}
+HR_PROTECTED_TABLES = frozenset(HR_PARENT_COLUMNS) | {'sc_item_option'}
 
 
 def hr_ancestry_schema_ready(conn) -> bool:
-    """Whether every recursive parent edge is present in the active DB."""
-    for table, column in HR_ANCESTRY_COLUMN.items():
-        if not _table_exists(conn, table):
+    """Missing optional tables are empty; incomplete present tables fail closed."""
+    if not _table_exists(conn, 'incident'):
+        return False
+    # Values can be imported before their ownership links. Until the catalog
+    # chain exists, their absence cannot mean the submitted answers are public.
+    if any(_table_exists(conn, t) for t in ('sc_item_option', 'sc_item_option_mtom')):
+        if not all(_table_exists(conn, t) for t in (
+            'sc_item_option_mtom', 'sc_req_item', 'sc_request',
+        )):
             return False
-        cols = {
-            row['name'] for row in conn.execute(f'PRAGMA table_info("{table}")')
-        }
-        if column not in cols:
+    for table in HR_PROTECTED_TABLES:
+        if not _table_exists(conn, table):
+            continue
+        cols = {row['name'] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+        required = {'sys_id', *HR_PARENT_COLUMNS.get(table, ())}
+        if table in TASK_TABLES:
+            required.add('assignment_group')
+        if not required.issubset(cols):
             return False
     return True
 
 
 def hr_restricted_subquery(conn) -> str:
-    """Indexed recursive set of restricted incident and descendant sys_ids."""
+    """Materialize the complete ownership graph once per connection snapshot.
+
+    Expand only newly discovered IDs in indexed batches. A recursive UNION
+    probes every relationship separately for every activity row, which is
+    prohibitively slow on the full archive. These TEMP sets compute the same
+    fixed point, including cycles and activity records that own other records.
+    The one bound argument remains the HR group for all visibility callers.
+    """
     if not hr_ancestry_schema_ready(conn):
         raise RuntimeError('HR ancestry schema is incomplete')
-    branches = []
-    for table, column in HR_ANCESTRY_COLUMN.items():
-        branches.append(
-            f'UNION SELECT t.sys_id FROM "{table}" t '
-            f'JOIN restricted r ON t."{column}" = r.sys_id'
-        )
-    recursive = ' '.join(branches)
-    return (
-        '(WITH RECURSIVE restricted(sys_id) AS ('
-        'SELECT sys_id FROM incident WHERE assignment_group = ? '
-        f'{recursive}) SELECT sys_id FROM restricted)'
-    )
+
+    def version():
+        return (conn.execute('PRAGMA data_version').fetchone()[0],
+                conn.execute('PRAGMA schema_version').fetchone()[0],
+                conn.total_changes, HR_GROUP_SYS_ID)
+
+    cached = getattr(_local, 'hr_restrictions', None)
+    if cached is None or cached[0] is not conn or cached[1] != version():
+        conn.execute('SAVEPOINT hr_restrictions')
+        try:
+            for name in ('hr_restricted', 'hr_frontier', 'hr_next'):
+                conn.execute(f'DROP TABLE IF EXISTS temp.{name}')
+                conn.execute(f'CREATE TEMP TABLE {name} (sys_id TEXT PRIMARY KEY) WITHOUT ROWID')
+            present = {table for table in HR_PROTECTED_TABLES if _table_exists(conn, table)}
+            for table in sorted(TASK_TABLES & present):
+                conn.execute(
+                    f'INSERT OR IGNORE INTO hr_frontier SELECT sys_id FROM "{table}" '
+                    'WHERE assignment_group = ?', (HR_GROUP_SYS_ID,),
+                )
+            conn.execute('INSERT INTO hr_restricted SELECT sys_id FROM hr_frontier')
+            edges = [
+                (table, column, 'sys_id')
+                for table, columns in sorted(HR_PARENT_COLUMNS.items()) if table in present
+                for column in columns
+            ]
+            if 'sc_item_option_mtom' in present:
+                edges.append(('sc_item_option_mtom', 'sys_id', 'sc_item_option'))
+            # Empty tables need no probes, even when the frontier is large.
+            nonempty = {table for table in present
+                        if conn.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()}
+            while conn.execute('SELECT 1 FROM hr_frontier LIMIT 1').fetchone():
+                for table, parent, child in edges:
+                    if table not in nonempty:
+                        continue
+                    conn.execute(
+                        f'INSERT OR IGNORE INTO hr_next SELECT t."{child}" '
+                        f'FROM hr_frontier f CROSS JOIN "{table}" t ON t."{parent}" = f.sys_id '
+                        f"WHERE t.\"{child}\" IS NOT NULL AND t.\"{child}\" != '' "
+                        f'AND NOT EXISTS (SELECT 1 FROM hr_restricted s WHERE s.sys_id = t."{child}")'
+                    )
+                conn.execute('INSERT INTO hr_restricted SELECT sys_id FROM hr_next')
+                conn.execute('DELETE FROM hr_frontier')
+                conn.execute('INSERT INTO hr_frontier SELECT sys_id FROM hr_next')
+                conn.execute('DELETE FROM hr_next')
+            conn.execute('DROP TABLE hr_frontier')
+            conn.execute('DROP TABLE hr_next')
+            conn.execute('RELEASE hr_restrictions')
+        except Exception:
+            conn.execute('ROLLBACK TO hr_restrictions')
+            conn.execute('RELEASE hr_restrictions')
+            _local.hr_restrictions = None
+            raise
+        _local.hr_restrictions = (conn, version())
+    return '(SELECT sys_id FROM temp.hr_restricted WHERE ? IS NOT NULL)'
 
 
-def hr_parent_visible_clause(column: str, conn) -> str:
-    """Keep unlinked rows while excluding restricted parents/descendants."""
-    return (
-        f'("{column}" IS NULL OR "{column}" = ? '
-        f'OR "{column}" NOT IN {hr_restricted_subquery(conn)})'
-    )
+def hr_visible_clause(conn, column='sys_id') -> str:
+    # column is only supplied by server code, never by request parameters.
+    return f'{column} NOT IN {hr_restricted_subquery(conn)}'
 
 
 def is_hr_related_record(sys_id: str) -> bool:
-    """Whether a record is a restricted incident or indexed descendant."""
-    if not hr_gate_enabled():
-        return False
+    """Whether a record is protected; unknown schema is never treated as public."""
     conn = get_conn()
     if not hr_ancestry_schema_ready(conn):
         return True
-    row = conn.execute(
+    return conn.execute(
         f'SELECT 1 WHERE ? IN {hr_restricted_subquery(conn)} LIMIT 1',
         (sys_id, HR_GROUP_SYS_ID),
-    ).fetchone()
-    return row is not None
-
-
-def _hr_record_parent_locked(table: str, sys_id: str) -> bool:
-    """True iff `table` is HR-gated by a parent column AND the row at `sys_id`
-    points at an HR-assigned incident. Used by get_record to block direct
-    fetches of e.g. a sys_journal_field row whose element_id is an HR
-    incident."""
-    col = HR_PARENT_COLUMN.get(table)
-    if not col or not hr_gate_enabled():
-        return False
-    conn = get_conn()
-    if not hr_ancestry_schema_ready(conn):
-        return True
-    row = conn.execute(
-        f'SELECT 1 FROM "{table}" t WHERE t.sys_id = ? '
-        f'AND t."{col}" IN {hr_restricted_subquery(conn)} LIMIT 1',
-        (sys_id, HR_GROUP_SYS_ID),
-    ).fetchone()
-    return row is not None
+    ).fetchone() is not None
 
 
 def _attachment_is_hr(attach_sys_id: str) -> bool:
-    """True if this sys_attachment row is linked to an HR-assigned incident.
-    Used to gate the static /data/attachments/<...> route — without this,
-    knowing an attachment's sys_id is enough to download HR file bodies."""
-    if not hr_gate_enabled():
-        return False
+    """Unknown attachment metadata stays locked until the archive is built."""
     conn = get_conn()
+    if not _table_exists(conn, 'sys_attachment'):
+        return True
     row = conn.execute(
-        'SELECT table_sys_id FROM sys_attachment WHERE sys_id = ?',
-        (attach_sys_id,),
+        'SELECT 1 FROM sys_attachment WHERE sys_id = ?', (attach_sys_id,),
     ).fetchone()
-    # Attachment bodies can land before the export is rebuilt into SQLite.
-    # Missing metadata is therefore unknown, not public, while the gate is on.
-    return row is None or is_hr_related_record(row['table_sys_id'])
+    return row is None or is_hr_related_record(attach_sys_id)
 
 
 def _row_to_dict(row):
@@ -743,22 +798,11 @@ def list_table(handler, table, params):
             where.append(f'"{k}" = ?')
             args.append(BOOL_COERCE.get(val.lower(), val))
 
-    # HR gate. Two shapes:
-    #   incident itself      → filter on its own assignment_group.
-    #   child / join tables  → filter on their parent-incident reference
-    #                          (see HR_PARENT_COLUMN). Without this, callers
-    #                          can pull HR journal/audit/attachment rows by
-    #                          querying the child table directly.
-    if not is_hr_unlocked(handler):
-        if table == 'incident':
-            where.append('"assignment_group" IS NOT ?')
-            args.append(HR_GROUP_SYS_ID)
-        elif table in HR_PARENT_COLUMN:
-            if not hr_ancestry_schema_ready(conn):
-                return _send_hr_schema_pending(handler)
-            col = HR_PARENT_COLUMN[table]
-            where.append(hr_parent_visible_clause(col, conn))
-            args.extend(['', HR_GROUP_SYS_ID])
+    if not is_hr_unlocked(handler) and table in HR_PROTECTED_TABLES:
+        if not hr_ancestry_schema_ready(conn):
+            return _send_hr_schema_pending(handler)
+        where.append(hr_visible_clause(conn))
+        args.append(HR_GROUP_SYS_ID)
 
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
     total = conn.execute(f'SELECT COUNT(*) AS n FROM "{table}" {where_sql}', args).fetchone()['n']
@@ -776,9 +820,7 @@ def list_table(handler, table, params):
     # Never put a cookie-dependent HR view in a shared public cache. This also
     # makes locking take effect on the next request instead of leaving an
     # unlocked child-table response fresh for five minutes.
-    hr_sensitive = hr_gate_enabled() and (
-        table == 'incident' or table in HR_PARENT_COLUMN
-    )
+    hr_sensitive = table in HR_PROTECTED_TABLES
     cache = 300 if (
         table in CACHE_5MIN and not q and limit > 200 and not hr_sensitive
     ) else 0
@@ -791,14 +833,11 @@ def list_table(handler, table, params):
 def get_record(handler, table, sys_id):
     if table not in ALL_TABLES:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown table: {table}')
-    if not is_hr_unlocked(handler):
-        if table == 'incident' and is_hr_record(sys_id):
+    if not is_hr_unlocked(handler) and table in HR_PROTECTED_TABLES:
+        if not hr_ancestry_schema_ready(get_conn()):
+            return _send_hr_schema_pending(handler)
+        if is_hr_related_record(sys_id):
             return _send_hr_locked(handler)
-        if table in HR_PARENT_COLUMN:
-            if not hr_ancestry_schema_ready(get_conn()):
-                return _send_hr_schema_pending(handler)
-            if _hr_record_parent_locked(table, sys_id):
-                return _send_hr_locked(handler)
     conn = get_conn()
     if not _table_exists(conn, table):
         # Allowed table not yet built into the DB (see _table_exists) — no
@@ -807,7 +846,7 @@ def get_record(handler, table, sys_id):
     row = conn.execute(f'SELECT * FROM "{table}" WHERE sys_id = ?', (sys_id,)).fetchone()
     if not row:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'{table}/{sys_id} not in archive')
-    hr_sensitive = table == 'incident' or table in HR_PARENT_COLUMN
+    hr_sensitive = table in HR_PROTECTED_TABLES
     _json_response(
         handler, _row_to_dict(row),
         vary='Cookie' if hr_sensitive else None,
@@ -825,13 +864,13 @@ def get_sla_stats(handler, kind, sys_id):
     conn = get_conn()
     empty = {'total': 0, 'breached': 0, 'by_stage': {}}
     if not _table_exists(conn, 'task_sla') or not _table_exists(conn, 'incident'):
-        return _json_response(handler, empty)
+        return _json_response(handler, empty, vary='Cookie')
     where = [f'i."{col}" = ?']
     args = [sys_id]
     if not is_hr_unlocked(handler):
-        # IS NOT (not !=) so incidents with a NULL assignment_group aren't
-        # dropped — `NULL != ?` is unknown and would fail the WHERE.
-        where.append('i.assignment_group IS NOT ?')
+        if not hr_ancestry_schema_ready(conn):
+            return _send_hr_schema_pending(handler)
+        where.append(hr_visible_clause(conn, 'ts.sys_id'))
         args.append(HR_GROUP_SYS_ID)
     try:
         rows = conn.execute(
@@ -844,11 +883,11 @@ def get_sla_stats(handler, kind, sys_id):
             args,
         ).fetchall()
     except sqlite3.OperationalError:
-        return _json_response(handler, empty)
+        return _json_response(handler, empty, vary='Cookie')
     total = sum(r['n'] for r in rows)
     breached = sum((r['breached'] or 0) for r in rows)
     by_stage = {(r['stage'] or 'unknown'): r['n'] for r in rows}
-    _json_response(handler, {'total': total, 'breached': breached, 'by_stage': by_stage})
+    _json_response(handler, {'total': total, 'breached': breached, 'by_stage': by_stage}, vary='Cookie')
 
 
 def get_journal_for(handler, element_id):
@@ -891,11 +930,16 @@ def get_variables_for(handler, ritm_sys_id):
     item_option_new (def: label, type, reference target). The shape is
     consistent across catalog items even though every form has a
     different set of fields, since item_option_new carries the schema."""
-    if not is_hr_unlocked(handler) and is_hr_record(ritm_sys_id):
+    if not is_hr_unlocked(handler) and is_hr_related_record(ritm_sys_id):
         return _send_hr_locked(handler)
     conn = get_conn()
+    visibility = ''
+    args = [ritm_sys_id]
+    if not is_hr_unlocked(handler):
+        visibility = ' AND ' + hr_visible_clause(conn, 'm.sys_id')
+        args.append(HR_GROUP_SYS_ID)
     rows = conn.execute(
-        '''SELECT
+        f'''SELECT
               o.sys_id          AS opt_sys_id,
               o.value           AS value,
               d.sys_id          AS def_sys_id,
@@ -909,9 +953,9 @@ def get_variables_for(handler, ritm_sys_id):
             LEFT JOIN sc_item_option   o ON o.sys_id = m.sc_item_option
             LEFT JOIN item_option_new  d ON d.sys_id = o.item_option_new
             LEFT JOIN sc_cat_item      c ON c.sys_id = o.cat_item
-            WHERE m.request_item = ?
+            WHERE m.request_item = ? {visibility}
             ORDER BY CAST(NULLIF(d."order", "") AS INTEGER), d.question_text''',
-        (ritm_sys_id,),
+        args,
     ).fetchall()
     out = []
     for r in rows:
@@ -1080,7 +1124,7 @@ def get_service_status(handler, params):
     the snapshot, since the archive is historical."""
     conn = get_conn()
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cmdb_ci_outage'").fetchone() is None:
-        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []}, vary='Cookie')
     try:
         days = max(1, min(180, int(params.get('days', ['30'])[0])))
     except (ValueError, TypeError):
@@ -1092,8 +1136,10 @@ def get_service_status(handler, params):
             return (v.get('display_value') if disp else v.get('value')) or ''
         return v or ''
 
+    where, args = _task_visibility(conn, 'cmdb_ci_outage', is_hr_unlocked(handler))
+    where_sql = (' WHERE ' + ' AND '.join(where)) if where else ''
     outages, max_day = [], None
-    for (raw,) in conn.execute('SELECT raw FROM cmdb_ci_outage').fetchall():
+    for (raw,) in conn.execute('SELECT raw FROM cmdb_ci_outage' + where_sql, args).fetchall():
         if not raw:
             continue
         try:
@@ -1112,12 +1158,12 @@ def get_service_status(handler, params):
         if max_day is None or begin > max_day:
             max_day = begin
     if not outages:
-        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []}, vary='Cookie')
 
     try:
         end_d = datetime.date.fromisoformat(max_day)
     except ValueError:
-        return _json_response(handler, {'window': None, 'dates': [], 'services': []})
+        return _json_response(handler, {'window': None, 'dates': [], 'services': []}, vary='Cookie')
     start_d = end_d - datetime.timedelta(days=days - 1)
     dates = [(start_d + datetime.timedelta(days=i)).isoformat() for i in range(days)]
     dateset = set(dates)
@@ -1149,7 +1195,7 @@ def get_service_status(handler, params):
         'window': {'start': start_d.isoformat(), 'end': end_d.isoformat(), 'days': days},
         'dates': dates,
         'services': out,
-    }, cache_seconds=300)
+    }, vary='Cookie')
 
 
 def get_ci_relations(handler, sys_id):
@@ -1189,7 +1235,7 @@ def cross_table_search(handler, params):
     Searches `number` and `short_description` across the listed task tables."""
     q = (params.get('q', [''])[0] or '').strip()
     if not q:
-        return _json_response(handler, {'rows': []})
+        return _json_response(handler, {'rows': []}, vary='Cookie')
     types_param = (params.get('types', [''])[0] or '').strip()
     types = [t for t in (types_param.split(',') if types_param else list(TASK_TABLES))
              if t in TASK_TABLES]
@@ -1204,17 +1250,10 @@ def cross_table_search(handler, params):
                f'sys_updated_on, raw FROM "{t}" '
                f'WHERE (number LIKE ? OR short_description LIKE ?)')
         args = [like, like]
-        if not hr_unlocked:
-            if t == 'incident':
-                sql += ' AND assignment_group IS NOT ?'
-                args.append(HR_GROUP_SYS_ID)
-            elif t in HR_PARENT_COLUMN:
-                # incident_task etc. — hide rows whose parent incident is HR.
-                if not hr_ancestry_schema_ready(conn):
-                    continue
-                col = HR_PARENT_COLUMN[t]
-                sql += f' AND {hr_parent_visible_clause(col, conn)}'
-                args.extend(['', HR_GROUP_SYS_ID])
+        where, hr_args = _task_visibility(conn, t, hr_unlocked)
+        if where:
+            sql += ' AND ' + ' AND '.join(where)
+            args.extend(hr_args)
         sql += ' ORDER BY sys_updated_on DESC LIMIT ?'
         args.append(limit_per_table)
         try:
@@ -1225,7 +1264,7 @@ def cross_table_search(handler, params):
             d = _row_to_dict(r)
             d['_table'] = t
             out.append(d)
-    _json_response(handler, {'rows': out, 'q': q})
+    _json_response(handler, {'rows': out, 'q': q}, vary='Cookie')
 
 
 def _build_manifest_payload():
@@ -1266,16 +1305,11 @@ _task_metrics_cache_lock = threading.Lock()
 
 def _task_visibility(conn, table, hr_unlocked):
     """Return (WHERE fragments, args) matching list_table's HR visibility."""
-    if hr_unlocked:
+    if hr_unlocked or table not in HR_PROTECTED_TABLES:
         return [], []
-    if table == 'incident':
-        return ['"assignment_group" IS NOT ?'], [HR_GROUP_SYS_ID]
-    if table in HR_PARENT_COLUMN:
-        if not hr_ancestry_schema_ready(conn):
-            return ['0'], []
-        col = HR_PARENT_COLUMN[table]
-        return [hr_parent_visible_clause(col, conn)], ['', HR_GROUP_SYS_ID]
-    return [], []
+    if not hr_ancestry_schema_ready(conn):
+        return ['0'], []
+    return [hr_visible_clause(conn)], [HR_GROUP_SYS_ID]
 
 
 def _task_metric_dist(conn, table, field, cols, where, args):
@@ -1474,6 +1508,15 @@ def _task_subcategory_pairs(conn, table, cols, where, args, category_defs, sub_d
 
 
 def _build_task_metrics_payload(conn, table, hr_unlocked=True):
+    # All aggregates and their authorization graph read the same snapshot.
+    conn.execute('SAVEPOINT hr_metrics')
+    try:
+        return _compute_task_metrics_payload(conn, table, hr_unlocked)
+    finally:
+        conn.execute('RELEASE hr_metrics')
+
+
+def _compute_task_metrics_payload(conn, table, hr_unlocked=True):
     if table not in TASK_TABLES:
         raise ValueError(f'unknown task table: {table}')
     if not _table_exists(conn, table):
@@ -1548,21 +1591,59 @@ def _build_task_metrics_payload(conn, table, hr_unlocked=True):
     }
 
 
+def _task_metrics_snapshot_is_current(conn, token):
+    """Only share aggregates while the pinned snapshot matches the live file."""
+    if token is None or token[0] is not conn:
+        return False
+    tracked = getattr(_local, 'conn_identity', None)
+    return (
+        (tracked is None or tracked[0] is not conn
+         or tracked[1] == _db_file_identity())
+        and token[1] == conn.execute('PRAGMA data_version').fetchone()[0]
+        and token[2] == _db_cache_generation()
+    )
+
+
+def _task_metrics_snapshot_token(conn):
+    """Capture at transaction start, before any earlier read can pin old data."""
+    generation = _db_cache_generation()
+    version = conn.execute('PRAGMA data_version').fetchone()[0]
+    # BEGIN is deferred. Pin the database snapshot before confirming that its
+    # generation stayed stable; data_version alone freezes inside a transaction.
+    conn.execute('SELECT 1 FROM main.sqlite_master LIMIT 1').fetchone()
+    token = (conn, version, generation)
+    return token if _task_metrics_snapshot_is_current(conn, token) else None
+
+
 def get_task_metrics(handler, table):
     if table not in TASK_TABLES:
         return _send_error(handler, HTTPStatus.NOT_FOUND, f'unknown task table: {table}')
     unlocked = is_hr_unlocked(handler)
-    key = (_db_mtime(), table, unlocked)
-    with _task_metrics_cache_lock:
-        payload = _task_metrics_cache.get(key)
-    if payload is None:
-        payload = _build_task_metrics_payload(get_conn(), table, unlocked)
+    conn = get_conn()
+    # An existing transaction may already hold an older WAL snapshot. Only
+    # its token captured at BEGIN can establish eligibility for a shared cache.
+    token = (getattr(_local, 'task_metrics_snapshot', None) if conn.in_transaction
+             else _task_metrics_snapshot_token(conn))
+    payload = None
+    if _task_metrics_snapshot_is_current(conn, token):
+        generation = token[2]
+        key = (generation, table, unlocked)
         with _task_metrics_cache_lock:
-            # Keep all tables and both HR visibility modes for the current DB,
-            # but discard payloads from an older build generation.
-            for stale in [k for k in _task_metrics_cache if k[0] != key[0]]:
-                _task_metrics_cache.pop(stale, None)
-            _task_metrics_cache[key] = payload
+            payload = _task_metrics_cache.get(key)
+        if not _task_metrics_snapshot_is_current(conn, token):
+            payload = None
+    if payload is None:
+        payload = _build_task_metrics_payload(conn, table, unlocked)
+        if _task_metrics_snapshot_is_current(conn, token):
+            generation = token[2]
+            key = (generation, table, unlocked)
+            with _task_metrics_cache_lock:
+                # Retain both visibility modes only for the same DB/WAL
+                # generation. A concurrent commit must not publish a cache
+                # entry built across archive generations.
+                for stale in [k for k in _task_metrics_cache if k[0] != generation]:
+                    _task_metrics_cache.pop(stale, None)
+                _task_metrics_cache[key] = payload
     _json_response(handler, payload, vary='Cookie')
 
 
@@ -1774,7 +1855,7 @@ def get_hr_status(handler):
         'unlocked': is_hr_unlocked(handler),
         'group_sys_id': HR_GROUP_SYS_ID,
         'group_label': HR_GROUP_LABEL,
-    })
+    }, vary='Cookie')
 
 
 def get_whoami(handler):
@@ -1792,9 +1873,9 @@ def get_whoami(handler):
 
 
 def post_hr_unlock(handler, body):
-    if not hr_gate_enabled():
+    if not HR_UNLOCK_PASSWORD:
         return _send_error(handler, HTTPStatus.SERVICE_UNAVAILABLE,
-                           'gate disabled (HR_UNLOCK_PASSWORD unset)')
+                           'HR data is locked; unlocking is not configured')
     try:
         payload = json.loads(body or b'{}')
     except json.JSONDecodeError:
@@ -1924,7 +2005,13 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self):
+        conn = None
+        _local.task_metrics_snapshot = None
         try:
+            if self.path.startswith(('/api/', '/data/attachments/')):
+                conn = get_conn()
+                conn.execute('BEGIN')
+                _local.task_metrics_snapshot = _task_metrics_snapshot_token(conn)
             self._route()
         except (BrokenPipeError, ConnectionResetError):
             pass  # client disconnected
@@ -1935,6 +2022,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         finally:
+            if conn is not None:
+                conn.rollback()
+            # TEMP graph tables created in this request were rolled back.
+            _local.hr_restrictions = None
+            _local.task_metrics_snapshot = None
             self._emit_access()
 
     def do_POST(self):
@@ -1976,37 +2068,23 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/data/attachments/'):
             rel = path[len('/data/'):]
             parts = rel.split('/')
-            # Reject path-traversal / empty segments before deriving any
-            # value from the URL. Without this, a request like
-            # /data/attachments/<x>/<x>/q/../../<hr_shard>/<hr_id>/<file>
-            # would resolve via Path.resolve() to the HR file while the
-            # HR-gate check below would read <x> as parts[2] and let it
-            # through. Resolving first then re-deriving parts is an
-            # alternative; rejecting traversal up front is simpler and
-            # also blocks symlink-chasing attacks.
-            if any(p in ('', '.', '..') for p in parts):
+            # Exact exporter path shape; nested paths cannot borrow another
+            # attachment's authorization. Check both the URL and canonical
+            # destination because the exporter can deduplicate with symlinks.
+            if len(parts) != 4 or any(p in ('', '.', '..') for p in parts):
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
             target = (DATA_DIR / rel).resolve()
-            # Defense in depth: even with no traversal segments, confirm
-            # the resolved path is under DATA_DIR.
             try:
-                target.relative_to(DATA_DIR)
+                canonical = target.relative_to((DATA_DIR / 'attachments').resolve()).parts
             except ValueError:
                 return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
-            # HR gate. URL parts: [0]=attachments, [1]=shard, [2]=attach_sys_id.
-            # Without this, anyone who knows an attachment's sys_id can
-            # download HR file bodies — the metadata listing is gated but
-            # the static path was open.
-            if hr_gate_enabled() and not is_hr_unlocked(self):
-                if len(parts) >= 3 and parts[0] == 'attachments':
-                    attach_sys_id = parts[2]
-                    if _attachment_is_hr(attach_sys_id):
-                        return _send_error(
-                            self, HTTPStatus.FORBIDDEN, 'hr_locked',
-                            vary='Cookie', cache_control='private, no-store',
-                        )
+            if len(canonical) != 3:
+                return _send_error(self, HTTPStatus.FORBIDDEN, 'forbidden path')
+            if not is_hr_unlocked(self):
+                if any(_attachment_is_hr(attach_id) for attach_id in {parts[2], canonical[1]}):
+                    return _send_hr_locked(self)
             return _send_static(
-                self, target, vary='Cookie', cache_control='private, no-store',
+                self, target, vary='Cookie', cache_control='private, no-store', sandbox=True,
             )
 
         # Interactive docs and OpenAPI spec. Public — these routes sit in
@@ -2161,10 +2239,11 @@ def main():
 
     log.info('starting on :%d  app=%s  data=%s  db=%s',
              PORT, APP_DIR, DATA_DIR, 'present' if DB_PATH.is_file() else 'MISSING')
-    if hr_gate_enabled():
+    if HR_UNLOCK_PASSWORD:
         log.info('hr gate ENABLED — group=%s (%s)', HR_GROUP_LABEL, HR_GROUP_SYS_ID)
     else:
-        log.warning('hr gate DISABLED — set HR_UNLOCK_PASSWORD to protect HR incidents')
+        log.warning('hr gate LOCKED — HR_UNLOCK_PASSWORD unset; '
+                    'restricted data remains unavailable')
     if ACCESS_LOG_PATH:
         log.info('access log ENABLED — %s (dns=%s, max=%d, backups=%d, trust_proxy=%s)',
                  ACCESS_LOG_PATH, 'on' if ACCESS_LOG_DNS else 'off',

@@ -6,7 +6,7 @@ components:
   schemas:
     IncidentRow:
       type: object
-      description: 'Slim/indexed row shape from the `incident` table (task, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Directly gated: rows where `assignment_group` is the HR group are hidden when locked.'
+      description: 'Slim/indexed row shape from the `incident` table (task, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -59,7 +59,7 @@ components:
       additionalProperties: true
     ChangeRequestRow:
       type: object
-      description: 'Slim/indexed row shape from the `change_request` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `change_request` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -116,7 +116,7 @@ components:
       additionalProperties: true
     ProblemRow:
       type: object
-      description: 'Slim/indexed row shape from the `problem` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `problem` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -169,7 +169,7 @@ components:
       additionalProperties: true
     ProblemTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `problem_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `problem_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `problem`.'
       properties:
         sys_id:
           type: string
@@ -220,7 +220,7 @@ components:
       additionalProperties: true
     ScRequestRow:
       type: object
-      description: 'Slim/indexed row shape from the `sc_request` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sc_request` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -271,7 +271,7 @@ components:
       additionalProperties: true
     ScReqItemRow:
       type: object
-      description: 'Slim/indexed row shape from the `sc_req_item` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sc_req_item` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `request`.'
       properties:
         sys_id:
           type: string
@@ -328,7 +328,7 @@ components:
       additionalProperties: true
     ScTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `sc_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sc_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `request_item`, `request`.'
       properties:
         sys_id:
           type: string
@@ -383,7 +383,7 @@ components:
       additionalProperties: true
     IncidentTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `incident_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `incident` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `incident_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`, `incident`.'
       properties:
         sys_id:
           type: string
@@ -434,7 +434,7 @@ components:
       additionalProperties: true
     ChangeTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `change_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `change_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -483,7 +483,7 @@ components:
       additionalProperties: true
     SysapprovalGroupRow:
       type: object
-      description: 'Slim/indexed row shape from the `sysapproval_group` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `parent` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sysapproval_group` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -536,7 +536,7 @@ components:
       additionalProperties: true
     AssetTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `asset_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `asset_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -585,7 +585,7 @@ components:
       additionalProperties: true
     SnContractRenewalTaskRow:
       type: object
-      description: 'Slim/indexed row shape from the `sn_contract_renewal_task` table (task, cache-5min). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sn_contract_renewal_task` table (task, cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: HR assignment group or any HR-protected ancestor through `parent`.'
       properties:
         sys_id:
           type: string
@@ -928,7 +928,7 @@ components:
       additionalProperties: true
     SysJournalFieldRow:
       type: object
-      description: 'Slim/indexed row shape from the `sys_journal_field` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `element_id` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_journal_field` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `element_id`.'
       properties:
         sys_id:
           type: string
@@ -949,7 +949,7 @@ components:
       additionalProperties: true
     SysAuditRow:
       type: object
-      description: 'Slim/indexed row shape from the `sys_audit` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `documentkey` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_audit` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `documentkey`.'
       properties:
         sys_id:
           type: string
@@ -974,7 +974,7 @@ components:
       additionalProperties: true
     SysAttachmentRow:
       type: object
-      description: 'Slim/indexed row shape from the `sys_attachment` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `table_sys_id` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_attachment` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `table_sys_id`.'
       properties:
         sys_id:
           type: string
@@ -997,7 +997,7 @@ components:
       additionalProperties: true
     SysEmailRow:
       type: object
-      description: 'Slim/indexed row shape from the `sys_email` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `instance` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sys_email` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `instance`.'
       properties:
         sys_id:
           type: string
@@ -1024,7 +1024,7 @@ components:
       additionalProperties: true
     TaskCiRow:
       type: object
-      description: 'Slim/indexed row shape from the `task_ci` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `task_ci` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `task`.'
       properties:
         sys_id:
           type: string
@@ -1037,7 +1037,7 @@ components:
       additionalProperties: true
     TaskSlaRow:
       type: object
-      description: 'Slim/indexed row shape from the `task_sla` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `task` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `task_sla` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `task`.'
       properties:
         sys_id:
           type: string
@@ -1055,7 +1055,7 @@ components:
       additionalProperties: true
     SysapprovalApproverRow:
       type: object
-      description: 'Slim/indexed row shape from the `sysapproval_approver` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Parent-gated: rows whose `sysapproval` references an HR-assigned incident are hidden when locked.'
+      description: 'Slim/indexed row shape from the `sysapproval_approver` table (cache-5min, hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `sysapproval`, `group`.'
       properties:
         sys_id:
           type: string
@@ -1116,7 +1116,7 @@ components:
       additionalProperties: true
     ScItemOptionRow:
       type: object
-      description: 'Slim/indexed row shape from the `sc_item_option` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sc_item_option` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden when any `sc_item_option_mtom` owner is HR-protected, including shared values.'
       properties:
         sys_id:
           type: string
@@ -1133,7 +1133,7 @@ components:
       additionalProperties: true
     ScItemOptionMtomRow:
       type: object
-      description: 'Slim/indexed row shape from the `sc_item_option_mtom` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `sc_item_option_mtom` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `request_item`, `sc_item_option`.'
       properties:
         sys_id:
           type: string
@@ -2259,7 +2259,7 @@ components:
       additionalProperties: true
     CmdbCiOutageRow:
       type: object
-      description: 'Slim/indexed row shape from the `cmdb_ci_outage` table (reference). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope.'
+      description: 'Slim/indexed row shape from the `cmdb_ci_outage` table (hr-gated). In a non-slim response, a same-named raw field may instead retain its ServiceNow {value, display_value} envelope. Hidden while locked: any HR-protected ancestor through `task_number`.'
       properties:
         sys_id:
           type: string
@@ -2801,12 +2801,29 @@ x-cache-5min:
   - user_criteria
 
 x-hr-parent-columns:
-  incident_task: incident
-  sys_attachment: table_sys_id
-  sys_audit: documentkey
-  sys_email: instance
-  sys_journal_field: element_id
-  sysapproval_approver: sysapproval
-  sysapproval_group: parent
-  task_ci: task
-  task_sla: task
+  asset_task: [parent]
+  change_request: [parent]
+  change_task: [parent]
+  cmdb_ci_outage: [task_number]
+  incident: [parent]
+  incident_task: [parent, incident]
+  problem: [parent]
+  problem_task: [parent, problem]
+  sc_item_option_mtom: [request_item, sc_item_option]
+  sc_req_item: [parent, request]
+  sc_request: [parent]
+  sc_task: [parent, request_item, request]
+  sn_contract_renewal_task: [parent]
+  sys_attachment: [table_sys_id]
+  sys_audit: [documentkey]
+  sys_email: [instance]
+  sys_journal_field: [element_id]
+  sysapproval_approver: [sysapproval, group]
+  sysapproval_group: [parent]
+  task_ci: [task]
+  task_sla: [task]
+
+x-hr-shared-value-link:
+  table: sc_item_option_mtom
+  owner: request_item
+  value: sc_item_option

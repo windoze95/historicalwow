@@ -13,7 +13,7 @@ on:
       - 'docs/**'
       - 'project/bin/build_sqlite.py'
       - 'project/bin/server.py'
-      - 'project/bin/test_server.py'
+      - 'project/bin/test_*.py'
       - 'project/bin/gen_table_catalog.py'
       - 'Makefile'
       - '.github/workflows/verify-docs.yml'
@@ -34,8 +34,12 @@ jobs:
       - name: Install validator
         run: python3 -m pip install --quiet openapi-spec-validator
 
-      - name: Test server metrics and drill-down filters
-        run: python3 project/bin/test_server.py
+      - name: Test server filters and HR access control
+        run: |
+          python3 project/bin/test_server.py
+          python3 project/bin/test_hr_auth.py
+          python3 project/bin/test_hr_access.py
+          python3 project/bin/test_hr_cache.py
 
       - name: make verify-docs
         run: make verify-docs

@@ -136,8 +136,12 @@ function App() {
               status={data.hrStatus}
               onUnlockClick={() => setHrModalOpen(true)}
               onLockClick={async () => {
-                await data.lockHr();
-                window.location.reload();
+                try {
+                  await data.lockHr();
+                  window.location.reload();
+                } catch (error) {
+                  window.alert('Could not lock HR data. Please try again.');
+                }
               }}
             />
           )}

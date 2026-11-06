@@ -839,6 +839,11 @@ function FieldsSection({ rec, table, showRaw }) {
         <h3>Identification</h3>
         <div className="fields">
           <Field label="Number" showRaw={showRaw} raw={rec.number}><span className="mono">{rec.number}</span></Field>
+          {rec.u_salesforce_case_number !== undefined && (
+            <Field label="Salesforce case number" showRaw={showRaw} raw={rec.u_salesforce_case_number}>
+              <span className="mono">{rec.u_salesforce_case_number || '—'}</span>
+            </Field>
+          )}
           <Field label="sys_id" showRaw={false}><span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>{rec.sys_id}</span></Field>
           <Field label="Company" showRaw={showRaw} raw={rec.company}>{window.findCompany(rec.company)?.name || '—'}</Field>
           {!isChange && rec.caller_id !== undefined && <Field label="Caller" showRaw={showRaw} raw={rec.caller_id}><RefLink kind="user" sys_id={rec.caller_id} fallback={rec.__display_caller_id} /></Field>}
